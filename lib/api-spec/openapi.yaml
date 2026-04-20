@@ -3,20 +3,48 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Personal Finance Advisor API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: assumptions
+    description: Financial assumptions / parameters
+  - name: balances
+    description: Account balances
+  - name: bills
+    description: Bills and recurring obligations
+  - name: one-time-expenses
+    description: One-time expenses
+  - name: variable-spend
+    description: Variable spend log
+  - name: commissions
+    description: Commission income tracking
+  - name: wealth
+    description: Wealth management (net worth snapshots, credit scores)
+  - name: debt
+    description: Debt tracking
+  - name: retirement
+    description: Retirement planning
+  - name: scenarios
+    description: Decision sandbox scenarios
+  - name: playbook
+    description: Methodology playbook
+  - name: integrity
+    description: Session integrity checks
+  - name: dashboard
+    description: Dashboard cycle computation
+  - name: anthropic
+    description: Anthropic AI advisor
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +52,1024 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ─── Assumptions ───────────────────────────────────────────────────────────
+  /assumptions:
+    get:
+      operationId: getAssumptions
+      tags: [assumptions]
+      summary: Get all financial assumptions
+      responses:
+        "200":
+          description: All assumptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Assumption"
+  /assumptions/{key}:
+    put:
+      operationId: updateAssumption
+      tags: [assumptions]
+      summary: Update a single assumption by key
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAssumptionBody"
+      responses:
+        "200":
+          description: Updated assumption
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Assumption"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ─── Balances ──────────────────────────────────────────────────────────────
+  /balances:
+    get:
+      operationId: getBalances
+      tags: [balances]
+      summary: Get current balances (latest per account)
+      responses:
+        "200":
+          description: Current balances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Balance"
+    post:
+      operationId: createBalance
+      tags: [balances]
+      summary: Record a new balance entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBalanceBody"
+      responses:
+        "201":
+          description: Created balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Balance"
+  /balances/history:
+    get:
+      operationId: getBalanceHistory
+      tags: [balances]
+      summary: Get balance history for all accounts
+      parameters:
+        - name: account_type
+          in: query
+          schema:
+            type: string
+        - name: days
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Balance history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Balance"
+
+  # ─── Bills ─────────────────────────────────────────────────────────────────
+  /bills:
+    get:
+      operationId: getBills
+      tags: [bills]
+      summary: Get all bills
+      responses:
+        "200":
+          description: All bills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bill"
+    post:
+      operationId: createBill
+      tags: [bills]
+      summary: Create a new bill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBillBody"
+      responses:
+        "201":
+          description: Created bill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bill"
+  /bills/{id}:
+    get:
+      operationId: getBill
+      tags: [bills]
+      summary: Get a single bill
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bill"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    patch:
+      operationId: updateBill
+      tags: [bills]
+      summary: Update a bill
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBillBody"
+      responses:
+        "200":
+          description: Updated bill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bill"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteBill
+      tags: [bills]
+      summary: Delete a bill
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ─── One-Time Expenses ─────────────────────────────────────────────────────
+  /one-time-expenses:
+    get:
+      operationId: getOneTimeExpenses
+      tags: [one-time-expenses]
+      summary: Get all one-time expenses
+      responses:
+        "200":
+          description: One-time expenses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OneTimeExpense"
+    post:
+      operationId: createOneTimeExpense
+      tags: [one-time-expenses]
+      summary: Create a one-time expense
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOneTimeExpenseBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OneTimeExpense"
+  /one-time-expenses/{id}:
+    patch:
+      operationId: updateOneTimeExpense
+      tags: [one-time-expenses]
+      summary: Update a one-time expense
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOneTimeExpenseBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OneTimeExpense"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteOneTimeExpense
+      tags: [one-time-expenses]
+      summary: Delete a one-time expense
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ─── Variable Spend ────────────────────────────────────────────────────────
+  /variable-spend:
+    get:
+      operationId: getVariableSpend
+      tags: [variable-spend]
+      summary: Get variable spend log
+      parameters:
+        - name: weeks
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Variable spend log
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VariableSpendEntry"
+    post:
+      operationId: createVariableSpendEntry
+      tags: [variable-spend]
+      summary: Log variable spend for a week
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVariableSpendBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VariableSpendEntry"
+  /variable-spend/{id}:
+    patch:
+      operationId: updateVariableSpendEntry
+      tags: [variable-spend]
+      summary: Update a variable spend entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVariableSpendBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VariableSpendEntry"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteVariableSpendEntry
+      tags: [variable-spend]
+      summary: Delete a variable spend entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ─── Commissions ──────────────────────────────────────────────────────────
+  /commissions:
+    get:
+      operationId: getCommissions
+      tags: [commissions]
+      summary: Get commission history
+      responses:
+        "200":
+          description: Commission records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Commission"
+    post:
+      operationId: createCommission
+      tags: [commissions]
+      summary: Create a commission entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommissionBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Commission"
+  /commissions/{id}:
+    patch:
+      operationId: updateCommission
+      tags: [commissions]
+      summary: Update a commission entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCommissionBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Commission"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteCommission
+      tags: [commissions]
+      summary: Delete a commission entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /commissions/summary:
+    get:
+      operationId: getCommissionSummary
+      tags: [commissions]
+      summary: Get commission summary (YTD, drought flag, 3-month avg)
+      responses:
+        "200":
+          description: Commission summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommissionSummary"
+
+  # ─── Wealth Management ─────────────────────────────────────────────────────
+  /wealth/snapshots:
+    get:
+      operationId: getWealthSnapshots
+      tags: [wealth]
+      summary: Get wealth management monthly snapshots
+      responses:
+        "200":
+          description: Wealth snapshots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WealthSnapshot"
+    post:
+      operationId: createWealthSnapshot
+      tags: [wealth]
+      summary: Create a wealth snapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWealthSnapshotBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WealthSnapshot"
+  /wealth/snapshots/{id}:
+    patch:
+      operationId: updateWealthSnapshot
+      tags: [wealth]
+      summary: Update a wealth snapshot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWealthSnapshotBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WealthSnapshot"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteWealthSnapshot
+      tags: [wealth]
+      summary: Delete a wealth snapshot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /wealth/credit-scores:
+    get:
+      operationId: getCreditScores
+      tags: [wealth]
+      summary: Get credit score history
+      responses:
+        "200":
+          description: Credit scores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CreditScore"
+    post:
+      operationId: createCreditScore
+      tags: [wealth]
+      summary: Record credit scores
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreditScoreBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreditScore"
+
+  # ─── Debt ──────────────────────────────────────────────────────────────────
+  /debt:
+    get:
+      operationId: getDebt
+      tags: [debt]
+      summary: Get all debt entries
+      responses:
+        "200":
+          description: Debt entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Debt"
+    post:
+      operationId: createDebt
+      tags: [debt]
+      summary: Create a debt entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDebtBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Debt"
+  /debt/{id}:
+    patch:
+      operationId: updateDebt
+      tags: [debt]
+      summary: Update a debt entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDebtBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Debt"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteDebt
+      tags: [debt]
+      summary: Delete a debt entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ─── Retirement ────────────────────────────────────────────────────────────
+  /retirement:
+    get:
+      operationId: getRetirement
+      tags: [retirement]
+      summary: Get retirement planning inputs
+      responses:
+        "200":
+          description: Retirement plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetirementPlan"
+    put:
+      operationId: upsertRetirement
+      tags: [retirement]
+      summary: Update retirement planning inputs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertRetirementBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetirementPlan"
+
+  # ─── Decision Scenarios ────────────────────────────────────────────────────
+  /scenarios:
+    get:
+      operationId: getScenarios
+      tags: [scenarios]
+      summary: Get all saved scenarios
+      responses:
+        "200":
+          description: Scenarios
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scenario"
+    post:
+      operationId: createScenario
+      tags: [scenarios]
+      summary: Create or run a scenario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScenarioBody"
+      responses:
+        "201":
+          description: Created with computed outputs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scenario"
+  /scenarios/{id}:
+    get:
+      operationId: getScenario
+      tags: [scenarios]
+      summary: Get a scenario
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scenario
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scenario"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    patch:
+      operationId: updateScenario
+      tags: [scenarios]
+      summary: Update a scenario
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateScenarioBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scenario"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteScenario
+      tags: [scenarios]
+      summary: Delete a scenario
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ─── Playbook ──────────────────────────────────────────────────────────────
+  /playbook:
+    get:
+      operationId: getPlaybook
+      tags: [playbook]
+      summary: Get current playbook version
+      responses:
+        "200":
+          description: Current playbook
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybookVersion"
+    put:
+      operationId: updatePlaybook
+      tags: [playbook]
+      summary: Update playbook (creates new version)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlaybookBody"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybookVersion"
+  /playbook/versions:
+    get:
+      operationId: getPlaybookVersions
+      tags: [playbook]
+      summary: Get all playbook versions
+      responses:
+        "200":
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlaybookVersion"
+
+  # ─── Session Integrity ─────────────────────────────────────────────────────
+  /integrity/check:
+    post:
+      operationId: runIntegrityCheck
+      tags: [integrity]
+      summary: Run session integrity check (10 checks)
+      responses:
+        "200":
+          description: Check results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrityCheckResult"
+  /integrity/history:
+    get:
+      operationId: getIntegrityHistory
+      tags: [integrity]
+      summary: Get integrity check history
+      responses:
+        "200":
+          description: History
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IntegrityCheckResult"
+
+  # ─── Dashboard ────────────────────────────────────────────────────────────
+  /dashboard/cycle:
+    get:
+      operationId: getDashboardCycle
+      tags: [dashboard]
+      summary: Get current cycle dashboard computation
+      responses:
+        "200":
+          description: Cycle dashboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardCycle"
+  /dashboard/monthly-savings:
+    get:
+      operationId: getMonthlySavings
+      tags: [dashboard]
+      summary: Get monthly savings estimate
+      responses:
+        "200":
+          description: Monthly savings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthlySavings"
+
+  # ─── Anthropic AI ─────────────────────────────────────────────────────────
+  /anthropic/conversations:
+    get:
+      operationId: listAnthropicConversations
+      tags: [anthropic]
+      summary: List all conversations
+      responses:
+        "200":
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AnthropicConversation"
+    post:
+      operationId: createAnthropicConversation
+      tags: [anthropic]
+      summary: Create a new conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAnthropicConversationBody"
+      responses:
+        "201":
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnthropicConversation"
+  /anthropic/conversations/{id}:
+    get:
+      operationId: getAnthropicConversation
+      tags: [anthropic]
+      summary: Get conversation with messages
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Conversation with messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnthropicConversationWithMessages"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnthropicError"
+    delete:
+      operationId: deleteAnthropicConversation
+      tags: [anthropic]
+      summary: Delete a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnthropicError"
+  /anthropic/conversations/{id}/messages:
+    get:
+      operationId: listAnthropicMessages
+      tags: [anthropic]
+      summary: List messages in a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AnthropicMessage"
+    post:
+      operationId: sendAnthropicMessage
+      tags: [anthropic]
+      summary: Send a message and receive AI response (SSE stream)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendAnthropicMessageBody"
+      responses:
+        "200":
+          description: SSE stream of assistant response chunks
+          content:
+            text/event-stream: {}
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +1080,1000 @@ components:
       required:
         - status
 
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    # ─── Assumptions ─────────────────────────────────────────────────────────
+    Assumption:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - key
+        - value
+        - updatedAt
+
+    UpdateAssumptionBody:
+      type: object
+      properties:
+        value:
+          type: string
+      required:
+        - value
+
+    # ─── Balances ─────────────────────────────────────────────────────────────
+    Balance:
+      type: object
+      properties:
+        id:
+          type: integer
+        accountType:
+          type: string
+        amount:
+          type: number
+        asOfDate:
+          type: string
+          format: date-time
+        source:
+          type: string
+        notes:
+          type: ["string", "null"]
+      required:
+        - id
+        - accountType
+        - amount
+        - asOfDate
+        - source
+
+    CreateBalanceBody:
+      type: object
+      properties:
+        accountType:
+          type: string
+          enum: [checking, hysa, brokerage, 401k, other]
+        amount:
+          type: number
+        asOfDate:
+          type: string
+          format: date-time
+        source:
+          type: string
+          enum: [manual, plaid, csv]
+        notes:
+          type: ["string", "null"]
+      required:
+        - accountType
+        - amount
+        - asOfDate
+        - source
+
+    # ─── Bills ───────────────────────────────────────────────────────────────
+    Bill:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        amount:
+          type: number
+        dueDay:
+          type: integer
+        frequency:
+          type: string
+        includeInCycle:
+          type: boolean
+        category:
+          type: string
+        autopay:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+        activeFrom:
+          type: ["string", "null"]
+          format: date
+        activeUntil:
+          type: ["string", "null"]
+          format: date
+        countsThisCycle:
+          type: boolean
+        nextDueDate:
+          type: ["string", "null"]
+          format: date
+      required:
+        - id
+        - name
+        - amount
+        - dueDay
+        - frequency
+        - includeInCycle
+        - category
+        - autopay
+        - countsThisCycle
+
+    CreateBillBody:
+      type: object
+      properties:
+        name:
+          type: string
+        amount:
+          type: number
+        dueDay:
+          type: integer
+        frequency:
+          type: string
+          enum: [monthly, quarterly, annual, one-time]
+        includeInCycle:
+          type: boolean
+        category:
+          type: string
+          enum: [essential, discretionary, debt, variable]
+        autopay:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+        activeFrom:
+          type: ["string", "null"]
+          format: date
+        activeUntil:
+          type: ["string", "null"]
+          format: date
+      required:
+        - name
+        - amount
+        - dueDay
+        - frequency
+        - includeInCycle
+        - category
+        - autopay
+
+    UpdateBillBody:
+      type: object
+      properties:
+        name:
+          type: string
+        amount:
+          type: number
+        dueDay:
+          type: integer
+        frequency:
+          type: string
+        includeInCycle:
+          type: boolean
+        category:
+          type: string
+        autopay:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+        activeFrom:
+          type: ["string", "null"]
+          format: date
+        activeUntil:
+          type: ["string", "null"]
+          format: date
+
+    # ─── One-Time Expenses ────────────────────────────────────────────────────
+    OneTimeExpense:
+      type: object
+      properties:
+        id:
+          type: integer
+        description:
+          type: string
+        amount:
+          type: number
+        dueDate:
+          type: ["string", "null"]
+          format: date
+        paid:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+        countsThisCycle:
+          type: boolean
+      required:
+        - id
+        - description
+        - amount
+        - paid
+        - countsThisCycle
+
+    CreateOneTimeExpenseBody:
+      type: object
+      properties:
+        description:
+          type: string
+        amount:
+          type: number
+        dueDate:
+          type: ["string", "null"]
+          format: date
+        paid:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+      required:
+        - description
+        - amount
+        - paid
+
+    UpdateOneTimeExpenseBody:
+      type: object
+      properties:
+        description:
+          type: string
+        amount:
+          type: number
+        dueDate:
+          type: ["string", "null"]
+          format: date
+        paid:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+
+    # ─── Variable Spend ───────────────────────────────────────────────────────
+    VariableSpendEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        weekOf:
+          type: string
+          format: date
+        amount:
+          type: number
+        category:
+          type: ["string", "null"]
+        quicksilver:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+      required:
+        - id
+        - weekOf
+        - amount
+        - quicksilver
+
+    CreateVariableSpendBody:
+      type: object
+      properties:
+        weekOf:
+          type: string
+          format: date
+        amount:
+          type: number
+        category:
+          type: ["string", "null"]
+        quicksilver:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+      required:
+        - weekOf
+        - amount
+        - quicksilver
+
+    UpdateVariableSpendBody:
+      type: object
+      properties:
+        weekOf:
+          type: string
+          format: date
+        amount:
+          type: number
+        category:
+          type: ["string", "null"]
+        quicksilver:
+          type: boolean
+        notes:
+          type: ["string", "null"]
+
+    # ─── Commissions ─────────────────────────────────────────────────────────
+    Commission:
+      type: object
+      properties:
+        id:
+          type: integer
+        salesMonth:
+          type: string
+          format: date
+        mrrAchieved:
+          type: number
+        nrrAchieved:
+          type: number
+        mrrPayout:
+          type: number
+        nrrPayout:
+          type: number
+        grossTotal:
+          type: number
+        takeHome:
+          type: number
+        payoutDate:
+          type: ["string", "null"]
+          format: date
+        status:
+          type: string
+          enum: [pending, paid, confirmed]
+        notes:
+          type: ["string", "null"]
+      required:
+        - id
+        - salesMonth
+        - mrrAchieved
+        - nrrAchieved
+        - mrrPayout
+        - nrrPayout
+        - grossTotal
+        - takeHome
+        - status
+
+    CreateCommissionBody:
+      type: object
+      properties:
+        salesMonth:
+          type: string
+          format: date
+        mrrAchieved:
+          type: number
+        nrrAchieved:
+          type: number
+        status:
+          type: string
+          enum: [pending, paid, confirmed]
+        notes:
+          type: ["string", "null"]
+      required:
+        - salesMonth
+        - mrrAchieved
+        - nrrAchieved
+        - status
+
+    UpdateCommissionBody:
+      type: object
+      properties:
+        salesMonth:
+          type: string
+          format: date
+        mrrAchieved:
+          type: number
+        nrrAchieved:
+          type: number
+        status:
+          type: string
+          enum: [pending, paid, confirmed]
+        notes:
+          type: ["string", "null"]
+
+    CommissionSummary:
+      type: object
+      properties:
+        ytdTakeHome:
+          type: number
+        last3MonthsAvg:
+          type: number
+        droughtFlag:
+          type: boolean
+        droughtMonths:
+          type: integer
+        currentMonthConfirmed:
+          type: number
+      required:
+        - ytdTakeHome
+        - last3MonthsAvg
+        - droughtFlag
+        - droughtMonths
+        - currentMonthConfirmed
+
+    # ─── Wealth Management ────────────────────────────────────────────────────
+    WealthSnapshot:
+      type: object
+      properties:
+        id:
+          type: integer
+        snapshotDate:
+          type: string
+          format: date
+        hysa:
+          type: number
+        brokerage:
+          type: number
+        retirement401k:
+          type: number
+        otherAssets:
+          type: number
+        totalAssets:
+          type: number
+        carLoan:
+          type: number
+        studentLoans:
+          type: number
+        otherLiabilities:
+          type: number
+        totalLiabilities:
+          type: number
+        netWorth:
+          type: number
+        changeVsPrior:
+          type: ["number", "null"]
+        notes:
+          type: ["string", "null"]
+      required:
+        - id
+        - snapshotDate
+        - hysa
+        - brokerage
+        - retirement401k
+        - otherAssets
+        - totalAssets
+        - carLoan
+        - studentLoans
+        - otherLiabilities
+        - totalLiabilities
+        - netWorth
+
+    CreateWealthSnapshotBody:
+      type: object
+      properties:
+        snapshotDate:
+          type: string
+          format: date
+        hysa:
+          type: number
+        brokerage:
+          type: number
+        retirement401k:
+          type: number
+        otherAssets:
+          type: number
+        carLoan:
+          type: number
+        studentLoans:
+          type: number
+        otherLiabilities:
+          type: number
+        notes:
+          type: ["string", "null"]
+      required:
+        - snapshotDate
+        - hysa
+        - brokerage
+        - retirement401k
+        - otherAssets
+        - carLoan
+        - studentLoans
+        - otherLiabilities
+
+    UpdateWealthSnapshotBody:
+      type: object
+      properties:
+        snapshotDate:
+          type: string
+          format: date
+        hysa:
+          type: number
+        brokerage:
+          type: number
+        retirement401k:
+          type: number
+        otherAssets:
+          type: number
+        carLoan:
+          type: number
+        studentLoans:
+          type: number
+        otherLiabilities:
+          type: number
+        notes:
+          type: ["string", "null"]
+
+    CreditScore:
+      type: object
+      properties:
+        id:
+          type: integer
+        asOfDate:
+          type: string
+          format: date
+        experian:
+          type: ["integer", "null"]
+        equifax:
+          type: ["integer", "null"]
+        transunion:
+          type: ["integer", "null"]
+        notes:
+          type: ["string", "null"]
+      required:
+        - id
+        - asOfDate
+
+    CreateCreditScoreBody:
+      type: object
+      properties:
+        asOfDate:
+          type: string
+          format: date
+        experian:
+          type: ["integer", "null"]
+        equifax:
+          type: ["integer", "null"]
+        transunion:
+          type: ["integer", "null"]
+        notes:
+          type: ["string", "null"]
+      required:
+        - asOfDate
+
+    # ─── Debt ─────────────────────────────────────────────────────────────────
+    Debt:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        balance:
+          type: number
+        interestRate:
+          type: number
+        loanType:
+          type: string
+        minimumPayment:
+          type: ["number", "null"]
+        status:
+          type: string
+        notes:
+          type: ["string", "null"]
+      required:
+        - id
+        - name
+        - balance
+        - interestRate
+        - loanType
+        - status
+
+    CreateDebtBody:
+      type: object
+      properties:
+        name:
+          type: string
+        balance:
+          type: number
+        interestRate:
+          type: number
+        loanType:
+          type: string
+          enum: [student_federal, student_private, auto, credit_card, personal, mortgage, other]
+        minimumPayment:
+          type: ["number", "null"]
+        status:
+          type: string
+          enum: [active, paid_off, deferred, forbearance, in_repayment]
+        notes:
+          type: ["string", "null"]
+      required:
+        - name
+        - balance
+        - interestRate
+        - loanType
+        - status
+
+    UpdateDebtBody:
+      type: object
+      properties:
+        name:
+          type: string
+        balance:
+          type: number
+        interestRate:
+          type: number
+        loanType:
+          type: string
+        minimumPayment:
+          type: ["number", "null"]
+        status:
+          type: string
+        notes:
+          type: ["string", "null"]
+
+    # ─── Retirement ───────────────────────────────────────────────────────────
+    RetirementPlan:
+      type: object
+      properties:
+        id:
+          type: integer
+        grossSalary:
+          type: number
+        contributionRate:
+          type: number
+        employerMatchRate:
+          type: number
+        employerMatchCap:
+          type: number
+        currentBalance:
+          type: number
+        currentAge:
+          type: integer
+        targetAge:
+          type: integer
+        returnAssumption:
+          type: number
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - grossSalary
+        - contributionRate
+        - employerMatchRate
+        - employerMatchCap
+        - currentBalance
+        - currentAge
+        - targetAge
+        - returnAssumption
+        - updatedAt
+
+    UpsertRetirementBody:
+      type: object
+      properties:
+        grossSalary:
+          type: number
+        contributionRate:
+          type: number
+        employerMatchRate:
+          type: number
+        employerMatchCap:
+          type: number
+        currentBalance:
+          type: number
+        currentAge:
+          type: integer
+        targetAge:
+          type: integer
+        returnAssumption:
+          type: number
+      required:
+        - grossSalary
+        - contributionRate
+        - employerMatchRate
+        - employerMatchCap
+        - currentBalance
+        - currentAge
+        - targetAge
+        - returnAssumption
+
+    # ─── Scenarios ────────────────────────────────────────────────────────────
+    Scenario:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+        inputsJson:
+          type: object
+        outputsJson:
+          type: object
+        saved:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - type
+        - inputsJson
+        - outputsJson
+        - saved
+        - createdAt
+
+    CreateScenarioBody:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [vehicle, large_purchase, income_change, drought_survival, income_floor, custom]
+        inputsJson:
+          type: object
+        saved:
+          type: boolean
+      required:
+        - name
+        - type
+        - inputsJson
+
+    UpdateScenarioBody:
+      type: object
+      properties:
+        name:
+          type: string
+        saved:
+          type: boolean
+        inputsJson:
+          type: object
+
+    # ─── Playbook ─────────────────────────────────────────────────────────────
+    PlaybookVersion:
+      type: object
+      properties:
+        id:
+          type: integer
+        version:
+          type: string
+        content:
+          type: string
+        effectiveFrom:
+          type: string
+          format: date-time
+        notes:
+          type: ["string", "null"]
+      required:
+        - id
+        - version
+        - content
+        - effectiveFrom
+
+    UpdatePlaybookBody:
+      type: object
+      properties:
+        content:
+          type: string
+        version:
+          type: string
+        notes:
+          type: ["string", "null"]
+      required:
+        - content
+        - version
+
+    # ─── Session Integrity ─────────────────────────────────────────────────────
+    IntegrityCheck:
+      type: object
+      properties:
+        checkNumber:
+          type: integer
+        description:
+          type: string
+        status:
+          type: string
+          enum: [pass, fail, warn, skip]
+        detail:
+          type: string
+      required:
+        - checkNumber
+        - description
+        - status
+        - detail
+
+    IntegrityCheckResult:
+      type: object
+      properties:
+        id:
+          type: integer
+        runAt:
+          type: string
+          format: date-time
+        overallStatus:
+          type: string
+          enum: [pass, fail, warn]
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/IntegrityCheck"
+        notes:
+          type: ["string", "null"]
+      required:
+        - id
+        - runAt
+        - overallStatus
+        - checks
+
+    # ─── Dashboard ────────────────────────────────────────────────────────────
+    DashboardCycle:
+      type: object
+      properties:
+        checkingBalance:
+          type: number
+        lastBalanceUpdate:
+          type: ["string", "null"]
+          format: date-time
+        nextPayday:
+          type: ["string", "null"]
+          format: date
+        daysSinceUpdate:
+          type: ["integer", "null"]
+        isStale:
+          type: boolean
+        daysUntilPayday:
+          type: ["integer", "null"]
+        billsDueBeforePayday:
+          type: number
+        pendingHoldsReserve:
+          type: number
+        minimumCushion:
+          type: number
+        oneTimeDueBeforePayday:
+          type: number
+        totalRequiredHold:
+          type: number
+        safeToSpend:
+          type: number
+        dailyRateFromUpdate:
+          type: number
+        dailyRateRealTime:
+          type: number
+        daysOfCoverage:
+          type: ["number", "null"]
+        variableSpendUntilPayday:
+          type: number
+        remainingDiscretionary:
+          type: number
+        status:
+          type: string
+          enum: [GREEN, YELLOW, RED]
+        paydayRisk:
+          type: boolean
+        forwardReserve:
+          type: number
+        alertThreshold:
+          type: number
+      required:
+        - checkingBalance
+        - isStale
+        - billsDueBeforePayday
+        - pendingHoldsReserve
+        - minimumCushion
+        - oneTimeDueBeforePayday
+        - totalRequiredHold
+        - safeToSpend
+        - dailyRateFromUpdate
+        - dailyRateRealTime
+        - variableSpendUntilPayday
+        - remainingDiscretionary
+        - status
+        - paydayRisk
+        - forwardReserve
+        - alertThreshold
+
+    MonthlySavings:
+      type: object
+      properties:
+        baseNetIncome:
+          type: number
+        confirmedCommission:
+          type: number
+        totalMonthIncome:
+          type: number
+        fullMonthFixedBills:
+          type: number
+        remainingVariableSpendProrated:
+          type: number
+        knownOneTimeCosts:
+          type: number
+        quicksilverAccrual:
+          type: number
+        forwardReserve:
+          type: number
+        estimatedMonthlySavings:
+          type: number
+        matchGapActive:
+          type: boolean
+        monthlyMatchGapCost:
+          type: number
+        savingsAfterMatchBump:
+          type: number
+        canAffordMatchBump:
+          type: boolean
+      required:
+        - baseNetIncome
+        - confirmedCommission
+        - totalMonthIncome
+        - fullMonthFixedBills
+        - remainingVariableSpendProrated
+        - knownOneTimeCosts
+        - quicksilverAccrual
+        - forwardReserve
+        - estimatedMonthlySavings
+        - matchGapActive
+        - monthlyMatchGapCost
+        - savingsAfterMatchBump
+        - canAffordMatchBump
+
+    # ─── Anthropic ────────────────────────────────────────────────────────────
+    AnthropicConversation:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - createdAt
+
+    AnthropicMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        conversationId:
+          type: integer
+        role:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - conversationId
+        - role
+        - content
+        - createdAt
+
+    CreateAnthropicConversationBody:
+      type: object
+      properties:
+        title:
+          type: string
+      required:
+        - title
+
+    SendAnthropicMessageBody:
+      type: object
+      properties:
+        content:
+          type: string
+      required:
+        - content
+
+    AnthropicConversationWithMessages:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnthropicMessage"
+      required:
+        - id
+        - title
+        - createdAt
+        - messages
+
+    AnthropicError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error

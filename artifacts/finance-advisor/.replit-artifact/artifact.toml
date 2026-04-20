@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Reserve — Personal Finance Advisor"
+version = "1.0.0"
+id = "artifacts/finance-advisor"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26160
+
+[services.development]
+run = "pnpm --filter @workspace/finance-advisor run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/finance-advisor", "run", "build" ]
+publicDir = "artifacts/finance-advisor/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26160"
+BASE_PATH = "/"
