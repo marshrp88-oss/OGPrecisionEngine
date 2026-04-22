@@ -1,0 +1,46 @@
+That is a highly strategic approach. Rather than forcing a roadmap, you are asking the development environment to self-assess its own constraints against your architectural goals. 
+
+Here is a practitioner-grade prompt you can copy and paste directly into Replit. It explicitly sets the persona, provides the context of the application, and lists the top five improvements for a technical feasibility analysis.
+
+***
+
+**Copy and paste the following into Replit:**
+
+> **Role & Objective:**
+> You are the Chief Financial Officer (CFO) and Lead Product Engineer for "AlphaFrame," a complex, logic-heavy personal finance decision engine. Your objective is not just to write code, but to architect a transition from a highly verified Excel-based system into a robust, object-oriented web application. 
+> 
+> **Context:**
+> I am going to provide you with the core logic and source files for the application. Currently, the system relies on manual, cell-based updates and manual session integrity checks. We need to move from a static tracker to an automated, forward-looking decision engine. 
+> 
+> **The Task:**
+> Below are the top 5 architectural and feature improvements I want to implement. Before we write any code, I need you to cross-reference these suggestions against your own technical capabilities, the current state of our Replit environment, and standard web application feasibility. 
+> 
+> For each of the 5 improvements, provide a brief feasibility analysis covering:
+> 1. **Technical Complexity:** (Low/Medium/High) and why.
+> 2. **Implementation Risk:** What is the biggest risk of "logic drift" or breaking existing calculations?
+> 3. **Replit/Stack Constraints:** Are there any limitations in our current environment that make this difficult?
+> 4. **Recommended Approach:** How you would specifically architect this feature (e.g., specific classes, background cron jobs, state management).
+> 
+> **The Proposed Improvements:**
+> 
+> **1. The "Temporal Logic" Engine (Automated Date & Cycle Management)**
+> [cite_start]* *Concept:* The system must automatically calculate the "Cycle Window" (Current Date to Next Payday) on initialization, rather than relying on manual date inputs for "Next Payday Date"[cite: 19, 20]. [cite_start]It must accurately handle weekend/holiday payday shifts [cite: 89, 90] [cite_start]and exclude bills due exactly on payday[cite: 9]. 
+> 
+> **2. State-Based "Scenario Injection" (Interactive Sandbox)**
+> [cite_start]* *Concept:* Integrate the currently separate "Decision Sandbox" directly into the main dashboard[cite: 6]. [cite_start]Allow the user to toggle a hypothetical scenario (e.g., a $450k lake house or $315/mo car payment [cite: 47, 191]) and see its immediate impact on the "Safe to Spend" and "Monthly Savings" outputs without permanently altering the core database.
+> 
+> **3. Asymmetric Income Modeling (Variable Commission Engine)**
+> [cite_start]* *Concept:* Build a dedicated engine for variable, tiered commission payouts based on MRR/NRR targets[cite: 38]. [cite_start]This must correctly apply assumed tax rates [cite: 39] [cite_start]and feed into a "Buffer Fuel" logic rather than being assumed in the baseline savings floor calculations[cite: 86].
+> 
+> **4. Structural Burn Analysis (Visualizing Leverage)**
+> [cite_start]* *Concept:* Implement a real-time calculation and visualization of the user's "Fixed-to-Variable Ratio"[cite: 15]. [cite_start]This requires continually comparing the total of active, fixed obligations (where "Include=TRUE") against the base net income[cite: 11, 20].
+> 
+> **5. Automated "Session Integrity" Audits (Auto-Reconciliation)**
+> [cite_start]* *Concept:* Replace the manual 10-point checklist [cite: 26, 27, 28, 29] with an automated background `HealthCheck` function. On every data save or initialization, the system must verify that `Total Required Hold` + `Safe to Spend` exactly matches the `Available Checking Balance`. If it fails, it must trigger a system-wide lock/alert.
+> 
+> Please output your feasibility matrix and let me know which improvement you recommend we tackle first to establish the most stable foundation.
+
+***
+
+### Why this works:
+By formatting the prompt this way, you force the LLM inside Replit to acknowledge the complexity of the math (like the weekend payday rule or the specific SUMIFS bill logic) *before* it tries to hallucinate a generic budgeting app structure. It sets the baseline that this is an enterprise-grade logic exercise.

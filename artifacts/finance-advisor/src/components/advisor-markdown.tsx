@@ -14,21 +14,21 @@ export function AdvisorMarkdown({ content, className }: AdvisorMarkdownProps) {
   return (
     <div
       className={cn(
-        "prose prose-sm dark:prose-invert max-w-none",
-        "prose-headings:font-semibold prose-headings:tracking-tight",
+        "prose prose-sm dark:prose-invert max-w-none min-w-0",
+        // Brighter, high-contrast body text (override prose-invert's dim grey)
+        "text-foreground/95",
+        "prose-p:text-foreground/95 prose-li:text-foreground/95",
+        "prose-headings:text-foreground prose-headings:font-semibold prose-headings:tracking-tight",
         "prose-h1:text-base prose-h1:mt-4 prose-h1:mb-2",
-        "prose-h2:text-sm prose-h2:mt-4 prose-h2:mb-2 prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-muted-foreground prose-h2:font-mono",
+        "prose-h2:text-sm prose-h2:mt-4 prose-h2:mb-2 prose-h2:uppercase prose-h2:tracking-wider prose-h2:text-foreground prose-h2:font-mono",
         "prose-h3:text-sm prose-h3:mt-3 prose-h3:mb-1",
         "prose-p:my-2 prose-p:leading-relaxed",
         "prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5",
         "prose-strong:text-foreground prose-strong:font-semibold",
         "prose-code:text-foreground prose-code:bg-background/60 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[0.85em] prose-code:font-mono prose-code:before:content-none prose-code:after:content-none",
-        "prose-pre:bg-background/80 prose-pre:border prose-pre:border-border prose-pre:rounded-md prose-pre:p-3 prose-pre:my-3 prose-pre:text-xs prose-pre:leading-snug",
         "prose-table:my-3 prose-table:text-xs",
-        "prose-th:border prose-th:border-border prose-th:bg-muted/50 prose-th:px-2 prose-th:py-1 prose-th:text-left prose-th:font-semibold",
-        "prose-td:border prose-td:border-border prose-td:px-2 prose-td:py-1 prose-td:align-top",
         "prose-hr:my-4 prose-hr:border-border",
-        "prose-blockquote:border-l-2 prose-blockquote:border-primary/40 prose-blockquote:pl-3 prose-blockquote:italic prose-blockquote:text-muted-foreground",
+        "prose-blockquote:border-l-2 prose-blockquote:border-primary/40 prose-blockquote:pl-3 prose-blockquote:italic prose-blockquote:text-foreground/80",
         className,
       )}
     >
@@ -68,7 +68,7 @@ function CodeBlock({ children, ...props }: React.HTMLAttributes<HTMLPreElement>)
     <div className="relative group not-prose my-3">
       <pre
         {...props}
-        className="bg-background/80 border border-border rounded-md p-3 text-xs leading-snug font-mono overflow-x-auto"
+        className="bg-background/80 border border-border rounded-md p-3 pr-9 text-xs leading-snug font-mono whitespace-pre-wrap break-words text-foreground/95"
       >
         {children}
       </pre>

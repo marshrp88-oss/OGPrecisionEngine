@@ -543,12 +543,12 @@ function MessageBubble({ msg, copied, onCopy, onRegenerate }: MessageBubbleProps
   return (
     <div className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")} data-testid={`message-${msg.id}`}>
       {!isUser && <BotAvatar />}
-      <div className={cn("max-w-[85%] flex flex-col gap-1.5 group", isUser && "items-end")}>
+      <div className={cn("max-w-[85%] min-w-0 flex flex-col gap-1.5 group", isUser && "items-end")}>
         <div
           className={cn(
-            "px-4 py-3 rounded-2xl text-sm leading-relaxed",
+            "px-4 py-3 rounded-2xl text-sm leading-relaxed min-w-0 overflow-hidden",
             isUser
-              ? "bg-primary text-primary-foreground rounded-tr-sm whitespace-pre-wrap"
+              ? "bg-primary text-primary-foreground rounded-tr-sm whitespace-pre-wrap break-words"
               : "bg-muted rounded-tl-sm",
           )}
         >
