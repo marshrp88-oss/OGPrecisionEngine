@@ -88,6 +88,26 @@ export function effectivePayday(nominal: Date): Date {
   return d;
 }
 
+/**
+ * Derive the next payday: earliest of {7th, 22nd} that falls on or after `today`,
+ * weekend-adjusted. Today itself counts as the next payday if today is a payday —
+ * matching workbook semantics where Column H uses `D < B4` (strict), so any bill
+ * due on today is treated as covered by today's deposit.
+ */
+export function deriveNextPayday(today: Date): Date {
+  const t = new Date(today);
+  t.setHours(0, 0, 0, 0);
+  const candidates: Date[] = [];
+  for (let m = 0; m <= 2; m++) {
+    candidates.push(new Date(t.getFullYear(), t.getMonth() + m, 7));
+    candidates.push(new Date(t.getFullYear(), t.getMonth() + m, 22));
+  }
+  for (const c of candidates.map(effectivePayday).sort((a, b) => a.getTime() - b.getTime())) {
+    if (c.getTime() >= t.getTime()) return c;
+  }
+  return effectivePayday(candidates[candidates.length - 1]);
+}
+
 export async function computeCycleState(): Promise<CycleState> {
   const alertThreshold = await getAssumption("alert_threshold", 400);
   const monthLengthDays = await getAssumption("month_length_days", 30.4);
@@ -118,8 +138,14 @@ export async function computeCycleState(): Promise<CycleState> {
     .where(eq(assumptions.key, "next_payday_date"))
     .then(([r]) => r?.value ?? null);
 
-  const nextPaydayNominal = parseDate(nextPaydayStr);
-  const nextPayday = nextPaydayNominal ? effectivePayday(nextPaydayNominal) : null;
+  // Auto-derive next payday: earliest 7th/22nd >= today (weekend-adjusted).
+  // We ignore the stored value because manually-stored values go stale.
+  // Mirrors workbook's Column H semantics: D < B4 (strict). Today as a payday
+  // means today's deposit covers any bill due today, and bills after today's
+  // payday belong to the NEXT cycle, not this one.
+  void nextPaydayStr;
+  const nextPayday = deriveNextPayday(today);
+  const nextPaydayNominal = nextPayday;
 
   const daysUntilPayday = nextPayday ? Math.max(0, daysBetween(today, nextPayday)) : null;
 
@@ -263,11 +289,14 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     .from(assumptions)
     .where(eq(assumptions.key, "next_payday_date"))
     .then(([r]) => r?.value ?? null);
-  const nextPaydayNominal = parseDate(nextPaydayStr);
-  const nextPayday = nextPaydayNominal ? effectivePayday(nextPaydayNominal) : null;
-
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const storedNominal = parseDate(nextPaydayStr);
+  const derivedNextPayday = deriveNextPayday(today);
+  const nextPayday =
+    storedNominal && effectivePayday(storedNominal).getTime() >= today.getTime()
+      ? effectivePayday(storedNominal)
+      : derivedNextPayday;
 
   // Confirmed commission this cycle (paid this month, on or before today)
   const allCommissions = await db.select().from(commissions);

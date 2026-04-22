@@ -177,10 +177,18 @@ function AddCommissionDialog() {
   const { toast } = useToast();
 
   const handleSave = () => {
-    if (!salesMonth || !mrrAchieved) return;
+    if (!salesMonth || !mrrAchieved) {
+      toast({
+        title: "Missing required fields",
+        description: !salesMonth ? "Pick a sales month." : "Enter MRR achieved.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const salesMonthIso = /^\d{4}-\d{2}$/.test(salesMonth) ? `${salesMonth}-01` : salesMonth;
     createCommission.mutate({
       data: {
-        salesMonth,
+        salesMonth: salesMonthIso,
         mrrAchieved: parseFloat(mrrAchieved),
         nrrAchieved: parseFloat(nrrAchieved) || 0,
         status,
@@ -207,7 +215,7 @@ function AddCommissionDialog() {
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
             <Label htmlFor="sales-month">Sales Month</Label>
-            <Input id="sales-month" type="month" value={salesMonth} onChange={(e) => setSalesMonth(e.target.value + "-01")} data-testid="input-sales-month" />
+            <Input id="sales-month" type="month" value={salesMonth} onChange={(e) => setSalesMonth(e.target.value)} data-testid="input-sales-month" />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="mrr">MRR Achieved ($)</Label>
