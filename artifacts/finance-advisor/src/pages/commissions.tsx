@@ -166,9 +166,14 @@ export default function Commissions() {
   );
 }
 
+function currentYearMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function AddCommissionDialog() {
   const [open, setOpen] = useState(false);
-  const [salesMonth, setSalesMonth] = useState("");
+  const [salesMonth, setSalesMonth] = useState(currentYearMonth());
   const [mrrAchieved, setMrrAchieved] = useState("");
   const [nrrAchieved, setNrrAchieved] = useState("0");
   const [status, setStatus] = useState("pending");
