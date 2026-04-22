@@ -300,7 +300,7 @@ function AllocationBreakdown({ balances }: { balances: { id: number; accountType
     const v = parseFloat(draft);
     if (isNaN(v)) { toast({ title: "Invalid amount", variant: "destructive" }); return; }
     createBalance.mutate({
-      data: { accountType, amount: v, asOfDate: new Date().toISOString(), source: "manual" },
+      data: { accountType: accountType as "checking" | "hysa" | "brokerage" | "401k" | "other", amount: v, asOfDate: new Date().toISOString(), source: "manual" },
     }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetBalancesQueryKey() });

@@ -53,7 +53,6 @@ export default function Sandbox() {
         <TabsContent value="drought">
           <DroughtSurvivalScenario
             checkingBalance={cycle?.checkingBalance ?? 0}
-            hysaBalance={cycle ? undefined : undefined}
           />
         </TabsContent>
 

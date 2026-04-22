@@ -78,8 +78,8 @@ export function AdvisorSnapshotDrawer() {
       onSuccess: (r) => {
         setIntegrity({
           overallStatus: r.overallStatus,
-          failures: r.checks.filter((c) => c.status === "fail").map((c) => ({ name: c.name, message: c.message ?? "" })),
-          warnings: r.checks.filter((c) => c.status === "warn").map((c) => ({ name: c.name, message: c.message ?? "" })),
+          failures: r.checks.filter((c) => c.status === "fail").map((c) => ({ name: c.description, message: c.detail ?? "" })),
+          warnings: r.checks.filter((c) => c.status === "warn").map((c) => ({ name: c.description, message: c.detail ?? "" })),
         });
       },
     });
@@ -183,7 +183,6 @@ export function AdvisorSnapshotDrawer() {
               <Row label="Base net (mo)" value={fmt(savings?.baseNetIncome)} />
               <Row label="Confirmed commission" value={fmt(savings?.confirmedCommission)} />
               <Row label="Total month income" value={fmt(savings?.totalMonthIncome)} />
-              <Row label="QuickSilver owed" value={fmt(savings?.quicksilverBalanceOwed)} />
               <Row label="Forward reserve" value={fmt(savings?.forwardReserve)} />
             </div>
           </div>

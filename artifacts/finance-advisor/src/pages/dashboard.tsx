@@ -536,7 +536,7 @@ function VariableSpendWidget() {
     if (isNaN(amt) || amt <= 0) { toast({ title: "Amount required", variant: "destructive" }); return; }
     createMut.mutate({
       data: {
-        weekOf: new Date(form.weekOf),
+        weekOf: form.weekOf,
         amount: amt,
         category: form.category || null,
         quicksilver: form.quicksilver,

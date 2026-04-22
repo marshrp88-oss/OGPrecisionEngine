@@ -165,7 +165,7 @@ export default function Bills() {
       amount: parseFloat(form.amount),
       dueDay: parseInt(form.dueDay),
       frequency: "monthly" as const,
-      category: form.category,
+      category: form.category as "essential" | "discretionary" | "debt" | "variable",
       autopay: form.autopay,
       includeInCycle: form.includeInCycle,
       notes: form.notes.trim() || undefined,

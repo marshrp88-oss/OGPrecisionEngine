@@ -94,7 +94,7 @@ export default function OneTimeExpenses() {
     const data = {
       description: form.description.trim(),
       amount,
-      dueDate: form.dueDate ? new Date(form.dueDate) : null,
+      dueDate: form.dueDate || null,
       paid: form.paid,
       notes: form.notes.trim() || null,
     };

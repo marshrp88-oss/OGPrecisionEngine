@@ -205,7 +205,7 @@ function AddCommissionDialog() {
         salesMonth: salesMonthIso,
         mrrAchieved: parseFloat(mrrAchieved),
         nrrAchieved: parseFloat(nrrAchieved) || 0,
-        status,
+        status: status as "pending" | "paid" | "confirmed",
       }
     }, {
       onSuccess: () => {

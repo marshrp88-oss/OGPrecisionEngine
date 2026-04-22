@@ -190,9 +190,9 @@ function AddDebtDialog() {
         name: form.name,
         balance: parseFloat(form.balance),
         interestRate: parseFloat(form.interestRate) || 0,
-        loanType: form.loanType,
+        loanType: form.loanType as "student_federal" | "student_private" | "auto" | "credit_card" | "personal" | "mortgage" | "other",
         minimumPayment: parseFloat(form.minimumPayment) || null,
-        status: form.status,
+        status: form.status as "active" | "paid_off" | "deferred" | "forbearance" | "in_repayment",
         notes: form.notes || null,
       }
     }, {
