@@ -304,7 +304,6 @@ export default function Advisor() {
 
   const allMessages = (messages as Message[] | undefined) ?? [];
   const lastAssistantId = [...allMessages].reverse().find((m) => m.role === "assistant")?.id ?? null;
-  const showEmptyChat = !activeConvId && (pendingNew || true);
   const isStale = cycle?.daysSinceUpdate != null && cycle.daysSinceUpdate > 3;
 
   return (
@@ -404,9 +403,7 @@ export default function Advisor() {
           {/* Messages */}
           <div className="flex-1 overflow-y-auto min-h-0 -mx-2 px-2">
             {!activeConvId ? (
-              showEmptyChat && (
-                <EmptyState onPickPrompt={(p) => handleSend(p)} disabled={isStreaming || createConv.isPending} />
-              )
+              <EmptyState onPickPrompt={(p) => handleSend(p)} disabled={isStreaming || createConv.isPending} />
             ) : (
               <div className="space-y-4">
                 {msgLoading && <Skeleton className="h-16 w-full" />}
