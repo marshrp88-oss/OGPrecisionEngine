@@ -9,7 +9,9 @@ import {
   useRunIntegrityCheck,
   useGetDashboardCycle,
   getGetDashboardCycleQueryKey,
+  getGetIntegrityStatusQueryKey,
 } from "@workspace/api-client-react";
+import { IntegrityStatusBanner } from "@/components/integrity-status-banner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -162,6 +164,7 @@ export default function Advisor() {
           description: `${r.checks.filter((c) => c.status === "fail").length} fail · ${r.checks.filter((c) => c.status === "warn").length} warn`,
         });
         queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetIntegrityStatusQueryKey() });
       },
     });
   };
@@ -364,6 +367,7 @@ export default function Advisor() {
 
         {/* Chat area */}
         <div className="flex-1 flex flex-col gap-3 min-w-0">
+          <IntegrityStatusBanner />
           {/* Header bar: status + snapshot + actions */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">

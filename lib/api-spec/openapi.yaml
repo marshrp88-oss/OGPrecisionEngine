@@ -912,6 +912,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IntegrityCheckResult"
+  /integrity/status:
+    get:
+      operationId: getIntegrityStatus
+      tags: [integrity]
+      summary: Get the latest integrity check result (auto-revalidated on writes)
+      responses:
+        "200":
+          description: Latest integrity result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrityCheckResult"
   /integrity/history:
     get:
       operationId: getIntegrityHistory

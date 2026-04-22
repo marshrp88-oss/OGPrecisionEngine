@@ -3779,6 +3779,81 @@ export const useRunIntegrityCheck = <
 };
 
 /**
+ * @summary Get the latest integrity check result (auto-revalidated on writes)
+ */
+export const getGetIntegrityStatusUrl = () => {
+  return `/api/integrity/status`;
+};
+
+export const getIntegrityStatus = async (
+  options?: RequestInit,
+): Promise<IntegrityCheckResult> => {
+  return customFetch<IntegrityCheckResult>(getGetIntegrityStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetIntegrityStatusQueryKey = () => {
+  return [`/api/integrity/status`] as const;
+};
+
+export const getGetIntegrityStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getIntegrityStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getIntegrityStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetIntegrityStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getIntegrityStatus>>
+  > = ({ signal }) => getIntegrityStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getIntegrityStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetIntegrityStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getIntegrityStatus>>
+>;
+export type GetIntegrityStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the latest integrity check result (auto-revalidated on writes)
+ */
+
+export function useGetIntegrityStatus<
+  TData = Awaited<ReturnType<typeof getIntegrityStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getIntegrityStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetIntegrityStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Get integrity check history
  */
 export const getGetIntegrityHistoryUrl = () => {

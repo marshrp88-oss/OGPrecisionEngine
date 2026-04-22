@@ -31,6 +31,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { IntegrityStatusBanner } from "@/components/integrity-status-banner";
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -121,6 +122,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
+      <IntegrityStatusBanner />
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Cycle Dashboard</h1>

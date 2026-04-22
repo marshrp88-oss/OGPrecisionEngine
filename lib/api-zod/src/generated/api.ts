@@ -745,6 +745,24 @@ export const RunIntegrityCheckResponse = zod.object({
 });
 
 /**
+ * @summary Get the latest integrity check result (auto-revalidated on writes)
+ */
+export const GetIntegrityStatusResponse = zod.object({
+  id: zod.number(),
+  runAt: zod.coerce.date(),
+  overallStatus: zod.enum(["pass", "fail", "warn"]),
+  checks: zod.array(
+    zod.object({
+      checkNumber: zod.number(),
+      description: zod.string(),
+      status: zod.enum(["pass", "fail", "warn", "skip"]),
+      detail: zod.string(),
+    }),
+  ),
+  notes: zod.string().nullish(),
+});
+
+/**
  * @summary Get integrity check history
  */
 export const GetIntegrityHistoryResponseItem = zod.object({
@@ -803,7 +821,6 @@ export const GetMonthlySavingsResponse = zod.object({
   remainingVariableSpendProrated: zod.number(),
   knownOneTimeCosts: zod.number(),
   quicksilverAccrual: zod.number(),
-  quicksilverBalanceOwed: zod.number(),
   forwardReserve: zod.number(),
   estimatedMonthlySavings: zod.number(),
   matchGapActive: zod.boolean(),
