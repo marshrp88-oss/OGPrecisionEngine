@@ -4,7 +4,7 @@ import {
   GetMonthlySavingsResponse,
 } from "@workspace/api-zod";
 import { computeCycleState, computeMonthlySavings } from "../lib/financeEngine";
-import { db, oneTimeExpenses, variableSpend, bills, assumptions } from "@workspace/db";
+import { db, oneTimeExpenses, variableSpend, bills, assumptions, commissions, balances } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 
 const router: IRouter = Router();
@@ -25,64 +25,150 @@ router.get("/dashboard/monthly-savings", async (_req, res): Promise<void> => {
   res.json(GetMonthlySavingsResponse.parse(savings));
 });
 
-// Discretionary breakdown — returns the components that make up
-// "Discretionary This Cycle" (Safe to Spend minus already-spent variable).
+// Discretionary THIS MONTH — mirrors the established Estimated Monthly
+// Savings model (B62) but reframed as remaining spending capability through
+// the end of the calendar month. Marshall budgets monthly, not paycheck-to-
+// paycheck, so this — not the cycle figure — is the headline metric.
+//
+// Formula:
+//   Discretionary = MAX(0,
+//       Checking
+//     + Base paychecks remaining this month
+//     + Confirmed commission this month not yet received
+//     − Include=TRUE bills due remainder of month
+//     − Unpaid one-time expenses dated through month end (or undated, if elected)
+//     − Variable cap remaining this month (gas + food reserve)
+//     − QuickSilver balance owed (manual; paid mid-next-month)
+//     − Minimum cushion
+//   )
 router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
-  const cycle = await computeCycleState();
-
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
-  // Determine cycle window: from the most-recent past payday (or month start
-  // if unknown) through today. We approximate "last payday" as the next payday
-  // minus 14 days when known, else use month start.
-  let cycleStart: Date = monthStart;
-  if (cycle.nextPayday) {
-    const np = new Date(cycle.nextPayday);
-    const lp = new Date(np);
-    lp.setDate(lp.getDate() - 14);
-    if (lp <= today) cycleStart = lp;
+  // === Inputs ===
+  const [latestChecking] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+  const checking = latestChecking ? parseFloat(latestChecking.amount as unknown as string) : 0;
+
+  const allAssumps = await db.select().from(assumptions);
+  const A = (k: string, dflt = 0) => {
+    const r = allAssumps.find((a) => a.key === k);
+    return r ? parseFloat(r.value) : dflt;
+  };
+  const baseNetIncome = A("base_net_income", 3220);
+  const variableCap = A("variable_spend_cap", 600);
+  const minimumCushion = A("minimum_cushion", 0);
+  const quicksilverBalanceOwed = A("quicksilver_balance_owed", 0);
+
+  // Paychecks remaining this month: paid 7th and 22nd. Each paycheck = base/2.
+  // Strict `>` so a payday already deposited (and reflected in checking) is
+  // not double-counted.
+  const paydayDays = [7, 22];
+  let paychecksRemaining = 0;
+  for (const d of paydayDays) {
+    if (d > today.getDate() && d <= monthEnd.getDate()) paychecksRemaining += 1;
+  }
+  const remainingPaychecksThisMonth = Math.round((baseNetIncome / 2) * paychecksRemaining * 100) / 100;
+
+  // Confirmed commission for THIS month not yet received (payout date in
+  // future or unset within this month).
+  const allCommissions = await db.select().from(commissions);
+  let confirmedCommissionUnreceived = 0;
+  let confirmedCommissionAlready = 0;
+  for (const c of allCommissions) {
+    if (!c.payoutDate) continue;
+    const pd = new Date(c.payoutDate);
+    if (pd.getFullYear() !== today.getFullYear() || pd.getMonth() !== today.getMonth()) continue;
+    if (c.status !== "paid" && c.status !== "confirmed") continue;
+    const amount = parseFloat(c.takeHome);
+    if (pd <= today) confirmedCommissionAlready += amount;
+    else confirmedCommissionUnreceived += amount;
   }
 
-  const allVs = await db.select().from(variableSpend);
+  // Bills remaining this month (Include=TRUE, due day >= today.date)
+  const allBills = await db.select().from(bills);
+  let billsRemainingThisMonth = 0;
+  const billsRemainingDetail: { id: number; name: string; amount: number; dueDay: number }[] = [];
+  for (const b of allBills) {
+    if (!b.includeInCycle) continue;
+    const amt = parseFloat(b.amount);
+    if (amt <= 0) continue;
+    if (b.dueDay >= today.getDate() && b.dueDay <= monthEnd.getDate()) {
+      billsRemainingThisMonth += amt;
+      billsRemainingDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay });
+    }
+  }
 
-  // Cycle-window variable spend (canonical input for Discretionary)
-  const cycleVs = allVs.filter((v) => {
-    const d = new Date(v.weekOf);
-    return d >= cycleStart && d <= today;
-  });
-  const variableSpentThisCycle = cycleVs.reduce((s, v) => s + parseFloat(v.amount), 0);
-
-  // Month-window (informational: cap progress + QuickSilver accrual)
-  const monthVs = allVs.filter((v) => new Date(v.weekOf) >= monthStart && new Date(v.weekOf) <= today);
-  const variableSpentMonth = monthVs.reduce((s, v) => s + parseFloat(v.amount), 0);
-  const quicksilverAccrued = monthVs.filter((v) => v.quicksilver).reduce((s, v) => s + parseFloat(v.amount), 0);
-
-  const [varCapRow] = await db.select().from(assumptions).where(eq(assumptions.key, "variable_spend_cap"));
-  const variableCap = varCapRow ? parseFloat(varCapRow.value) : 600;
-  const variableRemaining = Math.max(0, variableCap - variableSpentMonth);
-
-  // Unpaid one-time expenses with no due-date (advisory only — not in cycle hold)
+  // Unpaid one-time expenses: dated through month-end + undated (advisory)
   const oteRows = await db.select().from(oneTimeExpenses).where(eq(oneTimeExpenses.paid, false));
-  const undatedOneTime = oteRows.filter((o) => !o.dueDate).reduce((s, o) => s + parseFloat(o.amount), 0);
+  let oneTimeDatedThisMonth = 0;
+  let oneTimeUndated = 0;
+  for (const o of oteRows) {
+    const amt = parseFloat(o.amount);
+    if (!o.dueDate) { oneTimeUndated += amt; continue; }
+    const dd = new Date(o.dueDate);
+    if (dd >= today && dd <= monthEnd) oneTimeDatedThisMonth += amt;
+  }
 
-  // Canonical Discretionary This Cycle: Safe to Spend minus log-derived
-  // variable already spent this cycle. Always >= 0.
-  const discretionaryThisCycle = Math.max(0, cycle.safeToSpend - variableSpentThisCycle);
+  // Variable spent this month (logged) and remaining (cap minus spent)
+  const allVs = await db.select().from(variableSpend);
+  const monthVs = allVs.filter((v) => new Date(v.weekOf) >= monthStart && new Date(v.weekOf) <= today);
+  const variableSpentThisMonth = monthVs.reduce((s, v) => s + parseFloat(v.amount), 0);
+  const quicksilverAccruedThisMonth = monthVs
+    .filter((v) => v.quicksilver)
+    .reduce((s, v) => s + parseFloat(v.amount), 0);
+  const variableRemainingThisMonth = Math.max(0, variableCap - variableSpentThisMonth);
 
+  // === Compute ===
+  const inflows = checking + remainingPaychecksThisMonth + confirmedCommissionUnreceived;
+  const outflows =
+    billsRemainingThisMonth +
+    oneTimeDatedThisMonth +
+    variableRemainingThisMonth +
+    quicksilverBalanceOwed +
+    minimumCushion;
+  const discretionaryThisMonth = Math.max(0, inflows - outflows);
+
+  // Cycle parity for the legacy cycle-aware view (cycle = Safe to Spend frame)
+  const cycle = await computeCycleState();
+
+  const round = (n: number) => Math.round(n * 100) / 100;
   res.json({
-    safeToSpend: cycle.safeToSpend,
-    cycleStart: cycleStart.toISOString().split("T")[0],
-    variableSpentThisCycle: Math.round(variableSpentThisCycle * 100) / 100,
-    variableSpentThisMonth: Math.round(variableSpentMonth * 100) / 100,
+    // Headline
+    discretionaryThisMonth: round(discretionaryThisMonth),
+    monthEnd: monthEnd.toISOString().split("T")[0],
+
+    // Inflows
+    checking: round(checking),
+    remainingPaychecksThisMonth,
+    paychecksRemainingCount: paychecksRemaining,
+    baseNetIncome,
+    confirmedCommissionUnreceived: round(confirmedCommissionUnreceived),
+    confirmedCommissionAlready: round(confirmedCommissionAlready),
+    totalInflowsAvailable: round(inflows),
+
+    // Outflows
+    billsRemainingThisMonth: round(billsRemainingThisMonth),
+    billsRemainingDetail,
+    oneTimeDatedThisMonth: round(oneTimeDatedThisMonth),
+    oneTimeUndatedAdvisory: round(oneTimeUndated),
     variableCap,
-    variableRemainingThisMonth: Math.round(variableRemaining * 100) / 100,
-    quicksilverAccruedThisMonth: Math.round(quicksilverAccrued * 100) / 100,
-    discretionaryThisCycle: Math.round(discretionaryThisCycle * 100) / 100,
-    undatedOneTimeOutstanding: Math.round(undatedOneTime * 100) / 100,
-    // Kept for transparency — assumption-based estimate (not authoritative)
-    variableSpendUntilPaydayAssumption: cycle.variableSpendUntilPayday,
+    variableSpentThisMonth: round(variableSpentThisMonth),
+    variableRemainingThisMonth: round(variableRemainingThisMonth),
+    quicksilverBalanceOwed: round(quicksilverBalanceOwed),
+    quicksilverAccruedThisMonth: round(quicksilverAccruedThisMonth),
+    minimumCushion: round(minimumCushion),
+    totalReservationsRequired: round(outflows),
+
+    // Cycle parity
+    safeToSpend: cycle.safeToSpend,
+    cycleStatus: cycle.status,
   });
 });
 

@@ -43,6 +43,7 @@ export interface MonthlySavingsState {
   remainingVariableSpendProrated: number;
   knownOneTimeCosts: number;
   quicksilverAccrual: number;
+  quicksilverBalanceOwed: number;
   forwardReserve: number;
   estimatedMonthlySavings: number;
   matchGapActive: boolean;
@@ -311,11 +312,17 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     knownOneTimeCosts += parseFloat(ote.amount);
   }
 
+  // QuickSilver: manual `quicksilver_balance_owed` is the canonical reserve
+  // line — it represents the carryover CC balance Marshall pays mid-next-month.
+  // We expose `quicksilverAccrual` (logged QS spend this month) for context
+  // only; subtracting it here would double-count against the variable-cap
+  // reservation (which already covers gas+food regardless of payment method).
   const vsEntries = await db.select().from(variableSpend);
   let quicksilverAccrual = 0;
   for (const vs of vsEntries) {
     if (vs.quicksilver) quicksilverAccrual += parseFloat(vs.amount);
   }
+  const quicksilverBalanceOwed = await getAssumption("quicksilver_balance_owed", 0);
 
   let forwardReserveFixed = 0;
   for (const bill of allBills) {
@@ -342,7 +349,7 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
       fullMonthFixedBills -
       remainingVariableSpendProrated -
       knownOneTimeCosts -
-      quicksilverAccrual -
+      quicksilverBalanceOwed -
       forwardReserve
   );
 
@@ -381,6 +388,7 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     remainingVariableSpendProrated,
     knownOneTimeCosts,
     quicksilverAccrual,
+    quicksilverBalanceOwed,
     forwardReserve,
     estimatedMonthlySavings,
     matchGapActive,

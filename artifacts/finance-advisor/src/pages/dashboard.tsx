@@ -32,16 +32,28 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface DiscretionaryResp {
-  safeToSpend: number;
-  cycleStart: string;
-  variableSpentThisCycle: number;
-  variableSpentThisMonth: number;
+  discretionaryThisMonth: number;
+  monthEnd: string;
+  checking: number;
+  remainingPaychecksThisMonth: number;
+  paychecksRemainingCount: number;
+  baseNetIncome: number;
+  confirmedCommissionUnreceived: number;
+  confirmedCommissionAlready: number;
+  totalInflowsAvailable: number;
+  billsRemainingThisMonth: number;
+  billsRemainingDetail: { id: number; name: string; amount: number; dueDay: number }[];
+  oneTimeDatedThisMonth: number;
+  oneTimeUndatedAdvisory: number;
   variableCap: number;
+  variableSpentThisMonth: number;
   variableRemainingThisMonth: number;
+  quicksilverBalanceOwed: number;
   quicksilverAccruedThisMonth: number;
-  discretionaryThisCycle: number;
-  undatedOneTimeOutstanding: number;
-  variableSpendUntilPaydayAssumption: number;
+  minimumCushion: number;
+  totalReservationsRequired: number;
+  safeToSpend: number;
+  cycleStatus: string;
 }
 
 interface IntegritySummary {
@@ -174,18 +186,25 @@ export default function Dashboard() {
 
         <Card className="border-2 shadow-xl overflow-hidden">
           <CardContent className="p-6 md:p-8">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">Discretionary This Cycle</p>
-            <h2 className="text-5xl md:text-6xl font-bold tracking-tighter font-mono">
-              {discretionary ? formatCurrency(discretionary.discretionaryThisCycle) : formatCurrency(cycle.remainingDiscretionary)}
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">Discretionary This Month</p>
+            <h2 className="text-5xl md:text-6xl font-bold tracking-tighter font-mono" data-testid="text-discretionary-month">
+              {discretionary ? formatCurrency(discretionary.discretionaryThisMonth) : "—"}
             </h2>
             {discretionary && (
               <>
                 <p className="text-xs text-muted-foreground font-mono mt-3">
-                  Safe to Spend ({formatCurrency(discretionary.safeToSpend)}) − logged variable this cycle ({formatCurrency(discretionary.variableSpentThisCycle)})
+                  Through {formatDate(discretionary.monthEnd)} — after bills, one-times, gas+food cap, and CC payoff
                 </p>
-                <p className="text-xs text-muted-foreground font-mono mt-1">
-                  Variable cap remaining this month: <span className="text-foreground">{formatCurrency(discretionary.variableRemainingThisMonth)}</span> of {formatCurrency(discretionary.variableCap)}
-                </p>
+                <div className="grid grid-cols-2 gap-2 mt-3 text-xs font-mono">
+                  <div className="rounded border border-border/40 px-2 py-1">
+                    <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Variable cap left</div>
+                    <div className="font-bold">{formatCurrency(discretionary.variableRemainingThisMonth)} <span className="text-muted-foreground font-normal">of {formatCurrency(discretionary.variableCap)}</span></div>
+                  </div>
+                  <div className="rounded border border-border/40 px-2 py-1">
+                    <div className="text-[10px] uppercase text-muted-foreground tracking-wider">CC balance owed</div>
+                    <div className="font-bold">{formatCurrency(discretionary.quicksilverBalanceOwed)}</div>
+                  </div>
+                </div>
               </>
             )}
           </CardContent>
@@ -294,9 +313,12 @@ export default function Dashboard() {
               <Row label="− Full-Month Fixed Bills (Include=TRUE)" value={savings.fullMonthFixedBills} negative />
               <Row label="− Variable Spend (prorated remaining)" value={savings.remainingVariableSpendProrated} negative />
               <Row label="− Known One-Time Costs (unpaid)" value={savings.knownOneTimeCosts} negative />
-              <Row label="− QuickSilver Accrual" value={savings.quicksilverAccrual} negative />
+              <Row label="− QuickSilver Balance Owed (manual CC payoff)" value={(savings as unknown as { quicksilverBalanceOwed?: number }).quicksilverBalanceOwed ?? 0} negative />
               <Row label="− Forward Reserve" value={savings.forwardReserve} negative />
               <Row label="= Estimated Monthly Savings" value={savings.estimatedMonthlySavings} bold />
+              <p className="text-[10px] text-muted-foreground italic pt-1">
+                Context: QuickSilver charges this month total {formatCurrency(savings.quicksilverAccrual)} (logged gas/food on card). They are already inside the variable-cap reservation; only the carry-over balance owed is reserved separately.
+              </p>
               {savings.matchGapActive && (
                 <div className="mt-3 pt-3 border-t border-border/30">
                   <p className="text-amber-700 dark:text-amber-400">401(k) Match Gap Active: {formatCurrency(savings.monthlyMatchGapCost)}/mo to capture full match.</p>
@@ -310,21 +332,46 @@ export default function Dashboard() {
         {discretionary && (
           <AccordionItem value="discretionary" className="border rounded-xl px-4 bg-card">
             <AccordionTrigger className="hover:no-underline font-mono text-sm py-4">
-              <span className="flex items-center gap-2"><FlaskConical className="h-4 w-4" />Discretionary — math breakdown</span>
+              <span className="flex items-center gap-2"><FlaskConical className="h-4 w-4" />Discretionary This Month — math breakdown</span>
             </AccordionTrigger>
             <AccordionContent className="pt-2 pb-6 space-y-3 font-mono text-sm">
-              <Row label="Safe to Spend" value={discretionary.safeToSpend} />
-              <Row label={`− Logged variable spend (cycle start ${discretionary.cycleStart})`} value={discretionary.variableSpentThisCycle} negative />
-              <Row label="= Discretionary This Cycle" value={discretionary.discretionaryThisCycle} bold />
-              <div className="pt-3 border-t border-border/30 space-y-2">
-                <Row label="Variable cap (this month)" value={discretionary.variableCap} />
-                <Row label="− Logged variable this month" value={discretionary.variableSpentThisMonth} negative />
-                <Row label="= Variable remaining this month" value={discretionary.variableRemainingThisMonth} bold />
-                <Row label="QuickSilver accrued (logged this month)" value={discretionary.quicksilverAccruedThisMonth} />
-                {discretionary.undatedOneTimeOutstanding > 0 && (
+              <p className="text-xs text-muted-foreground italic pb-1">
+                Horizon: today through {formatDate(discretionary.monthEnd)}. Mirrors the workbook B62 model, reframed as remaining spending capability.
+              </p>
+              <Row label="Checking Balance" value={discretionary.checking} />
+              <Row label={`+ Remaining Paychecks This Month (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`} value={discretionary.remainingPaychecksThisMonth} />
+              <Row label="+ Confirmed Commission (not yet received)" value={discretionary.confirmedCommissionUnreceived} />
+              <Row label="= Total Inflows Available" value={discretionary.totalInflowsAvailable} bold />
+              <Row label="− Bills Remaining This Month (Include=TRUE)" value={discretionary.billsRemainingThisMonth} negative />
+              <Row label="− One-Time Expenses dated through month end" value={discretionary.oneTimeDatedThisMonth} negative />
+              <Row label="− Variable Cap Remaining (gas + food reserve)" value={discretionary.variableRemainingThisMonth} negative />
+              <Row label="− QuickSilver Balance Owed (CC payoff)" value={discretionary.quicksilverBalanceOwed} negative />
+              <Row label="− Minimum Cushion" value={discretionary.minimumCushion} negative />
+              <Row label="= Discretionary This Month" value={discretionary.discretionaryThisMonth} bold />
+
+              <div className="pt-3 border-t border-border/30 space-y-2 mt-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Context</p>
+                <Row label="Variable spent this month (logged gas + food)" value={discretionary.variableSpentThisMonth} />
+                <Row label="Of which charged on QuickSilver this month" value={discretionary.quicksilverAccruedThisMonth} />
+                <Row label="Confirmed commission already received this month" value={discretionary.confirmedCommissionAlready} />
+                <Row label="Cycle Safe-to-Spend (paycheck horizon, for reference)" value={discretionary.safeToSpend} />
+                {discretionary.oneTimeUndatedAdvisory > 0 && (
                   <p className="text-xs text-amber-700 dark:text-amber-400 pt-2">
-                    Advisory: {formatCurrency(discretionary.undatedOneTimeOutstanding)} of one-time expenses are unpaid without a due date — set due dates so they affect Required Hold.
+                    Advisory: {formatCurrency(discretionary.oneTimeUndatedAdvisory)} of one-time expenses are unpaid without a due date — set due dates so they're reserved.
                   </p>
+                )}
+                {discretionary.billsRemainingDetail.length > 0 && (
+                  <div className="pt-2">
+                    <p className="text-xs text-muted-foreground mb-1">Remaining bills this month:</p>
+                    <ul className="text-xs space-y-0.5">
+                      {discretionary.billsRemainingDetail.map((b) => (
+                        <li key={b.id} className="flex justify-between">
+                          <span>{b.name} (day {b.dueDay})</span>
+                          <span>{formatCurrency(b.amount)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             </AccordionContent>
@@ -354,7 +401,7 @@ function CycleSettingsInline() {
   useEffect(() => {
     if (!assumps) return;
     const next: Record<string, string> = {};
-    for (const key of ["minimum_cushion", "pending_holds_reserve", "alert_threshold", "variable_spend_until_payday"]) {
+    for (const key of ["minimum_cushion", "pending_holds_reserve", "alert_threshold", "variable_spend_until_payday", "quicksilver_balance_owed"]) {
       const a = assumps.find((x) => x.key === key);
       if (a && drafts[key] === undefined) next[key] = a.value;
     }
@@ -380,13 +427,14 @@ function CycleSettingsInline() {
     { key: "pending_holds_reserve", label: "Pending Holds", help: "In-flight charges buffer" },
     { key: "alert_threshold", label: "Yellow Threshold", help: "Triggers YELLOW status" },
     { key: "variable_spend_until_payday", label: "Spent Variable", help: "Already-spent this cycle" },
+    { key: "quicksilver_balance_owed", label: "QuickSilver Balance", help: "CC balance to pay mid-next-month" },
   ];
 
   return (
     <Card>
       <CardHeader className="pb-2"><CardTitle className="text-sm font-medium uppercase tracking-wider">Cycle Settings (inline edit)</CardTitle></CardHeader>
       <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           {fields.map((f) => (
             <div key={f.key} className="grid gap-1">
               <Label className="text-xs">{f.label}</Label>

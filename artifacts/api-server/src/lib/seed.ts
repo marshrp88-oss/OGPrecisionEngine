@@ -52,6 +52,7 @@ async function seed() {
   await upsertAssumption("commission_tax_rate", "0.435");
   await upsertAssumption("hysa_target", "15000");
   await upsertAssumption("variable_spend_until_payday", "0");
+  await upsertAssumption("quicksilver_balance_owed", "0");
   console.log("  Assumptions upserted.");
 
   // === A1: Purge fake data ===

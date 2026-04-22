@@ -803,6 +803,7 @@ export const GetMonthlySavingsResponse = zod.object({
   remainingVariableSpendProrated: zod.number(),
   knownOneTimeCosts: zod.number(),
   quicksilverAccrual: zod.number(),
+  quicksilverBalanceOwed: zod.number(),
   forwardReserve: zod.number(),
   estimatedMonthlySavings: zod.number(),
   matchGapActive: zod.boolean(),
