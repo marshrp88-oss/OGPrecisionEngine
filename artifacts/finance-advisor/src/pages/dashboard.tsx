@@ -12,6 +12,9 @@ import {
   useGetAssumptions,
   getGetAssumptionsQueryKey,
   useUpdateAssumption,
+  useGetOneTimeExpenses,
+  getGetOneTimeExpensesQueryKey,
+  useUpdateOneTimeExpense,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -170,6 +173,40 @@ export default function Dashboard() {
         </Alert>
       )}
 
+      {/* Big status banner — playbook traffic light */}
+      <div
+        className={`rounded-xl border-2 px-6 py-4 flex items-center justify-between gap-4 ${
+          cycle.status === "GREEN"
+            ? "border-success/40 bg-success/10"
+            : cycle.status === "YELLOW"
+              ? "border-warning/40 bg-warning/10"
+              : "border-destructive/40 bg-destructive/10"
+        }`}
+        data-testid="banner-cycle-status"
+      >
+        <div className="flex items-center gap-4">
+          <div
+            className={`h-3 w-3 rounded-full ${
+              cycle.status === "GREEN" ? "bg-success" : cycle.status === "YELLOW" ? "bg-warning" : "bg-destructive"
+            } animate-pulse`}
+          />
+          <div>
+            <p className="text-xs uppercase tracking-widest text-muted-foreground font-medium">Cycle Status</p>
+            <p className="text-2xl font-bold tracking-tight">
+              {cycle.status === "GREEN"
+                ? "GREEN — Spend safely"
+                : cycle.status === "YELLOW"
+                  ? "YELLOW — Tighten variable spend"
+                  : "RED — Hold all discretionary spend"}
+            </p>
+          </div>
+        </div>
+        <div className="text-right font-mono">
+          <p className="text-xs uppercase tracking-widest text-muted-foreground">Safe to Spend</p>
+          <p className="text-3xl font-bold tracking-tighter">{formatCurrency(cycle.safeToSpend)}</p>
+        </div>
+      </div>
+
       {/* Top hero: Safe to Spend + Discretionary side-by-side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card className="border-2 shadow-xl overflow-hidden relative">
@@ -245,18 +282,17 @@ export default function Dashboard() {
 
       <CycleSettingsInline />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
           <CardHeader><CardTitle className="text-sm font-medium uppercase tracking-wider">Bills In Current Cycle</CardTitle></CardHeader>
           <CardContent>
             {billsInCycle.length === 0 ? (
-              <p className="text-sm text-muted-foreground font-mono">None. All Include=TRUE bills due before the next payday have already cleared (or fall on/after payday).</p>
+              <p className="text-sm text-muted-foreground font-mono">None. All Include=TRUE bills due before the next payday have cleared.</p>
             ) : (
               <table className="w-full text-sm font-mono">
                 <thead>
                   <tr className="border-b text-muted-foreground text-xs uppercase">
                     <th className="text-left py-2">Bill</th>
-                    <th className="text-left py-2">Cat</th>
                     <th className="text-right py-2">Day</th>
                     <th className="text-right py-2">Amount</th>
                   </tr>
@@ -264,14 +300,13 @@ export default function Dashboard() {
                 <tbody>
                   {billsInCycle.map((b) => (
                     <tr key={b.id} className="border-b border-border/40">
-                      <td className="py-2">{b.name}</td>
-                      <td className="py-2 capitalize text-muted-foreground">{b.category}</td>
+                      <td className="py-2 truncate max-w-[120px]">{b.name}</td>
                       <td className="text-right py-2">{b.dueDay}</td>
                       <td className="text-right py-2 font-bold">{formatCurrency(b.amount)}</td>
                     </tr>
                   ))}
                   <tr className="font-bold">
-                    <td colSpan={3} className="py-2 text-right">Total</td>
+                    <td colSpan={2} className="py-2 text-right">Total</td>
                     <td className="text-right py-2">{formatCurrency(cycle.billsDueBeforePayday)}</td>
                   </tr>
                 </tbody>
@@ -279,6 +314,8 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+
+        <OneTimeInlineWidget />
 
         <VariableSpendWidget />
       </div>
@@ -568,6 +605,89 @@ function VariableSpendWidget() {
           </ul>
         )}
         <p className="text-[10px] text-muted-foreground mt-2 italic">QuickSilver accrual is your statement reserve — it's already deducted from Monthly Savings even before the bill posts.</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function OneTimeInlineWidget() {
+  const { data: oneTimes } = useGetOneTimeExpenses({ query: { queryKey: getGetOneTimeExpensesQueryKey() } });
+  const updateOte = useUpdateOneTimeExpense();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  const unpaid = (oneTimes ?? []).filter((o) => !o.paid);
+  const datedThisMonth = unpaid.filter((o) => {
+    if (!o.dueDate) return false;
+    const d = new Date(o.dueDate as unknown as string);
+    return d >= today && d <= monthEnd;
+  });
+  const undated = unpaid.filter((o) => !o.dueDate);
+  const totalThisMonth = datedThisMonth.reduce((s, o) => s + o.amount, 0);
+  const totalUndated = undated.reduce((s, o) => s + o.amount, 0);
+
+  const togglePaid = (id: number, paid: boolean) => {
+    updateOte.mutate({ id, data: { paid: !paid } }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetOneTimeExpensesQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetMonthlySavingsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+        toast({ title: paid ? "Marked unpaid" : "Marked paid" });
+      },
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2 flex-row items-center justify-between">
+        <CardTitle className="text-sm font-medium uppercase tracking-wider">One-Time This Month</CardTitle>
+        <a href="one-time" className="text-xs text-muted-foreground hover:text-foreground">All →</a>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-2 mb-3 text-sm font-mono">
+          <div className="rounded border p-2">
+            <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Dated this month</div>
+            <div className="text-lg font-bold">{formatCurrency(totalThisMonth)}</div>
+          </div>
+          <div className="rounded border p-2">
+            <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Undated unpaid</div>
+            <div className={`text-lg font-bold ${totalUndated > 0 ? "text-warning" : ""}`}>{formatCurrency(totalUndated)}</div>
+          </div>
+        </div>
+        {unpaid.length === 0 ? (
+          <p className="text-sm text-muted-foreground font-mono">All clear — no unpaid one-times.</p>
+        ) : (
+          <ul className="space-y-1 text-sm font-mono">
+            {[...datedThisMonth, ...undated].slice(0, 6).map((o) => (
+              <li key={o.id} className="flex items-center justify-between py-1 border-b border-border/40">
+                <span className="flex items-center gap-2 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={o.paid}
+                    onChange={() => togglePaid(o.id, o.paid)}
+                    data-testid={`check-onetime-${o.id}`}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className="truncate text-xs">{o.description}</span>
+                  {!o.dueDate && <Badge variant="secondary" className="text-[10px] px-1 py-0">undated</Badge>}
+                </span>
+                <span className="flex items-center gap-2 flex-shrink-0">
+                  {o.dueDate && <span className="text-xs text-muted-foreground">{formatDate(o.dueDate as unknown as string)}</span>}
+                  <span>{formatCurrency(o.amount)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {totalUndated > 0 && (
+          <p className="text-[10px] text-warning mt-2 italic">
+            Undated unpaid items aren't reserved in Safe-to-Spend. Set due dates to include them.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

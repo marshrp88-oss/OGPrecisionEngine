@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, bills, assumptions } from "@workspace/db";
+import { db, bills, assumptions, commissions } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import {
   GetBillsResponse,
@@ -11,61 +11,188 @@ import {
   UpdateBillResponse,
   DeleteBillParams,
 } from "@workspace/api-zod";
+import { enumerateBills, type EnrichedBill } from "../lib/cycleBillEngine";
+import { deriveNextPayday } from "../lib/financeEngine";
 
 const router: IRouter = Router();
 
-function computeNextDueDate(dueDay: number): string {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  let d = new Date(today.getFullYear(), today.getMonth(), dueDay);
-  if (d < today) {
-    d = new Date(today.getFullYear(), today.getMonth() + 1, dueDay);
-  }
+function isoDate(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
-async function enrichBill(bill: typeof bills.$inferSelect) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const nextDueDateStr = computeNextDueDate(bill.dueDay);
-  const nextDueDate = new Date(nextDueDateStr);
-
-  // Get next payday from assumptions
-  const [payRow] = await db.select().from(assumptions).where(eq(assumptions.key, "next_payday_date"));
-  const nextPayday = payRow ? new Date(payRow.value) : null;
-
-  // Check active_from/active_until
-  let isActivePeriod = true;
-  if (bill.activeFrom || bill.activeUntil) {
-    const activeFrom = bill.activeFrom ? new Date(bill.activeFrom) : null;
-    const activeUntil = bill.activeUntil ? new Date(bill.activeUntil) : null;
-    if (activeFrom && today < activeFrom) isActivePeriod = false;
-    if (activeUntil && today > activeUntil) isActivePeriod = false;
-  }
-
-  // Column H AND-gate: include=TRUE, amount>0, dueDate>=today, dueDate<nextPayday
-  const amount = parseFloat(bill.amount);
-  const countsThisCycle =
-    bill.includeInCycle &&
-    amount > 0 &&
-    isActivePeriod &&
-    nextDueDate >= today &&
-    nextPayday !== null &&
-    nextDueDate < nextPayday;
-
+function toApi(b: EnrichedBill) {
   return {
-    ...bill,
-    amount,
-    countsThisCycle,
-    nextDueDate: nextDueDateStr,
+    id: b.id,
+    name: b.name,
+    amount: b.amount,
+    dueDay: b.dueDay,
+    frequency: b.frequency,
+    category: b.category,
+    autopay: b.autopay,
+    notes: b.notes,
+    includeInCycle: b.includeInCycle,
+    activeFrom: b.activeFrom ? isoDate(b.activeFrom) : null,
+    activeUntil: b.activeUntil ? isoDate(b.activeUntil) : null,
+    countsThisCycle: b.countsThisCycle,
+    nextDueDate: isoDate(b.nextDueDate),
+    daysUntilDue: b.daysUntilDue,
+    isActivePeriod: b.isActivePeriod,
   };
 }
 
+async function enrichBillRow(bill: typeof bills.$inferSelect) {
+  const all = await enumerateBills();
+  const found = all.find((x) => x.id === bill.id);
+  if (!found) {
+    return {
+      ...bill,
+      amount: parseFloat(bill.amount),
+      countsThisCycle: false,
+      nextDueDate: isoDate(new Date()),
+    };
+  }
+  return toApi(found);
+}
+
 router.get("/bills", async (_req, res): Promise<void> => {
-  const rows = await db.select().from(bills).orderBy(bills.dueDay);
-  const enriched = await Promise.all(rows.map(enrichBill));
-  res.json(GetBillsResponse.parse(enriched));
+  const all = await enumerateBills();
+  res.json(GetBillsResponse.parse(all.map(toApi)));
+});
+
+/**
+ * Bills summary: rich aggregates for the Bills page.
+ * Single round-trip — no client-side rollup math required.
+ */
+router.get("/bills/summary", async (_req, res): Promise<void> => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const all = await enumerateBills(today);
+  const nextPayday = deriveNextPayday(today);
+
+  // ----- Income context -----
+  const allAssumps = await db.select().from(assumptions);
+  const A = (k: string, dflt = 0) => {
+    const r = allAssumps.find((a) => a.key === k);
+    return r ? parseFloat(r.value) : dflt;
+  };
+  const baseNetIncome = A("base_net_income", 3220);
+  const variableCap = A("variable_spend_cap", 600);
+
+  // Confirmed commission expected this calendar month (paid OR scheduled)
+  const allCommissions = await db.select().from(commissions);
+  let commissionThisMonth = 0;
+  for (const c of allCommissions) {
+    if (!c.payoutDate) continue;
+    const pd = new Date(c.payoutDate);
+    if (pd.getFullYear() === today.getFullYear() && pd.getMonth() === today.getMonth()) {
+      if (c.status === "paid" || c.status === "confirmed") {
+        commissionThisMonth += parseFloat(c.takeHome);
+      }
+    }
+  }
+  const totalMonthIncome = baseNetIncome + commissionThisMonth;
+
+  // ----- Totals -----
+  const includedBills = all.filter((b) => b.countsThisMonth);
+  const excludedBills = all.filter((b) => !b.includeInCycle || b.amount <= 0);
+  const monthlyIncluded = includedBills.reduce((s, b) => s + b.amount, 0);
+  const monthlyAll = all.reduce((s, b) => s + b.amount, 0);
+  const annualIncluded = monthlyIncluded * 12;
+  const percentOfNetIncome =
+    totalMonthIncome > 0 ? (monthlyIncluded / totalMonthIncome) * 100 : 0;
+
+  // ----- Category breakdown (Include=TRUE only) -----
+  const categories = Array.from(new Set(includedBills.map((b) => b.category)));
+  const categoryBreakdown = categories.map((cat) => {
+    const items = includedBills.filter((b) => b.category === cat);
+    const monthly = items.reduce((s, b) => s + b.amount, 0);
+    return {
+      category: cat,
+      count: items.length,
+      monthly: Math.round(monthly * 100) / 100,
+      annual: Math.round(monthly * 12 * 100) / 100,
+      percentOfBills: monthlyIncluded > 0 ? (monthly / monthlyIncluded) * 100 : 0,
+      percentOfIncome: totalMonthIncome > 0 ? (monthly / totalMonthIncome) * 100 : 0,
+    };
+  });
+
+  // ----- Autopay audit -----
+  const autopayBills = includedBills.filter((b) => b.autopay);
+  const manualBills = includedBills.filter((b) => !b.autopay);
+  const autopayMonthly = autopayBills.reduce((s, b) => s + b.amount, 0);
+  const manualMonthly = manualBills.reduce((s, b) => s + b.amount, 0);
+  const upcomingManual = manualBills
+    .filter((b) => b.daysUntilDue >= 0 && b.daysUntilDue <= 14)
+    .sort((a, b) => a.daysUntilDue - b.daysUntilDue);
+
+  // ----- Upcoming timeline (next 14 days, all included bills) -----
+  const upcomingTimeline = includedBills
+    .filter((b) => b.daysUntilDue >= 0 && b.daysUntilDue <= 14)
+    .sort((a, b) => a.daysUntilDue - b.daysUntilDue)
+    .map((b) => ({
+      id: b.id,
+      name: b.name,
+      amount: Math.round(b.amount * 100) / 100,
+      category: b.category,
+      autopay: b.autopay,
+      dueDay: b.dueDay,
+      nextDueDate: isoDate(b.nextDueDate),
+      daysUntilDue: b.daysUntilDue,
+      inCycle: b.countsThisCycle,
+      risk: b.daysUntilDue <= 3 ? "high" : b.daysUntilDue <= 7 ? "medium" : "low",
+    }));
+
+  // ----- Income vs obligations -----
+  const fixedBills = monthlyIncluded;
+  const residualAfterFixed = totalMonthIncome - fixedBills;
+  const residualAfterVariable = residualAfterFixed - variableCap;
+  const residualPct = totalMonthIncome > 0 ? (residualAfterVariable / totalMonthIncome) * 100 : 0;
+
+  res.json({
+    asOf: isoDate(today),
+    nextPayday: isoDate(nextPayday),
+    totals: {
+      monthlyIncluded: Math.round(monthlyIncluded * 100) / 100,
+      monthlyAll: Math.round(monthlyAll * 100) / 100,
+      annualIncluded: Math.round(annualIncluded * 100) / 100,
+      activeCount: includedBills.length,
+      excludedCount: excludedBills.length,
+      percentOfNetIncome: Math.round(percentOfNetIncome * 10) / 10,
+    },
+    income: {
+      baseNetIncome,
+      commissionThisMonth: Math.round(commissionThisMonth * 100) / 100,
+      totalMonthIncome: Math.round(totalMonthIncome * 100) / 100,
+    },
+    categoryBreakdown: categoryBreakdown.map((c) => ({
+      ...c,
+      percentOfBills: Math.round(c.percentOfBills * 10) / 10,
+      percentOfIncome: Math.round(c.percentOfIncome * 10) / 10,
+    })),
+    autopayAudit: {
+      autopayCount: autopayBills.length,
+      autopayMonthly: Math.round(autopayMonthly * 100) / 100,
+      manualCount: manualBills.length,
+      manualMonthly: Math.round(manualMonthly * 100) / 100,
+      manualPct: monthlyIncluded > 0 ? Math.round((manualMonthly / monthlyIncluded) * 1000) / 10 : 0,
+      upcomingManual: upcomingManual.map((b) => ({
+        id: b.id,
+        name: b.name,
+        amount: Math.round(b.amount * 100) / 100,
+        nextDueDate: isoDate(b.nextDueDate),
+        daysUntilDue: b.daysUntilDue,
+      })),
+    },
+    upcomingTimeline,
+    incomeVsObligations: {
+      totalMonthIncome: Math.round(totalMonthIncome * 100) / 100,
+      fixedBills: Math.round(fixedBills * 100) / 100,
+      variableCap,
+      residualAfterFixed: Math.round(residualAfterFixed * 100) / 100,
+      residualAfterAll: Math.round(residualAfterVariable * 100) / 100,
+      residualPct: Math.round(residualPct * 10) / 10,
+    },
+  });
 });
 
 router.post("/bills", async (req, res): Promise<void> => {
@@ -79,7 +206,7 @@ router.post("/bills", async (req, res): Promise<void> => {
     res.status(500).json({ error: "Failed to create bill" });
     return;
   }
-  const enriched = await enrichBill(row);
+  const enriched = await enrichBillRow(row);
   res.status(201).json(enriched);
 });
 
@@ -94,7 +221,7 @@ router.get("/bills/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Bill not found" });
     return;
   }
-  res.json(GetBillResponse.parse(await enrichBill(row)));
+  res.json(GetBillResponse.parse(await enrichBillRow(row)));
 });
 
 router.patch("/bills/:id", async (req, res): Promise<void> => {
@@ -117,7 +244,7 @@ router.patch("/bills/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Bill not found" });
     return;
   }
-  res.json(UpdateBillResponse.parse(await enrichBill(row)));
+  res.json(UpdateBillResponse.parse(await enrichBillRow(row)));
 });
 
 router.delete("/bills/:id", async (req, res): Promise<void> => {

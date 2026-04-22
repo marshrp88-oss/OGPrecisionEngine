@@ -1,14 +1,14 @@
 import { db } from "@workspace/db";
 import {
   assumptions,
-  bills,
   oneTimeExpenses,
   variableSpend,
   balances,
   commissions,
   retirementPlan,
 } from "@workspace/db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
+import { enumerateBills, billsInCycle, billsThisMonth, forwardReserveFixed } from "./cycleBillEngine";
 
 export interface CycleState {
   checkingBalance: number;
@@ -151,32 +151,8 @@ export async function computeCycleState(): Promise<CycleState> {
 
   const paydayRisk = nextPaydayNominal ? isWeekend(nextPaydayNominal) : false;
 
-  const allBills = await db.select().from(bills);
-  let billsDueBeforePayday = 0;
-
-  for (const bill of allBills) {
-    if (!bill.includeInCycle) continue;
-    const amount = parseFloat(bill.amount);
-    if (amount <= 0) continue;
-
-    if (bill.activeFrom || bill.activeUntil) {
-      const activeFrom = bill.activeFrom ? new Date(bill.activeFrom) : null;
-      const activeUntil = bill.activeUntil ? new Date(bill.activeUntil) : null;
-      if (activeFrom && today < activeFrom) continue;
-      if (activeUntil && today > activeUntil) continue;
-    }
-
-    const dueDay = bill.dueDay;
-    let dueDateThisMonth = new Date(today.getFullYear(), today.getMonth(), dueDay);
-    if (dueDateThisMonth < today) {
-      dueDateThisMonth = new Date(today.getFullYear(), today.getMonth() + 1, dueDay);
-    }
-
-    const dueDate = dueDateThisMonth;
-    if (nextPayday && dueDate >= today && dueDate < nextPayday) {
-      billsDueBeforePayday += amount;
-    }
-  }
+  const cycleBills = await billsInCycle(today);
+  const billsDueBeforePayday = cycleBills.reduce((s, b) => s + b.amount, 0);
 
   const pendingHoldsReserve = await getAssumption("pending_holds_reserve", 0);
   const minimumCushion = await getAssumption("minimum_cushion", 0);
@@ -195,24 +171,9 @@ export async function computeCycleState(): Promise<CycleState> {
   }
 
   // Forward reserve: bills due 1st-7th of next month + 7 days prorated variable
-  let forwardReserveFixed = 0;
-  for (const bill of allBills) {
-    if (!bill.includeInCycle) continue;
-    const amount = parseFloat(bill.amount);
-    if (amount <= 0) continue;
-    const dueDay = bill.dueDay;
-    if (dueDay >= 1 && dueDay <= 7) {
-      if (bill.activeFrom || bill.activeUntil) {
-        const activeFrom = bill.activeFrom ? new Date(bill.activeFrom) : null;
-        const activeUntil = bill.activeUntil ? new Date(bill.activeUntil) : null;
-        if (activeFrom && today < activeFrom) continue;
-        if (activeUntil && today > activeUntil) continue;
-      }
-      forwardReserveFixed += amount;
-    }
-  }
+  const fwdFixed = await forwardReserveFixed(today);
   const perDayVariable = variableSpendCap / monthLengthDays;
-  const forwardReserve = forwardReserveFixed + 7 * perDayVariable;
+  const forwardReserve = fwdFixed + 7 * perDayVariable;
 
   // Required Hold per BUILD_SPEC §4.4: bills + pending + cushion + one-time only.
   // Forward Reserve is NOT subtracted from Safe to Spend.
@@ -316,20 +277,8 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
 
   const totalMonthIncome = baseNetIncome + confirmedCommission;
 
-  const allBills = await db.select().from(bills);
-  let fullMonthFixedBills = 0;
-  for (const bill of allBills) {
-    if (!bill.includeInCycle) continue;
-    const amount = parseFloat(bill.amount);
-    if (amount <= 0) continue;
-    if (bill.activeFrom || bill.activeUntil) {
-      const activeFrom = bill.activeFrom ? new Date(bill.activeFrom) : null;
-      const activeUntil = bill.activeUntil ? new Date(bill.activeUntil) : null;
-      if (activeFrom && today < activeFrom) continue;
-      if (activeUntil && today > activeUntil) continue;
-    }
-    fullMonthFixedBills += amount;
-  }
+  const monthBills = await billsThisMonth(today);
+  const fullMonthFixedBills = monthBills.reduce((s, b) => s + b.amount, 0);
 
   const daysToPayday = nextPayday ? Math.max(0, daysBetween(today, nextPayday)) : 0;
   const remainingVariableSpendProrated =
@@ -353,24 +302,9 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
   }
   const quicksilverBalanceOwed = await getAssumption("quicksilver_balance_owed", 0);
 
-  let forwardReserveFixed = 0;
-  for (const bill of allBills) {
-    if (!bill.includeInCycle) continue;
-    const amount = parseFloat(bill.amount);
-    if (amount <= 0) continue;
-    const dueDay = bill.dueDay;
-    if (dueDay >= 1 && dueDay <= 7) {
-      if (bill.activeFrom || bill.activeUntil) {
-        const activeFrom = bill.activeFrom ? new Date(bill.activeFrom) : null;
-        const activeUntil = bill.activeUntil ? new Date(bill.activeUntil) : null;
-        if (activeFrom && today < activeFrom) continue;
-        if (activeUntil && today > activeUntil) continue;
-      }
-      forwardReserveFixed += amount;
-    }
-  }
+  const fwdFixed2 = await forwardReserveFixed(today);
   const perDayVariable = variableSpendCap / monthLengthDays;
-  const forwardReserve = forwardReserveFixed + 7 * perDayVariable;
+  const forwardReserve = fwdFixed2 + 7 * perDayVariable;
 
   const estimatedMonthlySavings = Math.max(
     0,
