@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useGetCommissions,
   getGetCommissionsQueryKey,
@@ -180,6 +180,15 @@ function AddCommissionDialog() {
   const createCommission = useCreateCommission();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (open) {
+      setSalesMonth(currentYearMonth());
+      setMrrAchieved("");
+      setNrrAchieved("0");
+      setStatus("pending");
+    }
+  }, [open]);
 
   const handleSave = () => {
     if (!salesMonth || !mrrAchieved) {
