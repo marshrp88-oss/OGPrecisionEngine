@@ -136,8 +136,7 @@ router.post("/anthropic/conversations/:id/messages", async (req, res): Promise<v
 
   const stream = await anthropic.messages.stream({
     model: process.env.ANTHROPIC_MODEL ?? "claude-opus-4-7",
-    max_tokens: 4096,
-    temperature: 0.3,
+    max_tokens: 8192,
     system: systemPrompt,
     messages: anthropicMessages,
   });
