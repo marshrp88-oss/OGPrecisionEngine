@@ -21,7 +21,7 @@ router.get("/balances", async (_req, res): Promise<void> => {
       latest.push(row);
     }
   }
-  res.json(GetBalancesResponse.parse(latest));
+  res.json(GetBalancesResponse.parse(latest.map((b) => ({ ...b, amount: parseFloat(b.amount as unknown as string) }))));
 });
 
 router.post("/balances", async (req, res): Promise<void> => {
@@ -59,7 +59,7 @@ router.get("/balances/history", async (req, res): Promise<void> => {
     filtered = filtered.filter((r) => new Date(r.asOfDate) >= cutoff);
   }
 
-  res.json(GetBalanceHistoryResponse.parse(filtered));
+  res.json(GetBalanceHistoryResponse.parse(filtered.map((b) => ({ ...b, amount: parseFloat(b.amount as unknown as string) }))));
 });
 
 export default router;

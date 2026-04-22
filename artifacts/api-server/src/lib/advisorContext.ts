@@ -134,7 +134,7 @@ export async function buildAdvisorContext(): Promise<{
   const oneTimeRows = await db.select().from(oneTimeExpenses);
   const unpaidOneTime = oneTimeRows.filter((o) => !o.paid);
 
-  const vsRows = await db.select().from(variableSpend).orderBy(desc(variableSpend.entryDate));
+  const vsRows = await db.select().from(variableSpend).orderBy(desc(variableSpend.weekOf));
   const last4WeeksVs = vsRows.slice(0, 4);
 
   const credit = (await db.select().from(creditScores).orderBy(desc(creditScores.asOfDate)).limit(1))[0];
@@ -213,7 +213,7 @@ export async function buildAdvisorContext(): Promise<{
   lines.push("");
   lines.push("VARIABLE SPEND LOG (last 4 entries):");
   if (last4WeeksVs.length === 0) lines.push("- No entries");
-  else for (const v of last4WeeksVs) lines.push(`- ${v.entryDate}: ${fmt(parseFloat(v.amount))}${v.quicksilver ? " (QuickSilver)" : ""}${v.notes ? ` — ${v.notes}` : ""}`);
+  else for (const v of last4WeeksVs) lines.push(`- ${v.weekOf} [${v.category}]: ${fmt(parseFloat(v.amount))}${v.quicksilver ? " (QuickSilver)" : ""}${v.notes ? ` — ${v.notes}` : ""}`);
   lines.push("");
   lines.push("CREDIT SCORES:");
   if (credit) {

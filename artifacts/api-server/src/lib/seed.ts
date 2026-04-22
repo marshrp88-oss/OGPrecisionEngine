@@ -9,6 +9,7 @@ import {
   debt,
   creditScores,
   oneTimeExpenses,
+  variableSpend,
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { computeMrrPayout, computeNrrPayout, computeTakeHome, computePayoutDate } from "./financeEngine";
@@ -58,6 +59,7 @@ async function seed() {
   await db.delete(commissions);
   await db.delete(wealthSnapshots);
   await db.delete(oneTimeExpenses);
+  await db.delete(variableSpend);
   await db.delete(balances);
   await db.delete(debt);
   console.log("  Purged stale data: bills, commissions, snapshots, one-time, balances, debt.");
@@ -70,8 +72,9 @@ async function seed() {
     { accountType: "brokerage", amount: "35500.00", asOfDate: asOf, source: "seed", notes: "Schwab self-managed taxable" },
     { accountType: "401k", amount: "2200.00", asOfDate: asOf, source: "seed", notes: "Currently 4% contribution; planning bump to 8%" },
     { accountType: "roth_ira", amount: "0.00", asOfDate: asOf, source: "seed", notes: "Newly opened. Unfunded." },
+    { accountType: "vehicle", amount: "25000.00", asOfDate: asOf, source: "seed", notes: "2024 Toyota Camry — current market value (other_asset class)" },
   ]);
-  console.log("  Seeded 5 balances (current as of today).");
+  console.log("  Seeded 6 balances (current as of today, including Camry vehicle asset).");
 
   // === A3: Real bills ===
   // Car loan due day: confirmed by Marshall as the 1st of the month starting May.
@@ -86,8 +89,9 @@ async function seed() {
     { name: "Electric", amount: "175.00", dueDay: 16, frequency: "monthly", category: "essential", autopay: false, includeInCycle: true, notes: "Manual pay" },
     { name: "Gas", amount: "70.00", dueDay: 19, frequency: "monthly", category: "essential", autopay: false, includeInCycle: true, notes: "Manual pay" },
     { name: "EZ-Pass", amount: "10.00", dueDay: 22, frequency: "monthly", category: "essential", autopay: true, includeInCycle: true },
+    { name: "Capital One QuickSilver (variable)", amount: "0.00", dueDay: 25, frequency: "monthly", category: "variable", autopay: false, includeInCycle: false, notes: "Statement balance accrues from variable spend log; never auto-charged. Use Variable Spend Log to track." },
   ]);
-  console.log("  Seeded 10 real bills (car loan due day = 1st).");
+  console.log("  Seeded 11 real bills (car loan due day = 1st; QuickSilver tracker as variable, Include=FALSE).");
 
   // === A4: Historical commissions (compute payout/take_home from formulas) ===
   const commissionRows = [
@@ -120,7 +124,7 @@ async function seed() {
     { month: "2026-01-01", hysa: 12500, brok: 36073.35, k401: 1550, other: 0, car: 0, student: 30000 },
     { month: "2026-02-01", hysa: 12500, brok: 36073.35, k401: 1750, other: 0, car: 0, student: 30000 },
     { month: "2026-03-01", hysa: 12600, brok: 33962.45, k401: 1850.45, other: 0, car: 0, student: 30000 },
-    { month: "2026-04-01", hysa: 15000, brok: 35500, k401: 2200, other: 0, car: 18500, student: 30000 },
+    { month: "2026-04-01", hysa: 15000, brok: 35500, k401: 2200, other: 25000, car: 18500, student: 30000 },
   ];
   for (const s of snapshots) {
     const totalAssets = s.hysa + s.brok + s.k401 + s.other;
@@ -177,6 +181,18 @@ async function seed() {
     });
     console.log("  Seeded credit scores.");
   }
+
+  // === Variable spend log: seed a few sample QuickSilver entries for current month ===
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const week1 = new Date(monthStart); week1.setDate(monthStart.getDate() + 6);
+  const week2 = new Date(monthStart); week2.setDate(monthStart.getDate() + 13);
+  await db.insert(variableSpend).values([
+    { weekOf: week1.toISOString().split("T")[0], amount: "112.45", category: "groceries", quicksilver: true, notes: "Wegmans + Aldi" },
+    { weekOf: week1.toISOString().split("T")[0], amount: "38.20", category: "dining", quicksilver: true, notes: "Two takeout dinners" },
+    { weekOf: week2.toISOString().split("T")[0], amount: "65.00", category: "fuel", quicksilver: true, notes: "Shell pump 2 fills" },
+    { weekOf: week2.toISOString().split("T")[0], amount: "21.99", category: "household", quicksilver: false, notes: "Target run — debit, not on card" },
+  ]);
+  console.log("  Seeded 4 variable spend entries (3 QuickSilver + 1 debit).");
 
   // === A2: Retirement plan (new 401(k) match structure) ===
   // employerMatchRate field repurposed as matchMultiplier (0.50)

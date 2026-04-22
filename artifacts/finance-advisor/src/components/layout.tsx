@@ -1,20 +1,22 @@
 import { Link, useLocation } from "wouter";
-import { 
-  LayoutDashboard, 
-  Receipt, 
-  LineChart, 
-  TestTube, 
-  Landmark, 
+import {
+  LayoutDashboard,
+  Receipt,
+  LineChart,
+  TestTube,
+  Landmark,
   LandPlot,
   PiggyBank,
   MessageSquare,
-  Settings
+  Settings,
+  ClipboardList
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/", label: "Cycle Dashboard", icon: LayoutDashboard },
   { href: "/bills", label: "Bills Engine", icon: Receipt },
+  { href: "/one-time", label: "One-Time Expenses", icon: ClipboardList },
   { href: "/commissions", label: "Commissions", icon: LineChart },
   { href: "/sandbox", label: "Decision Sandbox", icon: TestTube },
   { href: "/wealth", label: "Wealth", icon: Landmark },

@@ -12,6 +12,7 @@ import Commissions from "@/pages/commissions";
 import Sandbox from "@/pages/sandbox";
 import Wealth from "@/pages/wealth";
 import Debt from "@/pages/debt";
+import OneTimeExpenses from "@/pages/one-time";
 import Retirement from "@/pages/retirement";
 import Advisor from "@/pages/advisor";
 import Settings from "@/pages/settings";
@@ -24,6 +25,7 @@ function Router() {
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/bills" component={Bills} />
+        <Route path="/one-time" component={OneTimeExpenses} />
         <Route path="/commissions" component={Commissions} />
         <Route path="/sandbox" component={Sandbox} />
         <Route path="/wealth" component={Wealth} />

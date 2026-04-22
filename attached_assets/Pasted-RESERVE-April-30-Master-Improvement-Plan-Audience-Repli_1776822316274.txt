@@ -1,0 +1,531 @@
+RESERVE — April 30 Master Improvement Plan
+Audience: Replit Agent 4, executed on April 30 when credits restore.
+Authority: This document supersedes both FIX_PLAN.md and FIX_PLAN_PART_K.md for the April 30 session. Where any of them conflict, this one wins.
+Scope: All currently-known defects, missing features, data corrections, and editability gaps, ordered by priority and engineering relevance.
+Meta-principle for this session: Every value displayed in the UI must be editable from that UI. The user should never need to prompt the AI agent to change their own data. If there is a number on screen that the user owns (balance, bill amount, commission, snapshot, score, parameter), there must be a click-to-edit affordance within 1 click of that number. This is not a feature — it is a design principle that must hold across every page.
+
+How to Use This Document
+
+Read the full list before starting. Do not batch-execute.
+Execute in priority order. Do not skip P0 to do P1 because P1 looks easier.
+Each item has Priority, Category, User Impact, Engineering Impact, Dependencies, and Verification.
+Mark items complete only when Verification passes.
+If credits run out mid-session, stop at a logical break point and leave the repo in a compilable state.
+
+Priority tiers:
+
+P0 — Critical. App is materially broken or misleading until fixed. Ship these before anything else.
+P1 — High. Core features missing or partially built. Ship these after P0.
+P2 — Medium. Real features but not blocking daily use.
+P3 — Low. Polish, tests, quality-of-life.
+
+
+TIER P0 — CRITICAL (ship first)
+P0-1. Discretionary This Cycle — new primary Dashboard output
+Category: Missing core output (the most important missing thing in the app)
+User Impact: This is the number the user built the entire system to produce. Safe to Spend answers "will I miss a bill" (defensive). Monthly Savings answers "what will this month leave behind" (retrospective). Neither answers the daily decision-making question: "what money is truly free — for savings, investing, or wants, without downstream consequence?" Without this, the app fails its core use case.
+Engineering Impact:
+
+New function discretionaryThisCycle(ctx) in lib/finance/financeEngine.ts
+New card on Dashboard, co-equal with Safe to Spend
+Unit test required
+
+Formula:
+typescriptfunction discretionaryThisCycle(ctx: FinanceContext): number {
+  const safeToSpend = computeSafeToSpend(ctx);
+  
+  // 1. Variable spend remaining at target pace through next payday
+  const daysToPayday = daysUntil(ctx.nextEffectivePayday);
+  const variableRemaining = Math.max(0, 
+    (daysToPayday / ctx.monthLengthDays) * ctx.variableSpendCap
+  );
+  
+  // 2. Cushion for bills in NEXT cycle (between next payday and payday+15)
+  // that the next paycheck can't cleanly absorb at $0 commission
+  const nextCycleBills = ctx.bills
+    .filter(b => b.include === true)
+    .filter(b => isDueInNextCycle(b, ctx.nextEffectivePayday))
+    .reduce((s, b) => s + b.amount, 0);
+  const nextPaycheckNet = ctx.baseNetPerPaycheck; // ~1575 at base
+  const nextCycleVariable = (15 / ctx.monthLengthDays) * ctx.variableSpendCap;
+  const nextCycleShortfall = Math.max(0, 
+    nextCycleBills + nextCycleVariable - nextPaycheckNet
+  );
+  
+  // 3. Buffer for irregulars (QuickSilver accrual not yet logged + 10% contingency)
+  const quicksilverUnlogged = ctx.variableSpendLog.currentMonthAccrual || 0;
+  const contingency = safeToSpend * 0.10;
+  
+  const discretionary = safeToSpend 
+    - variableRemaining 
+    - nextCycleShortfall 
+    - quicksilverUnlogged 
+    - contingency;
+  
+  return Math.max(0, discretionary);
+}
+UI:
+
+Card on Dashboard, same size as Safe to Spend, positioned to the right of it
+Title: "Discretionary This Cycle"
+Subtitle: "Free to save, invest, or spend — no bills, no buffers"
+Expandable "View breakdown" showing:
+
+  Safe to Spend                          $1,061.00
+  - Variable Spend to Payday            ($296.10)
+  - Next-Cycle Bill Cushion             ($250.00)  [or $0 if paycheck fully covers]
+  - QuickSilver Accrual (unlogged)      ($0.00)
+  - 10% Contingency Buffer              ($106.10)
+  = Truly Discretionary                 $408.80
+Dependencies: None. Can ship immediately.
+Verification:
+
+Unit test: given checking $2,494, payday May 7, $0 commission, standard bills → Discretionary ≈ $350-$450
+Displayed value updates in real-time when checking balance changes
+Breakdown expandable shows each subtraction with explanation
+
+
+P0-2. UI Editability Sweep — universal inline edit affordances
+Category: Architectural principle / cross-cutting fix
+User Impact: Currently the user must burn AI credits (literal dollars) to make data changes the UI should handle directly. This is wrong at a philosophical level. Also creates anxiety around simple edits.
+Engineering Impact: Touches every page. Add edit affordances on every user-owned value. Estimate: 3-4 hours of focused work if done systematically.
+The editability matrix — every item below must be directly editable from where it's displayed, without touching the AI agent:
+PageCurrently EditableMust Be Editable After P0-2Dashboard / Cycle DashboardUpdate Balance (modal)+ Click-to-edit on checking balance inline; + Click-to-edit on pending holds, minimum cushion, posting cushion directly from card; + Click-to-edit on current variable spend estimateBills EngineAdd/Edit/Delete via modalAll fields in the modal (name, amount, due_day, frequency, category, autopay, notes); + Inline toggle Include; + Click-to-edit amount inline from list view (hover reveals input)CommissionsAdd Commission (modal)+ Edit existing row (click row → modal with current values); + Delete row; + Edit sales_month, MRR, NRR freely; + Mark status paid/pending manuallyDecision SandboxRuntime inputs editable+ Save Scenario button (see P2-6); + Edit saved scenarios; + Delete saved scenarios; + Pre-populate from real purchase data (remove $315 pre-purchase target)Wealth ManagementAdd Snapshot, Credit Scores (modals)+ Edit any historical snapshot row inline (click row → modal); + Delete snapshots; + Edit credit scores historical entries; + Click-to-edit individual account balance without creating new snapshot; + Edit vehicle asset valueDebt StrategyAdd Debt (modal)+ Edit existing debt entries (rate, balance, status); + Delete entries; + Edit assumptions (market return, standard term)RetirementPlan Parameters editableAlready good. Verify all fields save correctly. + Add 2026 Roth contribution target fieldAI AdvisorSend message+ Rename conversation; + Delete conversation; + Export conversation as markdownSettingsAll 12 params editableAlready good. + Add ability to edit commission tier rates directly (for when Odoo changes comp plan); + Add ability to edit MRR/NRR tier breakpoints
+Specific implementation patterns:
+
+Inline edit pattern: Any dollar value in a card should support double-click → inline input → Enter to save. Use a simple controlled input component. Preserve formatting on blur.
+Modal edit pattern: Table rows support single-click → opens modal pre-filled with current values → Save. All existing Add modals should double as Edit modals.
+Edit/delete icons on hover: Every table row reveals pencil and trash icons on hover (currently some do, make it universal).
+No "add then delete old" patterns: The user should never need to create a new row to update an old value. Direct edit is required.
+
+Dependencies: None. Can start immediately.
+Verification: Walk through every page and confirm every user-owned value has a click-path to edit that does not involve the AI agent. Make a checklist and tick through it.
+
+P0-3. One-Time Expenses Feature (full implementation)
+Category: Missing core feature
+User Impact: Without this, the app cannot represent reality. The user's April was dominated by one-time costs (taxes, tickets, car down payment, gift) — none of which fit anywhere in the current UI. This is a correctness failure, not a polish issue. The Discretionary and Monthly Savings numbers (P0-1, P1-3) cannot be accurate without one-time expenses wired in.
+Engineering Impact:
+
+Verify one_time_expenses table exists per BUILD_SPEC.md §5.1. If not, create it.
+Build Dashboard section + dedicated /one-time page
+Wire into safeToSpend(), monthlySavingsEstimate(), and discretionaryThisCycle()
+
+Full spec: See FIX_PLAN_PART_K.md §K2 for complete details. Summary:
+
+Fields: name, amount, due_date (nullable), paid, notes
+Status badges: [IN CYCLE HOLD] / [Next cycle] / [Undated] / [PAID] / [OVERDUE]
+In-cycle expenses reduce Safe to Spend
+All unpaid expenses reduce Monthly Savings (regardless of date)
+Full CRUD from UI (per P0-2)
+
+Seeding: Ask user what's active before seeding. Do not assume. Likely current entries:
+
+Inspection Ticket, contested — amount and date TBD by user
+Speeding Ticket, contested — amount and date TBD by user
+April federal taxes — likely already paid, mark paid
+
+Dependencies: None. P0-1 (Discretionary) benefits from this but can ship without it initially.
+Verification: See FIX_PLAN_PART_K.md §K7.
+
+P0-4. Car as Asset — fix Wealth Management net worth calculation
+Category: Data model bug / correctness issue
+User Impact: Net worth currently shows $4,200. Real net worth including the Camry is ~$29,200. Every wealth decision and trajectory display is distorted. The Net Worth Trend chart shows a fake collapse from March to April that did not happen.
+Engineering Impact:
+
+Add vehicle row to accounts table
+Add other_assets value to April monthly_net_worth row
+Verify Wealth page sums other_assets into Total Assets
+
+Implementation:
+
+Insert into accounts:
+
+name: "Vehicle (2024 Camry)"
+account_type: "other_asset"
+balance: 25000.00
+as_of_date: 2026-04-21
+notes: "Purchase $25,500 April 2026. CPO, 33k miles. Value from KBB/manufacturer trade-in estimate. Update annually."
+
+Update April 2026 monthly_net_worth row:
+
+other_assets: 25000.00
+(existing: hysa 15000, brokerage 35500, k401 2200, other_assets was 0, car_loan 18500, student_loans 30000)
+
+Corrected April net worth: $77,700 assets − $48,500 liabilities = $29,200
+Add UI: Vehicle value should be editable from Wealth page (per P0-2). Show it as a line item in the snapshot with note "Updated {date}, from {source}."
+Document annual review: Add a reminder entry (could be in Settings or a "Review Cadence" page) to update vehicle value each April.
+
+Dependencies: None.
+Verification:
+
+Wealth Management page shows Net Worth $29,200 (not $4,200)
+Total Assets $77,700 (not $52,700)
+Net Worth Trend chart shows gradual trajectory, not a cliff
+Vehicle value is editable from the Wealth page
+
+
+P0-5. Bills Page "In Cycle Hold" Badge Logic Fix
+Category: Bug in existing feature
+User Impact: The Bills page shows five bills flagged "In cycle hold" for the current cycle when the correct answer is zero (everything is post-paid for the April 22 cycle, and the next cycle anchored at May 7 is not yet current). The user cannot trust the badges.
+Engineering Impact: Small surgical fix. Likely a wrong payday reference in the Bills page component.
+Root cause hypothesis: The Bills page is likely computing "in cycle" using nextPayday = today + 15 days or similar heuristic instead of pulling the live nextEffectivePayday from the shared FinanceContext used by the Dashboard.
+Fix:
+
+Audit the cycle-hold badge computation in the Bills page component
+Ensure it uses the same nextEffectivePayday that safeToSpend uses
+Ensure the strict < rule from BUILD_SPEC.md §4.4 is applied (bills due ON payday are excluded from current cycle)
+
+Verification:
+
+On April 21 with payday April 22: only bills with next due date strictly between today and April 22 are flagged. Result: zero badges.
+Advance system clock to April 23: bills with next due date strictly between April 23 and May 7 are flagged. Result: five badges (Car Loan May 1, Verizon May 2, Claude May 3, Rent May 4, EZ-Pass May 22 — wait, EZ-Pass is day 22 which equals May 7? No, May 22 > May 7, so excluded).
+Actual five-in-cycle for a post-April-22 state: Car Loan (5/1) + Verizon (5/2) + Claude (5/3) + Rent (5/4) = 4 bills, not 5. Confirm EZ-Pass is correctly excluded until May 22 is in a cycle.
+
+
+P0-6. Anthropic Model String Fix
+Category: Configuration bug
+User Impact: The system-prompt assembly code uses claude-opus-4-5 which may or may not be a valid model name. If invalid, the SDK either errors or silently falls back to a weaker default. Either way, the advisor is not using the best available model.
+Engineering Impact: One-line fix.
+Fix: In lib/advisor/ (or wherever the API call lives), change:
+typescriptmodel: 'claude-opus-4-5'
+to:
+typescriptmodel: 'claude-opus-4-7'
+If the user wants cost control, add an env var override: ANTHROPIC_MODEL=claude-sonnet-4-6 for cheaper runs.
+Dependencies: None.
+Verification: Make an advisor request, verify it completes. Check request logs (Replit shows these) and confirm the model string used.
+
+TIER P1 — HIGH (ship after P0)
+P1-1. Monthly Savings Estimate Card on Dashboard
+Category: Missing Dashboard output (the third of three primary numbers)
+User Impact: Per FIX_PLAN.md §E2.5. Currently users must navigate to the Retirement page to see the (previously wrong) Monthly Savings number. Should be a co-equal card on the Dashboard alongside Safe to Spend and Discretionary.
+Engineering Impact: UI only. monthlySavingsEstimate() is already correct in financeEngine.ts (verified at ~$142 last session).
+Implementation:
+
+Add card to Dashboard grid below the three primary cards (Safe / Discretionary / Status)
+Show value with tooltip: "Forward-looking. What this month will leave behind after all bills, variable spend at cap, forward reserve, and known costs. Assumes $0 commission unless confirmed."
+Expandable "View breakdown" showing:
+
+  Base Net Income                    $3,220.00
+  + Confirmed Commission (this mo.)  $0.00
+  = Total Month Income               $3,220.00
+  
+  - Full-Month Fixed Bills          ($1,833.95)
+  - Remaining Variable (prorated)   ($19.74)
+  - Known One-Time Costs            ($0.00)
+  - QuickSilver Accrual             ($0.00)
+  - Forward Reserve                 ($1,561.16)
+  
+  = Monthly Savings                 ($194.85)  [MAX(0, X)]
+  Displayed: $0.00
+When this goes negative, the displayed value is $0 per MAX rule, but the breakdown shows the true math so the user understands the pressure.
+Dependencies: None (math already correct).
+Verification: Dashboard shows Monthly Savings card. Value matches monthlySavingsEstimate() unit test.
+
+P1-2. Advisor Data Context Expandable (C3 from original plan)
+Category: Advisor completeness (deferred in pass 1)
+User Impact: Every advisor message currently has no audit trail. User cannot verify which data the advisor saw. This makes the advisor's numbers unverifiable. For a financial app, unverifiable is untrustworthy.
+Engineering Impact: UI expansion. Data already exists (data_context_snapshot JSONB column per spec). Need to render it.
+Implementation:
+
+On every assistant message, small icon (📊 or ℹ️) at the end
+Click reveals <details> pane showing the Live Data Snapshot that was in the system prompt for that turn
+Layout mirrors §C1 Section 4 of the previous fix plan (accounts, bills, cycle, commissions, variable log, one-time, cycle settings)
+Pretty-print the JSON or format as sectioned text
+
+Dependencies: Advisor must be storing data_context_snapshot on each message. Verify this is happening; if not, fix the write path first.
+Verification: Click expandable on an advisor response, see the full data context. Numbers in the response should all be findable in the context.
+
+P1-3. Variable Spend Log + QuickSilver Blind Spot (Part K3)
+Category: Missing core feature
+User Impact: Without this, Monthly Savings is structurally overstated by the user's actual unpaid credit card balance. The workbook explicitly called this out as the #1 manual-update priority. The app currently has no way to enter this data.
+Engineering Impact: New UI widget on Dashboard + wiring into Monthly Savings math.
+Full spec: See FIX_PLAN_PART_K.md §K3. Summary:
+
+Weekly rows for the current month (Week 1-4 or 5 as applicable)
+Each row: total variable spend + card accrual portion
+QuickSilver Blind Spot = sum of card_accrual for current month
+Fed into quicksilverAccrual in monthlySavingsEstimate()
+Does NOT affect safeToSpend (unit test this)
+
+Dependencies: Depends on variable_spend_log table existing (verify).
+Verification: See FIX_PLAN_PART_K.md §K7.
+
+P1-4. QuickSilver Bill Row Added (Part K1)
+Category: Missing visibility (trivial)
+User Impact: User noticed QuickSilver is not visible anywhere. It should be in the Bills list with Include=FALSE so it's acknowledged but excluded from cycle math.
+Engineering Impact: One seed insert.
+Implementation: Per FIX_PLAN_PART_K.md §K1:
+name: "QuickSilver Credit Card"
+amount: 0.00
+due_day: null
+include: FALSE
+category: "Debt"
+autopay: No
+notes: "Variable CC — paid in full monthly from checking. Accrual tracked via Variable Spend Log."
+Dependencies: None.
+Verification: QuickSilver appears in Bills list, greyed out, with Excluded badge.
+
+P1-5. Dashboard Staleness Banner
+Category: Missing feature (from E2.1)
+User Impact: If balance is not updated for >3 days, all cycle calculations become unreliable. The user needs to know this at a glance. Currently there's no banner; the app silently shows stale numbers.
+Engineering Impact: Small. Conditional banner component at top of Dashboard.
+Implementation:
+tsx{daysSinceBalanceUpdate > 3 && (
+  <Banner variant="warning">
+    ⚠ Balance last updated {daysSinceBalanceUpdate} days ago. 
+    Cycle calculations may be unreliable.
+    <Button onClick={openUpdateBalanceModal}>Update Now</Button>
+  </Banner>
+)}
+Dependencies: None.
+Verification: Manually set as_of_date to 5 days ago on checking account. Banner appears. Click button opens modal. After update, banner disappears.
+
+P1-6. Dashboard Session Integrity Banner
+Category: Missing feature (from E2.2)
+User Impact: When integrity checks fail, the user should know which ones and why. Currently the status might show WARN without explanation.
+Engineering Impact: Small. Conditional banner + expandable detail.
+Implementation:
+tsx{integrityCheck.failedCount > 0 && (
+  <Banner variant="error">
+    System Integrity: DEGRADED — {failedCount} of 10 checks failing.
+    <Button onClick={toggleDetail}>View Details</Button>
+  </Banner>
+)}
+Detail view lists each failed check with name and what went wrong.
+Dependencies: Integrity check function already exists (verified working).
+Verification: Force a failure (e.g., set base net to 0 in settings). Banner appears with detail expandable listing that specific check.
+
+P1-7. Active Bills in Current Cycle — Dashboard list
+Category: Missing feature (from E2.4)
+User Impact: User currently sees "Required Hold $X" but has to navigate to Bills to see what's making up that hold. Dashboard should show the bills being held.
+Engineering Impact: Small. List component fed from same filter as safeToSpend.
+Implementation:
+
+Below the primary cards on Dashboard, a compact table: "Bills In This Cycle"
+Columns: Name, Amount, Due Date, Days Until
+If empty (like April 21 right now): "No bills remaining this cycle. Next paycheck arrives {date}."
+
+Dependencies: None.
+Verification: When bills are in cycle, they show. When not, empty state shows with next payday reference.
+
+TIER P2 — MEDIUM (nice to have but not blocking)
+P2-1. Debt Strategy Full Framework (E4)
+Category: Deferred feature
+User Impact: User has $30k in student loans and the only tool currently shown is "Rate unknown." A functional framework (even with placeholder rate) would let the user see what shape the decision will take once rates are confirmed.
+Engineering Impact: Medium. Several formulas, several display components.
+Full spec: FIX_PLAN.md §E4. Includes:
+
+Standard (10yr) vs Extended (25yr) comparison with PMT formulas
+3yr / 5yr / 7yr accelerated scenarios
+Break-even invest vs pay at 7% return
+Impact on savings floor
+Verdict output ("INVEST the difference" or "PAY AGGRESSIVELY")
+Placeholder rate banner clearly marked
+
+Dependencies: None for the framework itself. Actual rate awaits studentaid.gov verification (user task).
+Verification: Page shows all five analysis blocks with computed numbers at 5.5% placeholder rate. Banner clearly indicates rate is unconfirmed.
+
+P2-2. Save Scenarios to DB (E1)
+Category: Deferred feature
+User Impact: Decision Sandbox currently computes but doesn't persist. Every time the user wants to re-examine a scenario, they re-enter all inputs. Core feature gap.
+Engineering Impact: Medium. Requires scenarios table (verify exists), Save modal, Saved Scenarios list, load-scenario flow.
+Implementation:
+
+"Save Scenario" button on each tab (Vehicle Purchase, Drought Survival, Income Floor, Income Change)
+Prompt for name + optional notes
+Store inputs + outputs as JSONB
+Saved Scenarios list at top of Decision Sandbox page
+Click saved scenario → reloads inputs + outputs
+
+Also: Remove obsolete pre-purchase car defaults. Either blank the Vehicle Purchase inputs or pre-fill with the actual completed Camry purchase (25500/7000/4.74/60/141.95) and remove the $315 target comparison which is now meaningless.
+Dependencies: None.
+Verification: Save scenario, navigate away, return, scenario appears in list, loads correctly.
+
+P2-3. Wealth Page Completions (E3)
+Category: Deferred features
+User Impact: Wealth page has the trend chart but is missing savings rate, FV projections, allocation.
+Engineering Impact: Medium. Three new components.
+Implementation:
+
+Savings Rate Tracker:
+
+Current monthly savings / monthly gross = X%
+Target 20%
+Gap display
+Trend arrow vs last month
+
+
+Net Worth FV Projection:
+
+At age 35, 40, 45, 55, 65
+Uses Monthly Savings and 7% return assumption
+Display as small table or inline metric
+
+
+Asset Allocation (Latest Snapshot):
+
+Pie chart or stacked bar: HYSA, Brokerage, 401(k), Roth IRA, Vehicle, Other
+Percentages and dollars
+Optional: Brokerage breakdown into Schwab holdings (SWPPX, AVUV, VXUS, IAU, IBIT, SGOV) — manual entry
+
+
+
+Dependencies: Car asset must be added (P0-4) for allocation to be correct.
+Verification: All three sections render with correct numbers for April 2026 snapshot.
+
+P2-4. Bills Engine: Skip-This-Cycle Override (D2)
+Category: Quality-of-life
+User Impact: Currently Include toggle is permanent. No way to say "skip this bill for this cycle only." Matters when a bill is being contested, paid early, or temporarily deferred.
+Engineering Impact: Medium. New bill_skip_overrides table, UI button, filter in cycle computation.
+Implementation:
+
+Skip button (distinct from Include toggle and delete)
+When clicked, creates record in bill_skip_overrides with cycle_start_date
+Bill is excluded from current cycle Required Hold but remains in Monthly Savings fixed bills total
+After next payday, override expires automatically
+Button toggles to "Unskip" when active
+
+Dependencies: None.
+Verification: Skip a bill, verify it leaves Required Hold but stays in Monthly Savings bills total. Verify override expires after payday.
+
+P2-5. Bills Engine: Timeline View (D4)
+Category: Deferred feature
+User Impact: Chronological view of next 30 days of bills. Currently sorted by due_day but not grouped visually.
+Engineering Impact: Small. Re-sort and group existing bill data.
+Implementation: Three collapsible sections on Bills page:
+
+"Due this week" (0-7 days)
+"Due next week" (8-14 days)
+"Due later this month" (15-30 days)
+
+Each bill shows: name, due date, days until, amount, status badges.
+Dependencies: None.
+Verification: Bills appear in correct sections based on current date.
+
+P2-6. Bills Engine: Health Summary (D5)
+Category: Deferred feature
+User Impact: At-a-glance health metrics.
+Engineering Impact: Small. Compute and display.
+Implementation: Small card at bottom of Bills page with:
+
+Autopay Coverage: N of M (X%)
+Bills/Income Ratio: X% (Healthy <40% / Monitor 40-50% / High >50%)
+Essential/Discretionary Ratio: Xx
+Subscription Creep Risk: Low/Moderate/High
+Manual Payment Risk: list of manual bills with next due date
+
+Dependencies: None.
+Verification: Values match manual computation from bills data.
+
+TIER P3 — LOW (polish and quality)
+P3-1. Unit Test Suite (G)
+Category: Engineering hygiene (regression protection)
+User Impact: None immediately. High long-term — prevents silent regressions every time the Agent touches financeEngine.ts.
+Engineering Impact: Medium. Write tests for every function.
+Implementation: Per FIX_PLAN.md §G1-G10. All 10 test cases as Jest/Vitest tests in lib/finance/__tests__/.
+Priority: This is P3 in terms of user-facing impact but P1 in terms of engineering discipline. If the Agent has time after P0/P1, ship this. Otherwise, defer but do not forget.
+Verification: Run npm test. All tests pass.
+
+P3-2. Save-as-Decision-Log Flow (C4)
+Category: Deferred feature
+User Impact: Low. Nice-to-have for persistence of advisor decisions.
+Engineering Impact: Medium. Modal + DB writes + Dashboard widget.
+Full spec: See FIX_PLAN.md §C4 and §E2.6.
+Dependencies: None.
+
+P3-3. Recent Decisions Widget on Dashboard (E2.6)
+Category: Deferred feature
+User Impact: Low. Depends on P3-2 being done first.
+Engineering Impact: Small. List component from decisions_log.
+
+P3-4. Polish Pass
+Category: Visual/copy polish
+User Impact: Cumulative but individually small.
+Items (execute together):
+
+Date format: "Jan 2026" not "Jan 31, 2026" for sales_month displays
+Pluralization: "1 day" vs "2 days" (never "1 days")
+Currency: always $1,234.56, never $1.2K in primary displays
+Zeros: — in tables, $0.00 in cards
+Negatives: ($155.11) in parens, not -$155.11
+Percentages: one decimal always (4.7%)
+"Today is payday" when 0 days away, not "0 days until payday"
+Neutral color (not red) on $0 values unless genuinely an error state
+
+Dependencies: None.
+Verification: Visual walkthrough of every page.
+
+P3-5. Keyboard Shortcut (Cmd+K Command Palette)
+Category: Quality of life
+User Impact: Nice to have for power users.
+Engineering Impact: Small. Install cmdk or similar lib, wire to navigation.
+Implementation: Cmd+K opens palette allowing quick jump to any page or start new advisor session.
+Dependencies: None.
+
+Suggested April 30 Session Batching
+Given limited Replit credits, batch by dependency and file-touching to minimize overhead:
+Batch 1 — Data corrections (no new features, 15 min of Agent time):
+
+P0-4 (car asset)
+P0-6 (model string)
+P1-4 (QuickSilver bill)
+
+Batch 2 — Math engine additions (30-45 min):
+
+P0-1 (Discretionary function + test)
+P0-5 (Bills page badge fix)
+
+Batch 3 — Editability sweep (1-2 hours — biggest chunk):
+
+P0-2 (universal editability) — this is the single biggest effort but touches every page
+
+Batch 4 — Dashboard additions (30-45 min):
+
+P1-1 (Monthly Savings card)
+P1-5 (Staleness banner)
+P1-6 (Integrity banner)
+P1-7 (Active Bills list)
+
+Batch 5 — Advisor completeness (30 min):
+
+P1-2 (Data Context expandable)
+
+Batch 6 — One-Time Expenses (1 hour):
+
+P0-3 (full feature)
+
+Batch 7 — Variable Spend Log (45 min):
+
+P1-3 (widget + blind spot + math integration)
+
+Batch 8 — If credits remain, in order:
+
+P2-1 (Debt Strategy framework)
+P2-2 (Save Scenarios)
+P2-3 (Wealth completions)
+P2-4 through P2-6 (Bills improvements)
+P3-1 (tests)
+Others
+
+Stopping rule: If credits hit 20% remaining, stop starting new batches and verify what's done. Do not leave the repo in a half-compiled state.
+
+Starter Prompt for Replit Agent 4 (April 30)
+Paste into Plan Mode with this file + BUILD_SPEC.md + FIX_PLAN.md + FIX_PLAN_PART_K.md all in the repo:
+
+Read APRIL_30_PLAN.md in full before planning. It supersedes the other fix plans for this session and is ordered by priority.
+Generate a task plan following the exact order and batching in the "Suggested April 30 Session Batching" section. Do not reorder across priority tiers. Within a tier, batching is provided; honor it.
+The single most important principle for this session is universal UI editability (P0-2). Every user-owned value on every page must be directly editable from the UI without involving the AI agent. This is a philosophical principle, not a feature — verify it holds on every page you touch.
+The single most important missing output is Discretionary This Cycle (P0-1). The app exists to answer "what can I actually save or invest right now" and currently has no answer. Ship this first.
+Do not seed placeholder data. Do not skip verification steps. Do not merge P0 items into P1 batches.
+When the plan is ready, show it to me before executing. I want to review before any code is written.
+
+
+Principle Reminder for the April 30 Session
+Three principles override everything else:
+
+Editability is a right, not a feature. Every user-owned value is editable from the UI where it lives. No exceptions. No "navigate to Settings to change this" workarounds for primary data.
+The app answers three questions, not one. Safe to Spend (liquidity), Discretionary This Cycle (decision-making), Monthly Savings Estimate (forward savings). All three on the Dashboard. Co-equal.
+Correctness beats polish. A missing feature (one-time expenses, Discretionary) is a higher-priority defect than a visual bug. Fix what makes numbers wrong before fixing what makes numbers ugly.
+
+
+End of April 30 Master Improvement Plan.

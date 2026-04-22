@@ -7,6 +7,11 @@ import {
   useGetCreditScores,
   getGetCreditScoresQueryKey,
   useCreateCreditScore,
+  useGetBalances,
+  getGetBalancesQueryKey,
+  useCreateBalance,
+  useGetMonthlySavings,
+  getGetMonthlySavingsQueryKey,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,9 +28,15 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 
 const HYSA_TARGET = 15000;
 
+const PROJECTION_AGES = [35, 40, 45, 55, 65];
+const CURRENT_AGE = 30; // Marshall — adjust if changes
+const REAL_RETURN = 0.07;
+
 export default function Wealth() {
   const { data: snapshots, isLoading } = useGetWealthSnapshots({ query: { queryKey: getGetWealthSnapshotsQueryKey() } });
   const { data: creditScores } = useGetCreditScores({ query: { queryKey: getGetCreditScoresQueryKey() } });
+  const { data: balances } = useGetBalances({ query: { queryKey: getGetBalancesQueryKey() } });
+  const { data: savings } = useGetMonthlySavings({ query: { queryKey: getGetMonthlySavingsQueryKey() } });
   const deleteSnapshot = useDeleteWealthSnapshot();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -112,6 +123,40 @@ export default function Wealth() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold font-mono text-destructive">{formatCurrency(latestSnapshot.totalLiabilities)}</div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {balances && latestSnapshot && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm uppercase tracking-wider">Asset Allocation (current balances)</CardTitle></CardHeader>
+          <CardContent>
+            <AllocationBreakdown balances={balances} />
+          </CardContent>
+        </Card>
+      )}
+
+      {savings && latestSnapshot && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm uppercase tracking-wider">Savings Rate</CardTitle></CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold font-mono">
+                {savings.totalMonthIncome > 0 ? `${((savings.estimatedMonthlySavings / savings.totalMonthIncome) * 100).toFixed(1)}%` : "—"}
+              </div>
+              <p className="text-xs text-muted-foreground mt-2 font-mono">
+                {formatCurrency(savings.estimatedMonthlySavings)} of {formatCurrency(savings.totalMonthIncome)} monthly income
+              </p>
+              <p className="text-[10px] text-muted-foreground italic mt-1">
+                Includes 401(k) accrual? No — this is post-tax cash flow surplus only.
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm uppercase tracking-wider">Net Worth Projections (real, 7%/yr)</CardTitle></CardHeader>
+            <CardContent>
+              <FvProjections netWorth={latestSnapshot.netWorth} monthlySavings={Math.max(0, savings.estimatedMonthlySavings)} />
             </CardContent>
           </Card>
         </div>
@@ -220,6 +265,114 @@ export default function Wealth() {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function AllocationBreakdown({ balances }: { balances: { id: number; accountType: string; amount: number; notes?: string | null }[] }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const createBalance = useCreateBalance();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+
+  // Latest balance per accountType (balances arrive desc by asOfDate from API)
+  const latestByType = new Map<string, typeof balances[number]>();
+  for (const b of balances) if (!latestByType.has(b.accountType)) latestByType.set(b.accountType, b);
+
+  const order = ["checking", "hysa", "brokerage", "401k", "roth_ira", "vehicle"];
+  const labels: Record<string, string> = {
+    checking: "Checking",
+    hysa: "HYSA",
+    brokerage: "Brokerage (taxable)",
+    "401k": "401(k)",
+    roth_ira: "Roth IRA",
+    vehicle: "Vehicle (Camry)",
+  };
+
+  const rows = order
+    .map((t) => latestByType.get(t))
+    .filter((b): b is typeof balances[number] => Boolean(b));
+  const total = rows.reduce((s, b) => s + b.amount, 0);
+
+  const startEdit = (b: typeof balances[number]) => { setEditing(b.accountType); setDraft(String(b.amount)); };
+  const saveEdit = (accountType: string) => {
+    const v = parseFloat(draft);
+    if (isNaN(v)) { toast({ title: "Invalid amount", variant: "destructive" }); return; }
+    createBalance.mutate({
+      data: { accountType, amount: v, asOfDate: new Date().toISOString(), source: "manual" },
+    }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetBalancesQueryKey() });
+        setEditing(null);
+        toast({ title: `Updated ${labels[accountType] ?? accountType}` });
+      },
+    });
+  };
+
+  return (
+    <div className="space-y-2">
+      {rows.length === 0 && <p className="text-sm text-muted-foreground">No balances recorded.</p>}
+      {rows.map((b) => {
+        const pct = total > 0 ? (b.amount / total) * 100 : 0;
+        const isEditing = editing === b.accountType;
+        return (
+          <div key={b.accountType} data-testid={`row-allocation-${b.accountType}`}>
+            <div className="flex items-center justify-between text-sm font-mono py-1">
+              <span className="flex items-center gap-2">
+                {labels[b.accountType] ?? b.accountType}
+                {b.notes && <span className="text-[10px] text-muted-foreground italic">({b.notes})</span>}
+              </span>
+              <span className="flex items-center gap-2">
+                {isEditing ? (
+                  <>
+                    <Input className="w-32 h-8 font-mono" value={draft} onChange={(e) => setDraft(e.target.value)} type="number" step="0.01" />
+                    <Button size="sm" onClick={() => saveEdit(b.accountType)} data-testid={`button-save-allocation-${b.accountType}`}>Save</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+                  </>
+                ) : (
+                  <>
+                    <span>{formatCurrency(b.amount)}</span>
+                    <span className="text-xs text-muted-foreground w-12 text-right">{pct.toFixed(1)}%</span>
+                    <Button size="sm" variant="ghost" onClick={() => startEdit(b)} data-testid={`button-edit-allocation-${b.accountType}`}>Edit</Button>
+                  </>
+                )}
+              </span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+              <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex justify-between font-bold pt-2 border-t border-border/30 text-sm font-mono">
+        <span>Total Assets (current balances)</span>
+        <span>{formatCurrency(total)}</span>
+      </div>
+    </div>
+  );
+}
+
+function FvProjections({ netWorth, monthlySavings }: { netWorth: number; monthlySavings: number }) {
+  const annual = monthlySavings * 12;
+  return (
+    <div className="space-y-1.5 font-mono text-sm">
+      {PROJECTION_AGES.map((age) => {
+        const years = age - CURRENT_AGE;
+        if (years <= 0) return null;
+        const fvNet = netWorth * Math.pow(1 + REAL_RETURN, years);
+        const fvSavings = annual > 0 ? annual * ((Math.pow(1 + REAL_RETURN, years) - 1) / REAL_RETURN) : 0;
+        const total = fvNet + fvSavings;
+        return (
+          <div key={age} className="flex justify-between py-1 border-b border-border/30" data-testid={`row-fv-${age}`}>
+            <span className="text-muted-foreground">Age {age} ({years}y)</span>
+            <span className="font-bold">{formatCurrency(total)}</span>
+          </div>
+        );
+      })}
+      <p className="text-[10px] text-muted-foreground italic pt-2">
+        Assumes current net worth ({formatCurrency(netWorth)}) compounding at 7% real, plus {formatCurrency(annual)}/yr contributions. Excludes match changes and Roth funding.
+      </p>
     </div>
   );
 }
