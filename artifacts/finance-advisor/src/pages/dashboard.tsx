@@ -58,6 +58,18 @@ interface DiscretionaryResp {
   totalReservationsRequired: number;
   safeToSpend: number;
   cycleStatus: string;
+  discipline?: {
+    fixedMonthlyTotal: number;
+    fixedRatio: number;
+    fixedRatioStatus: "green" | "amber" | "red";
+    variableBurnPace: number;
+    variableBurnPaceStatus: "green" | "amber" | "red";
+    expectedVariableByNow: number;
+    savingsRate: number;
+    savingsRateStatus: "green" | "amber" | "red";
+    dayOfMonth: number;
+    daysInMonth: number;
+  };
 }
 
 interface IntegritySummary {
@@ -281,6 +293,8 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {discretionary?.discipline && <DisciplineCard d={discretionary.discipline} />}
 
       <CycleSettingsInline />
 
@@ -743,5 +757,74 @@ function UpdateBalanceDialog() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface DisciplineProps {
+  d: NonNullable<DiscretionaryResp["discipline"]>;
+}
+
+function DisciplineCard({ d }: DisciplineProps) {
+  const colorOf = (s: "green" | "amber" | "red") =>
+    s === "red"
+      ? "text-red-500"
+      : s === "amber"
+      ? "text-amber-500"
+      : "text-emerald-500";
+  const dotOf = (s: "green" | "amber" | "red") =>
+    s === "red" ? "bg-red-500" : s === "amber" ? "bg-amber-500" : "bg-emerald-500";
+
+  const fixedPct = Math.round(d.fixedRatio * 100);
+  const pacePct = Math.round(d.variableBurnPace * 100);
+  const savePct = Math.round(d.savingsRate * 100);
+
+  return (
+    <Card data-testid="discipline-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          Playbook Discipline · day {d.dayOfMonth}/{d.daysInMonth}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div data-testid="discipline-fixed-ratio">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
+              <span className={`h-2 w-2 rounded-full ${dotOf(d.fixedRatioStatus)}`} />
+              Fixed-to-Income
+            </div>
+            <div className={`mt-1 text-3xl font-bold font-mono ${colorOf(d.fixedRatioStatus)}`}>
+              {fixedPct}%
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              ${d.fixedMonthlyTotal.toLocaleString()}/mo fixed · target ≤ 50%
+            </p>
+          </div>
+          <div data-testid="discipline-burn-pace">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
+              <span className={`h-2 w-2 rounded-full ${dotOf(d.variableBurnPaceStatus)}`} />
+              Variable Burn Pace
+            </div>
+            <div className={`mt-1 text-3xl font-bold font-mono ${colorOf(d.variableBurnPaceStatus)}`}>
+              {pacePct}%
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              vs ${d.expectedVariableByNow.toLocaleString()} expected by now · ≤ 110% on pace
+            </p>
+          </div>
+          <div data-testid="discipline-savings-rate">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
+              <span className={`h-2 w-2 rounded-full ${dotOf(d.savingsRateStatus)}`} />
+              Savings Rate (Budgeted)
+            </div>
+            <div className={`mt-1 text-3xl font-bold font-mono ${colorOf(d.savingsRateStatus)}`}>
+              {savePct}%
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              of net income after fixed + variable cap · target ≥ 20%
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

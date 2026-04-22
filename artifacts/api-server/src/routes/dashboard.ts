@@ -4,6 +4,7 @@ import {
   GetMonthlySavingsResponse,
 } from "@workspace/api-zod";
 import { computeCycleState, computeMonthlySavings } from "../lib/financeEngine";
+import { billsThisMonth } from "../lib/cycleBillEngine";
 import { db, oneTimeExpenses, variableSpend, bills, assumptions, commissions, balances } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 
@@ -139,6 +140,51 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const cycle = await computeCycleState();
 
   const round = (n: number) => Math.round(n * 100) / 100;
+
+  // === Discipline metrics (playbook spirit, surfaced as a single object) ===
+  // Fixed obligations = ALL include=TRUE bills active this month (not just remaining)
+  const monthBills = await billsThisMonth(today);
+  const fixedMonthlyTotal = monthBills.reduce((s, b) => s + b.amount, 0);
+  const fixedRatio = baseNetIncome > 0 ? fixedMonthlyTotal / baseNetIncome : 0;
+  const dayOfMonth = today.getDate();
+  const daysInMonth = monthEnd.getDate();
+  const expectedVarByNow = (variableCap * dayOfMonth) / daysInMonth;
+  const variableBurnPace =
+    expectedVarByNow > 0 ? variableSpentThisMonth / expectedVarByNow : 0;
+  // Savings rate uses cap (not actual) — the budgeted floor: what's structurally available.
+  const savingsRate =
+    baseNetIncome > 0
+      ? Math.max(0, baseNetIncome - fixedMonthlyTotal - variableCap) /
+        baseNetIncome
+      : 0;
+  const statusFor = (
+    val: number,
+    warnAt: number,
+    failAt: number,
+    invert = false,
+  ): "green" | "amber" | "red" => {
+    if (invert) {
+      if (val < failAt) return "red";
+      if (val < warnAt) return "amber";
+      return "green";
+    }
+    if (val > failAt) return "red";
+    if (val > warnAt) return "amber";
+    return "green";
+  };
+  const discipline = {
+    fixedMonthlyTotal: round(fixedMonthlyTotal),
+    fixedRatio: Math.round(fixedRatio * 1000) / 1000,
+    fixedRatioStatus: statusFor(fixedRatio, 0.5, 0.65),
+    variableBurnPace: Math.round(variableBurnPace * 1000) / 1000,
+    variableBurnPaceStatus: statusFor(variableBurnPace, 1.1, 1.5),
+    expectedVariableByNow: round(expectedVarByNow),
+    savingsRate: Math.round(savingsRate * 1000) / 1000,
+    savingsRateStatus: statusFor(savingsRate, 0.2, 0.1, true),
+    dayOfMonth,
+    daysInMonth,
+  };
+
   res.json({
     // Headline
     discretionaryThisMonth: round(discretionaryThisMonth),
@@ -169,6 +215,9 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     // Cycle parity
     safeToSpend: cycle.safeToSpend,
     cycleStatus: cycle.status,
+
+    // Discipline (Playbook spend discipline)
+    discipline,
   });
 });
 

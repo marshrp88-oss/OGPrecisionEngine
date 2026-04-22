@@ -7,10 +7,11 @@ import {
   balances,
   playbookVersions,
   oneTimeExpenses,
+  variableSpend,
 } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { computeCycleState } from "./financeEngine";
-import { billsInCycle } from "./cycleBillEngine";
+import { billsInCycle, billsThisMonth } from "./cycleBillEngine";
 import { logger } from "./logger";
 
 export interface IntegrityCheck {
@@ -340,6 +341,114 @@ async function runChecks(): Promise<IntegrityCheck[]> {
       description: "Cycle math invariant",
       status: "fail",
       detail: `Could not verify invariant: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
+  // Check 12: Variable spending burn pace.
+  // Compares actual variable_spend MTD vs the prorated cap for today's day-of-month.
+  // Pace = actual / (cap * dayOfMonth/daysInMonth). Warn >110%, fail >150%.
+  // This is the playbook's primary discretionary discipline signal.
+  try {
+    const [varCap2] = await db
+      .select()
+      .from(assumptions)
+      .where(eq(assumptions.key, "variable_spend_cap"));
+    const cap = varCap2 ? parseFloat(varCap2.value) : 600;
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const dayOfMonth = today.getDate();
+    const daysInMonth = monthEnd.getDate();
+    const allVs = await db.select().from(variableSpend);
+    const actual = allVs
+      .filter((v) => {
+        const d = new Date(v.weekOf);
+        return d >= monthStart && d <= today;
+      })
+      .reduce((s, v) => s + parseFloat(v.amount), 0);
+    const expectedByNow = (cap * dayOfMonth) / daysInMonth;
+    const pace = expectedByNow > 0 ? actual / expectedByNow : 0;
+    const pacePct = Math.round(pace * 100);
+    if (pace > 1.5) {
+      checks.push({
+        checkNumber: 12,
+        description: "Variable burn pace",
+        status: "fail",
+        detail: `Burning at ${pacePct}% of pace. Spent $${actual.toFixed(2)} MTD vs $${expectedByNow.toFixed(2)} expected by day ${dayOfMonth}/${daysInMonth}. Cap will blow.`,
+      });
+    } else if (pace > 1.1) {
+      checks.push({
+        checkNumber: 12,
+        description: "Variable burn pace",
+        status: "warn",
+        detail: `Burning at ${pacePct}% of pace. Spent $${actual.toFixed(2)} MTD vs $${expectedByNow.toFixed(2)} expected by day ${dayOfMonth}/${daysInMonth}. Pull back.`,
+      });
+    } else {
+      checks.push({
+        checkNumber: 12,
+        description: "Variable burn pace",
+        status: "pass",
+        detail: `On pace at ${pacePct}%. Spent $${actual.toFixed(2)} MTD of $${cap.toFixed(2)}/mo cap (day ${dayOfMonth}/${daysInMonth}).`,
+      });
+    }
+  } catch (err) {
+    checks.push({
+      checkNumber: 12,
+      description: "Variable burn pace",
+      status: "skip",
+      detail: `Could not compute pace: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
+  // Check 13: Fixed obligations as % of net income.
+  // Playbook discipline target: fixed bills ≤ 50% of net income (warn >50%, fail >65%).
+  // High fixed ratio = brittle cycle, no slack to absorb commission misses.
+  try {
+    const [incRow2] = await db
+      .select()
+      .from(assumptions)
+      .where(eq(assumptions.key, "base_net_income"));
+    const netIncome = incRow2 ? parseFloat(incRow2.value) : 0;
+    const monthBills = await billsThisMonth(today);
+    const fixedTotal = monthBills.reduce((s, b) => s + b.amount, 0);
+    if (netIncome <= 0) {
+      checks.push({
+        checkNumber: 13,
+        description: "Fixed-to-income ratio",
+        status: "skip",
+        detail: "Net income not configured; cannot compute ratio.",
+      });
+    } else {
+      const ratio = fixedTotal / netIncome;
+      const pct = Math.round(ratio * 100);
+      if (ratio > 0.65) {
+        checks.push({
+          checkNumber: 13,
+          description: "Fixed-to-income ratio",
+          status: "fail",
+          detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Target ≤50%. Cycle is brittle.`,
+        });
+      } else if (ratio > 0.5) {
+        checks.push({
+          checkNumber: 13,
+          description: "Fixed-to-income ratio",
+          status: "warn",
+          detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Above 50% target.`,
+        });
+      } else {
+        checks.push({
+          checkNumber: 13,
+          description: "Fixed-to-income ratio",
+          status: "pass",
+          detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Within 50% target.`,
+        });
+      }
+    }
+  } catch (err) {
+    checks.push({
+      checkNumber: 13,
+      description: "Fixed-to-income ratio",
+      status: "skip",
+      detail: `Could not compute ratio: ${err instanceof Error ? err.message : String(err)}`,
     });
   }
 
