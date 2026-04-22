@@ -143,22 +143,23 @@ export default function Commissions() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Payout Calculator Reference (Odoo Tiered)</CardTitle>
+          <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Payout Calculator Reference (Odoo Tiered, workbook v7.2)</CardTitle>
         </CardHeader>
         <CardContent className="text-xs font-mono space-y-1 text-muted-foreground">
-          <div className="font-semibold text-foreground mb-2">MRR Tiers</div>
-          <div>$0 – $100: 10%</div>
-          <div>$101 – $300: 25%</div>
-          <div>$301 – $500: 40%</div>
-          <div>$501 – $700: 55%</div>
-          <div>&gt;$700: 65%</div>
-          <div className="font-semibold text-foreground mt-3 mb-2">NRR Tiers</div>
-          <div>$0 – $1K: 0.5%</div>
-          <div>$1K – $2K: 1.0%</div>
-          <div>$2K – $4K: 2.0%</div>
-          <div>$4K – $6K: 3.0%</div>
-          <div>&gt;$6K: 4.2%</div>
+          <div className="font-semibold text-foreground mb-2">MRR Tiers (target $700)</div>
+          <div>$0.00 – $349.93: × 0.3705</div>
+          <div>$349.94 – $489.93: × 0.9634</div>
+          <div>$489.94 – $699.93: × 5.5212</div>
+          <div>&gt; $699.93: × 0.65</div>
+          <div className="font-semibold text-foreground mt-3 mb-2">NRR Tiers (target $6,000)</div>
+          <div>$0.00 – $2,999.40: × 0.0204</div>
+          <div>$2,999.41 – $4,199.40: × 0.0388</div>
+          <div>$4,199.41 – $5,999.40: × 0.2801</div>
+          <div>&gt; $5,999.40: × 0.042</div>
           <div className="mt-3 text-amber-600 dark:text-amber-400 font-semibold">Tax Rate: 43.5%</div>
+          <div className="text-xs text-muted-foreground mt-2">
+            Verification: $890 MRR → gross $1,547.52, take-home $874.35.
+          </div>
         </CardContent>
       </Card>
     </div>

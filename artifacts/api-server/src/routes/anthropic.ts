@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
-import { db, conversations, messages, playbookVersions } from "@workspace/db";
+import { db, conversations, messages } from "@workspace/db";
 import { eq, asc, desc } from "drizzle-orm";
 import { anthropic } from "@workspace/integrations-anthropic-ai";
+import { buildAdvisorContext } from "../lib/advisorContext";
 import {
   ListAnthropicConversationsResponse,
   CreateAnthropicConversationBody,
@@ -117,24 +118,8 @@ router.post("/anthropic/conversations/:id/messages", async (req, res): Promise<v
     .where(eq(messages.conversationId, params.data.id))
     .orderBy(asc(messages.createdAt));
 
-  // Get latest playbook for system context
-  const [playbook] = await db.select().from(playbookVersions).orderBy(desc(playbookVersions.effectiveFrom)).limit(1);
-  const playbookContent = playbook?.content ?? "No playbook loaded.";
-
-  const systemPrompt = `You are Reserve's financial advisor for Marshall Roberts-Payne, an Account Executive at Odoo Inc. with variable commission income. You have deep knowledge of his complete financial picture through the Reserve personal finance system.
-
-Your role is to provide specific, methodologically rigorous financial guidance based on the Reserve Financial Playbook. You know every rule, every formula, and every constraint in the system.
-
-PLAYBOOK (your permanent operating context):
-${playbookContent}
-
-Core behavior:
-- Be precise and quantitative. Reference specific numbers from the financial data when available.
-- Never deviate from the 10 Methodology Rules in the playbook.
-- When asked about Safe to Spend or cycle analysis, always verify data freshness first.
-- Distinguish clearly between confirmed and expected commission income.
-- Be direct. Marshall is a technical user who wants signal, not padding.
-- If a question would require stale data, say so and ask them to update the balance first.`;
+  // Build live system prompt with current financial snapshot + integrity check
+  const { systemPrompt } = await buildAdvisorContext();
 
   // Set up SSE
   res.setHeader("Content-Type", "text/event-stream");
@@ -150,8 +135,9 @@ Core behavior:
   let assistantContent = "";
 
   const stream = await anthropic.messages.stream({
-    model: "claude-opus-4-5",
+    model: process.env.ANTHROPIC_MODEL ?? "claude-opus-4-5",
     max_tokens: 4096,
+    temperature: 0.3,
     system: systemPrompt,
     messages: anthropicMessages,
   });

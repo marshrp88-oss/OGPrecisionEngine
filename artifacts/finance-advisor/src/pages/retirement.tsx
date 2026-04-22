@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, Save } from "lucide-react";
+import { AlertTriangle, Save, Info } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency, formatPercent } from "@/lib/utils";
@@ -34,32 +34,42 @@ export default function Retirement() {
   const [form, setForm] = useState<{
     grossSalary: string;
     contributionRate: string;
-    employerMatchRate: string;
-    employerMatchCap: string;
+    matchMultiplier: string;
+    employeeContributionCeiling: string;
     currentBalance: string;
     currentAge: string;
     targetAge: string;
     returnAssumption: string;
   } | null>(null);
 
-  if (isLoading) return (
-    <div className="space-y-4">
-      <Skeleton className="h-32 w-full" />
-      <Skeleton className="h-64 w-full" />
-    </div>
-  );
+  if (isLoading)
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
 
   const p = plan ?? {
-    id: 0, grossSalary: 54000, contributionRate: 0.03, employerMatchRate: 0.04,
-    employerMatchCap: 0.04, currentBalance: 1550, currentAge: 30, targetAge: 65,
-    returnAssumption: 0.07, updatedAt: new Date().toISOString(),
+    id: 0,
+    grossSalary: 54000,
+    contributionRate: 0.04,
+    employerMatchRate: 0.5,
+    employerMatchCap: 0.08,
+    currentBalance: 2200,
+    currentAge: 30,
+    targetAge: 65,
+    returnAssumption: 0.07,
+    updatedAt: new Date().toISOString(),
   };
 
+  // employerMatchRate field repurposed as matchMultiplier (e.g., 0.50 = 50% of employee %)
+  // employerMatchCap field repurposed as employee contribution ceiling (e.g., 0.08 = 8% of gross)
   const editValues = form ?? {
     grossSalary: String(p.grossSalary),
     contributionRate: String(p.contributionRate),
-    employerMatchRate: String(p.employerMatchRate),
-    employerMatchCap: String(p.employerMatchCap),
+    matchMultiplier: String(p.employerMatchRate),
+    employeeContributionCeiling: String(p.employerMatchCap),
     currentBalance: String(p.currentBalance),
     currentAge: String(p.currentAge),
     targetAge: String(p.targetAge),
@@ -68,62 +78,74 @@ export default function Retirement() {
 
   const grossSalary = parseFloat(editValues.grossSalary) || 0;
   const contribRate = parseFloat(editValues.contributionRate) || 0;
-  const matchRate = parseFloat(editValues.employerMatchRate) || 0;
-  const matchCap = parseFloat(editValues.employerMatchCap) || 0;
+  const matchMultiplier = parseFloat(editValues.matchMultiplier) || 0;
+  const ceiling = parseFloat(editValues.employeeContributionCeiling) || 0;
   const currentBalance = parseFloat(editValues.currentBalance) || 0;
   const currentAge = parseInt(editValues.currentAge) || 0;
   const targetAge = parseInt(editValues.targetAge) || 65;
   const returnRate = parseFloat(editValues.returnAssumption) || 0.07;
 
   const yearsToRetirement = Math.max(0, targetAge - currentAge);
-  const employeeContrib = (grossSalary * contribRate) / 12;
-  const employerContrib = (grossSalary * Math.min(contribRate, matchCap)) / 12;
-  const totalMonthlyContrib = employeeContrib + employerContrib;
 
-  const matchGapActive = contribRate < matchCap;
-  const matchGapContrib = grossSalary * (matchCap - contribRate);
+  // 401(k) match math (per Phase 1 Correction Plan A2)
+  const effEmployeePct = Math.min(contribRate, ceiling);
+  const matchPctOfGross = effEmployeePct * matchMultiplier;
+  const maxMatchPctOfGross = ceiling * matchMultiplier;
+  const annualCaptured = grossSalary * matchPctOfGross;
+  const annualAvailable = grossSalary * maxMatchPctOfGross;
+  const annualGap = annualAvailable - annualCaptured;
+  const monthlyGap = annualGap / 12;
+  const matchGapActive = annualGap > 0.01;
 
-  const fvCurrent = computeFV(currentBalance, totalMonthlyContrib, returnRate, yearsToRetirement);
-  const fvAtMatchCap = computeFV(
-    currentBalance,
-    ((grossSalary * matchCap) + (grossSalary * matchRate)) / 12,
-    returnRate,
-    yearsToRetirement
-  );
-  const fvAggressive = computeFV(
-    currentBalance,
-    ((grossSalary * 0.10) + employerContrib) / 12,
-    returnRate,
-    yearsToRetirement
-  );
+  // FV columns: Current / At Match Cap (=ceiling) / Aggressive (12%)
+  const monthlyContribAt = (employeePct: number) => {
+    const empPct = employeePct;
+    const matched = Math.min(empPct, ceiling) * matchMultiplier;
+    return ((grossSalary * empPct) + (grossSalary * matched)) / 12;
+  };
+
+  const fvCurrent = computeFV(currentBalance, monthlyContribAt(contribRate), returnRate, yearsToRetirement);
+  const fvAtMatchCap = computeFV(currentBalance, monthlyContribAt(ceiling), returnRate, yearsToRetirement);
+  const fvAggressive = computeFV(currentBalance, monthlyContribAt(0.12), returnRate, yearsToRetirement);
 
   const TARGET = 1_000_000;
-  const pmt_needed = TARGET > currentBalance * Math.pow(1 + returnRate / 12, yearsToRetirement * 12)
-    ? (TARGET - currentBalance * Math.pow(1 + returnRate / 12, yearsToRetirement * 12)) *
-      (returnRate / 12) / (Math.pow(1 + returnRate / 12, yearsToRetirement * 12) - 1)
-    : 0;
-
+  const fvOfPv = currentBalance * Math.pow(1 + returnRate / 12, yearsToRetirement * 12);
+  const pmt_needed =
+    TARGET > fvOfPv
+      ? ((TARGET - fvOfPv) * (returnRate / 12)) / (Math.pow(1 + returnRate / 12, yearsToRetirement * 12) - 1)
+      : 0;
   const requiredSalaryPct = grossSalary > 0 ? (pmt_needed * 12) / grossSalary : 0;
 
+  // Estimated take-home reduction from bumping contribution to ceiling
+  const additionalContribPct = Math.max(0, ceiling - contribRate);
+  const additionalMonthlyPretax = (grossSalary * additionalContribPct) / 12;
+  const marginalRate = 0.285;
+  const takeHomeReduction = additionalMonthlyPretax * (1 - marginalRate);
+
   const handleSave = () => {
-    upsert.mutate({
-      data: {
-        grossSalary: parseFloat(editValues.grossSalary),
-        contributionRate: parseFloat(editValues.contributionRate),
-        employerMatchRate: parseFloat(editValues.employerMatchRate),
-        employerMatchCap: parseFloat(editValues.employerMatchCap),
-        currentBalance: parseFloat(editValues.currentBalance),
-        currentAge: parseInt(editValues.currentAge),
-        targetAge: parseInt(editValues.targetAge),
-        returnAssumption: parseFloat(editValues.returnAssumption),
-      }
-    }, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetRetirementQueryKey() });
-        setForm(null);
-        toast({ title: "Retirement plan saved" });
+    upsert.mutate(
+      {
+        data: {
+          grossSalary,
+          contributionRate: contribRate,
+          // Persist with original field names (semantics reinterpreted)
+          employerMatchRate: matchMultiplier,
+          employerMatchCap: ceiling,
+          currentBalance,
+          currentAge,
+          targetAge,
+          returnAssumption: returnRate,
+        },
       },
-    });
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetRetirementQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetMonthlySavingsQueryKey() });
+          setForm(null);
+          toast({ title: "Retirement plan saved" });
+        },
+      }
+    );
   };
 
   return (
@@ -131,12 +153,23 @@ export default function Retirement() {
       <h1 className="text-3xl font-bold tracking-tight">Retirement Planning</h1>
 
       {matchGapActive && (
-        <Alert variant="destructive" className="border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200">
+        <Alert className="border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200">
           <AlertTriangle className="h-5 w-5" />
           <AlertTitle className="font-bold">401(k) Match Gap Active</AlertTitle>
-          <AlertDescription>
-            Contributing {formatPercent(contribRate)} vs {formatPercent(matchCap)} match cap.{" "}
-            {formatCurrency(matchGapContrib)}/year ({formatCurrency(matchGapContrib / 12)}/mo) in free employer match uncaptured.
+          <AlertDescription className="font-mono text-sm space-y-1 mt-1">
+            <div>
+              Contributing {formatPercent(contribRate)} vs {formatPercent(ceiling)} employee contribution ceiling.
+            </div>
+            <div>
+              <span className="font-bold">{formatCurrency(annualGap)}/year</span> ({formatCurrency(monthlyGap)}/mo) in
+              free employer match uncaptured.
+            </div>
+            <div>To capture the full match, increase your contribution to {formatPercent(ceiling)} of gross.</div>
+            <div className="text-xs text-amber-800/70 dark:text-amber-300/70 pt-1">
+              Bumping from {formatPercent(contribRate)} to {formatPercent(ceiling)} adds{" "}
+              {formatCurrency(additionalMonthlyPretax)}/mo pre-tax. Estimated take-home reduction:{" "}
+              {formatCurrency(takeHomeReduction)}/mo (at 28.5% marginal rate).
+            </div>
           </AlertDescription>
         </Alert>
       )}
@@ -145,50 +178,62 @@ export default function Retirement() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Monthly Savings Estimate</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+                Monthly Savings Estimate
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold font-mono">{formatCurrency(monthlySavings.estimatedMonthlySavings)}</div>
-              {monthlySavings.canAffordMatchBump && (
-                <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">Can afford 401(k) match bump</p>
-              )}
+              <div className="text-3xl font-bold font-mono">
+                {formatCurrency(monthlySavings.estimatedMonthlySavings)}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">After all bills, variable, one-time, forward reserve</p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Savings After Match Bump</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+                Savings After Match Bump
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold font-mono">{formatCurrency(monthlySavings.savingsAfterMatchBump)}</div>
-              <p className="text-xs text-muted-foreground mt-1">If contribution bumped to {formatPercent(matchCap)}</p>
+              <p className="text-xs text-muted-foreground mt-1">If contribution bumped to {formatPercent(ceiling)}</p>
             </CardContent>
           </Card>
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="md:col-span-3">
-          <CardHeader>
-            <CardTitle>FV Projections at Retirement (Age {targetAge})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-muted/50 p-4 rounded text-center">
-                <div className="text-xs text-muted-foreground uppercase mb-2">Current ({formatPercent(contribRate)})</div>
-                <div className="text-2xl font-bold font-mono">{formatCurrency(fvCurrent)}</div>
+      <Card>
+        <CardHeader>
+          <CardTitle>FV Projections at Retirement (Age {targetAge})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-muted/50 p-4 rounded text-center">
+              <div className="text-xs text-muted-foreground uppercase mb-2 font-mono">
+                Current ({formatPercent(contribRate)} + {formatPercent(matchPctOfGross)} match)
               </div>
-              <div className="bg-emerald-50 dark:bg-emerald-950/30 p-4 rounded text-center border-2 border-emerald-500/30">
-                <div className="text-xs text-muted-foreground uppercase mb-2">At Match Cap ({formatPercent(matchCap)})</div>
-                <div className="text-2xl font-bold font-mono text-emerald-700 dark:text-emerald-400">{formatCurrency(fvAtMatchCap)}</div>
+              <div className="text-2xl font-bold font-mono">{formatCurrency(fvCurrent)}</div>
+            </div>
+            <div className="bg-emerald-50 dark:bg-emerald-950/30 p-4 rounded text-center border-2 border-emerald-500/30">
+              <div className="text-xs text-muted-foreground uppercase mb-2 font-mono">
+                At Match Cap ({formatPercent(ceiling)} + {formatPercent(maxMatchPctOfGross)} match)
               </div>
-              <div className="bg-blue-50 dark:bg-blue-950/30 p-4 rounded text-center">
-                <div className="text-xs text-muted-foreground uppercase mb-2">Aggressive (10%)</div>
-                <div className="text-2xl font-bold font-mono text-blue-700 dark:text-blue-400">{formatCurrency(fvAggressive)}</div>
+              <div className="text-2xl font-bold font-mono text-emerald-700 dark:text-emerald-400">
+                {formatCurrency(fvAtMatchCap)}
               </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+            <div className="bg-blue-50 dark:bg-blue-950/30 p-4 rounded text-center">
+              <div className="text-xs text-muted-foreground uppercase mb-2 font-mono">
+                Aggressive (12% + {formatPercent(maxMatchPctOfGross)} capped match)
+              </div>
+              <div className="text-2xl font-bold font-mono text-blue-700 dark:text-blue-400">
+                {formatCurrency(fvAggressive)}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -198,7 +243,9 @@ export default function Retirement() {
           <div className="grid grid-cols-2 gap-4 font-mono text-sm">
             <div className="p-3 bg-muted/50 rounded">
               <div className="text-xs text-muted-foreground uppercase mb-1">Years to Retirement</div>
-              <div className="text-xl font-bold">{yearsToRetirement} years</div>
+              <div className="text-xl font-bold">
+                {yearsToRetirement} year{yearsToRetirement === 1 ? "" : "s"}
+              </div>
             </div>
             <div className="p-3 bg-muted/50 rounded">
               <div className="text-xs text-muted-foreground uppercase mb-1">Required Monthly Contribution</div>
@@ -218,30 +265,49 @@ export default function Retirement() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Roth IRA</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm space-y-2">
+          <div className="flex items-start gap-2 text-muted-foreground">
+            <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+            <div>
+              Roth IRA opened at Schwab — not yet funded. 2025 contribution deadline has passed. 2026 contribution
+              window: Jan 1, 2026 – Apr 15, 2027. Limit: $7,000.
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Plan Parameters</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            {Object.entries({
-              grossSalary: "Gross Salary ($)",
-              contributionRate: "Your Contribution Rate",
-              employerMatchRate: "Employer Match Rate",
-              employerMatchCap: "Match Cap",
-              currentBalance: "Current Balance ($)",
-              currentAge: "Current Age",
-              targetAge: "Target Retirement Age",
-              returnAssumption: "Return Assumption",
-            }).map(([key, label]) => (
+            {(
+              [
+                ["grossSalary", "Gross Salary ($)"],
+                ["contributionRate", "Your Contribution Rate (e.g. 0.04 = 4%)"],
+                ["matchMultiplier", "Employer Match Multiplier (e.g. 0.50 = 50% of employee %)"],
+                ["employeeContributionCeiling", "Employee Contribution Ceiling (e.g. 0.08 = match up to 8%)"],
+                ["currentBalance", "Current Balance ($)"],
+                ["currentAge", "Current Age"],
+                ["targetAge", "Target Retirement Age"],
+                ["returnAssumption", "Return Assumption (e.g. 0.07 = 7%)"],
+              ] as const
+            ).map(([key, label]) => (
               <div key={key}>
                 <Label className="text-xs">{label}</Label>
                 <Input
                   type="number"
                   step="0.0001"
-                  value={editValues[key as keyof typeof editValues]}
-                  onChange={(e) => setForm((prev) => ({
-                    ...(prev ?? editValues),
-                    [key]: e.target.value,
-                  }))}
+                  value={editValues[key]}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...(prev ?? editValues),
+                      [key]: e.target.value,
+                    }))
+                  }
                   className="font-mono"
                   data-testid={`input-retirement-${key}`}
                 />
@@ -249,7 +315,8 @@ export default function Retirement() {
             ))}
           </div>
           <Button onClick={handleSave} disabled={upsert.isPending} data-testid="button-save-retirement">
-            <Save className="mr-2 h-4 w-4" />Save Parameters
+            <Save className="mr-2 h-4 w-4" />
+            Save Parameters
           </Button>
         </CardContent>
       </Card>

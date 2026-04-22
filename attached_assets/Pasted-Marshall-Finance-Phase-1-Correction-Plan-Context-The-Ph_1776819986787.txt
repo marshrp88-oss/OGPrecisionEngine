@@ -1,0 +1,756 @@
+Marshall Finance — Phase 1 Correction Plan
+Context: The Phase 1 prototype is up and most pages render. However, critical defects make the app unusable as a financial tool in its current state. This document is a surgical correction pass. It complements BUILD_SPEC.md (which remains the source of truth for architecture and methodology). Where this document and BUILD_SPEC.md conflict, this document wins — it is newer and based on the actual Odoo comp plan pulled from the workbook.
+Audience: Replit Agent 4. Execute tasks in the order given. Every task has a verification step. Do not mark a task complete unless the verification passes.
+Do not:
+
+Seed fake/demo data of any kind. Every value in this app represents Marshall's actual life.
+Simplify or "improve" the financial methodology. The formulas below are not suggestions.
+Skip verification steps.
+Add features not described here or in BUILD_SPEC.md.
+
+
+PART A — DATA CORRECTIONS
+These come first. Downstream calculations are wrong because the seed data is wrong. Fix the inputs, then verify the formulas.
+A1. Purge all fake seed data
+Delete every row from the following tables:
+
+bills
+commissions
+monthly_net_worth (if any demo snapshots)
+one_time_expenses (if any demo entries)
+scenarios (once scenario-save is implemented)
+
+Keep the owner_profile and cycle_settings rows — those are correct in Settings per the screenshot.
+A2. Update cycle_settings and owner_profile for 401(k) match structure change
+The spec's original 401(k) match schema is wrong. Replace with the actual Odoo match plan.
+Schema changes to owner_profile (or wherever 401(k) params live):
+Remove fields (if they exist):
+
+k401_match_rate
+k401_match_cap
+
+Add fields:
+
+k401_match_multiplier (default 0.50) — employer matches this fraction of employee contribution
+k401_employee_contribution_ceiling (default 0.08) — employer matches only up to this % of gross
+
+Retain:
+
+k401_contribution_pct (current: 0.04)
+
+Business logic (replace any existing match-gap formula):
+effective_employee_pct = MIN(k401_contribution_pct, k401_employee_contribution_ceiling)
+employer_match_pct_of_gross = effective_employee_pct * k401_match_multiplier
+max_possible_match_pct_of_gross = k401_employee_contribution_ceiling * k401_match_multiplier
+match_gap_pct_of_gross = max_possible_match_pct_of_gross - employer_match_pct_of_gross
+
+annual_match_captured = gross_salary * employer_match_pct_of_gross
+annual_match_available = gross_salary * max_possible_match_pct_of_gross
+annual_match_gap = annual_match_available - annual_match_captured
+monthly_match_gap = annual_match_gap / 12
+Verification at current state (gross $54,000, contribution 4%, multiplier 0.50, ceiling 0.08):
+
+effective_employee_pct = 0.04
+employer_match_pct_of_gross = 0.04 × 0.50 = 0.02 (2% of gross)
+max_possible = 0.08 × 0.50 = 0.04 (4% of gross)
+match_gap = 0.04 − 0.02 = 0.02 (2% of gross)
+annual_match_captured = 54000 × 0.02 = $1,080/yr
+annual_match_available = 54000 × 0.04 = $2,160/yr
+annual_match_gap = $1,080/yr
+monthly_match_gap = $90/mo
+
+Retirement page and Dashboard 401(k) banner must show these numbers, not the old $540/$45 figures.
+A3. Seed correct bills
+Wipe the fake bills (A1) and insert these exact rows. due_day is day-of-month. All frequencies are Monthly unless noted.
+nameamountdue_dayincludecategoryautopaynotesGym Membership27.002FALSEDiscretionaryYesPrepaid through Jan 2027 via HealthEquity card. Re-enable Feb 1, 2027.Phone (Verizon)65.002TRUEEssentialYesClaude Subscription21.003TRUEDiscretionaryYesRent1000.004TRUEEssentialYesLargest fixed obligationCar Loan (2024 Camry)337.00ASK MARSHALLTRUEDebtYesWNY FCU, 4.74% APR, 60 months. Principal ~$18,500.Car Insurance141.958TRUEEssentialYesExpected reprice September 2026YouTube Premium14.0015TRUEDiscretionaryYesNational Grid (Electric)175.0016TRUEEssentialNoSeasonal — amount varies. Manual pay.National Fuel (Gas Utility)70.0019TRUEEssentialNoSeasonal — amount varies. Manual pay.EZ-Pass / Tolls10.0022TRUEEssentialYesAmount varies with usage
+Car loan due day: The due day from WNY FCU paperwork is not known to the build plan. Ship a UI that prompts for it on first Bills page load, with a placeholder of day 15. Do not hardcode a guess into the seed.
+Do NOT seed:
+
+Student Loans (belongs in Debt Strategy, not Bills)
+QuickSilver credit card (tracked via variable spend log, not Bills)
+Food + Gas variable (tracked via variable spend log, not Bills)
+Planet Fitness, Spotify, Netflix, Hulu, iCloud, Internet, or any of the other fabricated rows currently showing
+
+A4. Seed historical commissions
+Insert these rows into commissions. The app computes mrr_payout_gross, nrr_payout_gross, total_gross, take_home, and payout_date at query time using the formulas in Part B1. Do not store computed values.
+sales_monthmrr_achievednrr_achievedstatus2025-12-01890.000.00paid2026-01-010.000.00paid2026-02-010.000.00paid2026-03-010.000.00paid
+April 2026 onward: leave empty. Marshall adds rows manually as months close. The "Add Commission" button must allow editing of mrr_achieved and nrr_achieved freely — those are Marshall's inputs, not computed.
+Note on the old $245 February entry: The previous workbook had $245 MRR for Feb 2026, producing ~$51 take-home. Marshall has since confirmed Feb was effectively $0. Use $0 here.
+A5. Update account balances (current reality as of April 21, 2026)
+Insert or update rows in accounts:
+nameaccount_typebalanceas_of_dateinstitutiontarget_balancenotesCheckingchecking694.052026-04-21(Marshall's bank)nullCycle-level liquidityHYSAhysa15000.002026-04-21(bank)15000.00TARGET MET — gap = 0Brokerage (Schwab Taxable)brokerage35500.002026-04-21SchwabnullSelf-managed. See holdings in BUILD_SPEC.md §3.401(k)k4012200.002026-04-21(plan admin)nullCurrently 4% contribution. Planning bump to 8%.Roth IRA (Schwab)other_asset0.002026-04-21SchwabnullNewly opened. Unfunded. Add contribution flow later.Car Loan (2024 Camry)debt18500.002026-04-21WNY FCUnull4.74% APR, 60 months, $337/moStudent Loans (Federal)debt30000.002026-04-21(servicer TBD)nullNot in repayment. Rate unconfirmed.
+Wealth page must display total liabilities as $48,500 (18,500 + 30,000), not $30,000.
+A6. Insert latest monthly_net_worth snapshot
+Replace any stale/demo snapshots with these accurate entries:
+monthhysabrokeragek401other_assetscar_loanstudent_loans2026-01-0112500.0036073.351550.000030000.002026-02-0112500.0036073.351750.000030000.002026-03-0112600.0033962.451850.450030000.002026-04-0115000.0035500.002200.00018500.0030000.00
+Computed fields (total_assets, total_liabilities, net_worth) are derived at query time.
+Note: Jan–March 2026 had $0 car loan because the old car was totaled and lien was paid by insurance in March. April 2026 shows the new Camry loan.
+
+PART B — CRITICAL FORMULA FIXES
+These are the load-bearing calculations. Every formula below must be implemented in the lib/finance/ module with unit tests. Bugs here are critical defects.
+B1. Commission tier formulas (REPLACE the fabricated rates)
+These are the exact formulas from the workbook. Port them verbatim. Do not interpret, round, or simplify.
+Constants (from cycle_settings):
+
+mrr_target = 700.00
+nrr_target = 6000.00
+commission_tax_rate = 0.435
+
+Tier breakpoints are functions of the targets. Do not hardcode the breakpoints — compute them as shown.
+typescriptfunction mrrPayoutGross(mrr: number, mrrTarget: number): number {
+  if (mrr <= 0) return 0;
+  const tier1Cap = 349.93;
+  const tier2Cap = 489.93;
+  const tier3Cap = mrrTarget - 0.07;  // = 699.93 when target = 700
+  
+  const tier1 = Math.max(0, Math.min(mrr, tier1Cap) - 0)          * 0.3705;
+  const tier2 = Math.max(0, Math.min(mrr, tier2Cap) - tier1Cap)   * 0.9634;
+  const tier3 = Math.max(0, Math.min(mrr, tier3Cap) - tier2Cap)   * 5.5212;
+  const tier4 = Math.max(0, mrr - tier3Cap)                       * 0.65;
+  
+  return tier1 + tier2 + tier3 + tier4;
+}
+
+function nrrPayoutGross(nrr: number, nrrTarget: number): number {
+  if (nrr <= 0) return 0;
+  const tier1Cap = 2999.40;
+  const tier2Cap = 4199.40;
+  const tier3Cap = nrrTarget - 0.6;  // = 5999.40 when target = 6000
+  
+  const tier1 = Math.max(0, Math.min(nrr, tier1Cap) - 0)          * 0.0204;
+  const tier2 = Math.max(0, Math.min(nrr, tier2Cap) - tier1Cap)   * 0.0388;
+  const tier3 = Math.max(0, Math.min(nrr, tier3Cap) - tier2Cap)   * 0.2801;
+  const tier4 = Math.max(0, nrr - tier3Cap)                       * 0.042;
+  
+  return tier1 + tier2 + tier3 + tier4;
+}
+
+function commissionTakeHome(mrr: number, nrr: number, mrrTarget: number, nrrTarget: number, taxRate: number): number {
+  const gross = mrrPayoutGross(mrr, mrrTarget) + nrrPayoutGross(nrr, nrrTarget);
+  return gross * (1 - taxRate);
+}
+
+function commissionPayoutDate(salesMonth: Date): Date {
+  // Payout is the 22nd of the month FOLLOWING the sales month
+  const payoutYear = salesMonth.getMonth() === 11 ? salesMonth.getFullYear() + 1 : salesMonth.getFullYear();
+  const payoutMonth = (salesMonth.getMonth() + 1) % 12;
+  return new Date(payoutYear, payoutMonth, 22);
+}
+Required unit tests — all must pass before this task is complete:
+MRRNRRExpected GrossExpected Take-Home (at 43.5%)00$0.00$0.001000$37.05$20.93349.930$129.65$73.25489.930$264.53$149.46699.930$1,423.98$804.557000$1,424.02$804.578900$1,547.52$874.3503000$61.21$34.5806000$611.95$345.755003000$320.12 + $61.21 = $381.33$215.45
+The 890/0 case must produce $874.35 to the cent, matching the workbook.
+Update the "Payout Calculator Reference" card on the Commissions page to display these actual tier rates, not the fabricated 10/25/40/55/65%.
+B2. Safe to Spend calculation
+Current bug: Safe to Spend = Checking Balance. Required Hold shows $0. This means bills are not being pulled into the cycle.
+Correct formula from BUILD_SPEC.md §4.4 and §6.1:
+typescriptfunction safeToSpend(ctx: FinanceContext): number {
+  const today = ctx.today;                      // e.g., 2026-04-21
+  const nextPayday = effectivePayday(ctx.nextPaydayNominal);  // weekend-adjusted
+  
+  const billsInCycle = ctx.bills.filter(b =>
+    b.include === true &&
+    b.amount > 0 &&
+    b.nextDueDate >= today &&
+    b.nextDueDate < nextPayday    // STRICT less-than
+  );
+  const billsTotal = billsInCycle.reduce((s, b) => s + b.amount, 0);
+  
+  const oneTimeInCycle = ctx.oneTimeExpenses.filter(e =>
+    e.paid === false &&
+    e.dueDate !== null &&
+    e.dueDate >= today &&
+    e.dueDate <= nextPayday
+  );
+  const oneTimeTotal = oneTimeInCycle.reduce((s, e) => s + e.amount, 0);
+  
+  const requiredHold =
+    billsTotal +
+    ctx.pendingHolds +
+    ctx.minimumCushion +
+    ctx.checkingFloor +
+    ctx.irregularBuffer +
+    ctx.timingBuffer +
+    oneTimeTotal;
+  
+  // include_forward_reserve_in_sts from settings: when TRUE (default), Safe to Spend
+  // reflects only the current cycle hold. Forward Reserve is a SEPARATE output for
+  // the Monthly Savings calculation. Do NOT subtract forward reserve from Safe to Spend.
+  // (The setting exists for a legacy toggle and can be surfaced in Settings but defaults TRUE.)
+  
+  return Math.max(0, ctx.checkingBalance - requiredHold);
+}
+Verification for today (2026-04-21, next payday 2026-04-22, checking $694.05):
+Bills due between today and the 22nd, strictly less than 22:
+
+None. Rent already went out on the 4th, Verizon on the 2nd, Claude on the 3rd, Car Insurance on the 8th, YouTube on the 15th, Electric on the 16th, Gas on the 19th.
+EZ-Pass is due on the 22nd which is payday — STRICT less-than means it is excluded from this cycle's hold (covered by incoming check).
+Bills total in cycle: $0.00
+
+Pending holds, cushions, buffers: all $0 per current settings.
+One-time expenses: none active.
+Required Hold = $0.00. Safe to Spend = $694.05.
+This is the correct answer for this specific moment. The cycle is essentially complete — everything has been paid and the next paycheck arrives tomorrow. The Dashboard should display $694.05 Safe to Spend with $0 Required Hold and should not render $0 in red as an error. Zero required hold is a valid state, not a defect.
+Verification for a mid-cycle test case (simulated 2026-04-10, next payday 2026-04-22, checking $2,000):
+
+Bills in cycle (due between Apr 10 and Apr 22 strict):
+
+YouTube $14 (15th), Electric $175 (16th), Gas $70 (19th) — total $259
+
+
+Required Hold = $259
+Safe to Spend = $2,000 - $259 = $1,741
+
+Add this as a unit test fixture.
+B3. Monthly Savings Estimate
+Current bug: Retirement page displays "Monthly Savings Estimate $2,696.39." The workbook formula produces ~$41 on the current data. The Agent invented a simpler formula.
+Correct formula from BUILD_SPEC.md §5.4:
+typescriptfunction monthlySavingsEstimate(ctx: FinanceContext): number {
+  const baseNet = ctx.baseNetMonthly;  // 3220
+  const confirmedCommission = ctx.commissions
+    .filter(c => c.payoutDate <= ctx.today)
+    .filter(c => sameMonth(c.payoutDate, ctx.today))
+    .reduce((s, c) => s + commissionTakeHome(c.mrr, c.nrr, ctx.mrrTarget, ctx.nrrTarget, ctx.taxRate), 0);
+  
+  const totalMonthIncome = baseNet + confirmedCommission;
+  
+  const fullMonthFixedBills = ctx.bills
+    .filter(b => b.include === true)
+    .reduce((s, b) => s + b.amount, 0);
+  
+  const daysToPayday = daysBetween(ctx.today, effectivePayday(ctx.nextPaydayNominal));
+  const remainingVariablePror = Math.max(0, 
+    Math.round(((daysToPayday / ctx.monthLengthDays) * ctx.variableSpendCap) * 100) / 100
+  );
+  
+  const knownOneTimeAll = ctx.oneTimeExpenses
+    .filter(e => e.paid === false)
+    .reduce((s, e) => s + e.amount, 0);
+  
+  const quicksilverAccrual = ctx.latestVariableSpendLog?.cardAccrual ?? 0;
+  
+  const forwardReserve = computeForwardReserve(ctx);
+  
+  return Math.max(0,
+    totalMonthIncome
+    - fullMonthFixedBills
+    - remainingVariablePror
+    - knownOneTimeAll
+    - quicksilverAccrual
+    - forwardReserve
+  );
+}
+Where computeForwardReserve (B4 below) returns the sum of next-month bills due 1st–7th plus 7 × daily variable.
+Verification for today (2026-04-21, checking $694, payday 2026-04-22, March commission = $0):
+
+baseNet = 3220
+confirmedCommission = 0 (March paid $0 on April 22, but April payday hasn't landed yet at query time)
+totalMonthIncome = 3220
+fullMonthFixedBills = sum of all Include=TRUE bills:
+
+Verizon 65 + Claude 21 + Rent 1000 + Car Loan 337 + Car Insurance 141.95 + YouTube 14 + Electric 175 + Gas 70 + EZ-Pass 10 = 1833.95
+(Gym excluded — Include=FALSE)
+
+
+daysToPayday = 1
+remainingVariablePror = round((1 / 30.4) × 600, 2) = $19.74
+knownOneTimeAll = 0
+quicksilverAccrual = 0 (until logged)
+forwardReserve = see B4
+
+Forward Reserve with real bills:
+
+Next month bills due 1st–7th (Include=TRUE): Verizon (2nd) 65 + Claude (3rd) 21 + Rent (4th) 1000 = $1,086
+Plus 7 × $19.74 = $138.14
+forwardReserve = $1,224.14
+
+(Car loan due day unknown — if it falls in 1st–7th, add $337 → $1,561. Ask Marshall and update.)
+Monthly Savings Estimate:
+= MAX(0, 3220 − 1833.95 − 19.74 − 0 − 0 − 1224.14)
+= MAX(0, 142.17)
+= $142.17
+This is the correct answer for the current situation. Retirement page and any other display of Monthly Savings must show ~$142, not $2,696.
+The old workbook figure of $41 assumed a different bill set (no new car loan, different insurance, etc.). The new ~$142 reflects today's reality — still tight but positive.
+B4. Forward Reserve formula
+From BUILD_SPEC.md §4.3.
+typescriptfunction computeForwardReserve(ctx: FinanceContext): number {
+  // Bills due 1st through 7th of NEXT month, Include=TRUE
+  const nextMonth = addMonths(startOfMonth(ctx.today), 1);
+  const nextMonthBillsFirst7 = ctx.bills
+    .filter(b => b.include === true)
+    .filter(b => b.dueDay >= 1 && b.dueDay <= 7)
+    .reduce((s, b) => s + b.amount, 0);
+  
+  const dailyVariable = ctx.variableSpendCap / ctx.monthLengthDays;
+  const sevenDaysVariable = 7 * dailyVariable;
+  
+  return nextMonthBillsFirst7 + sevenDaysVariable;
+}
+Verification with current bills:
+
+Bills with due_day between 1 and 7, Include=TRUE:
+
+Verizon (day 2): 65
+Claude (day 3): 21
+Rent (day 4): 1000
+Car Loan (day ???): if in 1–7, 337
+
+
+Without car loan in window: $1,086
+Plus 7 × (600/30.4) = 7 × 19.7368 = $138.16
+Forward Reserve = $1,224.16 (without car loan) or $1,561.16 (with car loan)
+
+The Dashboard currently shows $174.15. That is wrong by an order of magnitude because the bills table is fake.
+B5. Days Until Payday (off-by-one fix)
+Dashboard currently displays "0 days until payday" when today is 2026-04-21 and payday is 2026-04-22. Should display "1 day until payday."
+typescriptfunction daysUntilPayday(today: Date, nextPaydayNominal: Date): number {
+  const effective = effectivePayday(nextPaydayNominal);
+  const ms = effective.getTime() - today.getTime();
+  return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+}
+Also fix the grammar: "1 day until payday" (singular), "2 days" (plural).
+B6. Effective Payday (weekend adjustment) — already spec'd, verify it exists
+typescriptfunction effectivePayday(nominal: Date): Date {
+  const day = nominal.getDay();  // 0 = Sun, 6 = Sat
+  if (day === 6) {
+    // Saturday → Friday
+    return addDays(nominal, -1);
+  }
+  if (day === 0) {
+    // Sunday → Friday  
+    return addDays(nominal, -2);
+  }
+  return nominal;
+}
+
+PART C — AI ADVISOR REBUILD (Highest User-Facing Priority)
+The advisor currently says "I don't have your financial data loaded." This defeats the entire purpose of the app. The whole value proposition is a grounded advisor. This is the single most important fix.
+C1. Build system prompt assembly function
+Create lib/advisor/systemPrompt.ts exporting buildSystemPrompt(ctx: FinanceContext): string.
+The returned string is assembled in this exact order:
+Section 1 — Role declaration (static):
+You are Marshall's dedicated financial advisor. You have full context on his financial 
+system, methodology, and current data. You operate with precision, directness, and 
+rigor. You do not soften bad news. You do not produce generic financial advice.
+Section 2 — Methodology (static, from BUILD_SPEC.md §4):
+Paste the entire §4 from BUILD_SPEC.md verbatim, including all 10 rules.
+Section 3 — Client profile (static, from BUILD_SPEC.md §3):
+Personal, employment, core accounts, credit scores, long-term interests. Omit balances here (those go in the dynamic section).
+Section 4 — Live data snapshot (DYNAMIC — assembled at request time):
+=== LIVE DATA SNAPSHOT ===
+Timestamp of this snapshot: {ISO timestamp}
+Today's date: {YYYY-MM-DD}
+Next nominal payday: {YYYY-MM-DD}
+Next effective payday (weekend-adjusted): {YYYY-MM-DD}
+Days until effective payday: {n}
+
+ACCOUNTS (as of {as_of_date} for each):
+- Checking: ${X}  (updated {N} days ago)
+- HYSA: ${X} / target ${X}  (gap: ${X}, {MET/NOT MET})
+- Brokerage: ${X}
+- 401(k): ${X} (contributing {X}% of gross, match: {X}% of employee × 50%, ceiling {X}% — currently capturing ${X}/yr, leaving ${X}/yr on the table)
+- Roth IRA: ${X}  ({funded/newly opened/unfunded})
+- Debts: Car Loan ${X} ({rate}%, {X} mo remaining), Student Loans ${X} ({status})
+
+ACTIVE BILLS (Include=TRUE only):
+- {Name}: ${X}, due day {N}, category {cat}, autopay {yes/no}
+  [repeat for each]
+Total monthly Include=TRUE: ${X}
+
+BILLS IN CURRENT CYCLE HOLD (due between {today} and {next_payday}, strict <):
+- {list or "None"}
+Required Hold: ${X}
+Safe to Spend: ${X}
+
+COMMISSION HISTORY (last 6 months):
+- {sales_month}: MRR ${X}, NRR ${X} → Take-home ${X} (paid {date})
+  [repeat]
+3-month rolling avg take-home: ${X}
+YTD take-home: ${X}
+Drought flag: {ACTIVE / not active}
+Current month commission status: {logged/pending}
+
+ONE-TIME EXPENSES (unpaid):
+- {name}: ${X} due {date or NO DATE}
+  [repeat or "None"]
+
+VARIABLE SPEND LOG (last 4 weeks):
+- Week of {date}: logged ${X}, card accrual ${X}
+  [repeat or "No entries"]
+
+CYCLE SETTINGS:
+- Variable cap: ${X}/month
+- YELLOW threshold: ${X} (tied to: {basis})
+- Posting cushion: {N} days
+- Month length (for proration): {X} days
+- Commission tax rate: {X}%
+
+=== END LIVE DATA SNAPSHOT ===
+Section 5 — Session Integrity Check results (DYNAMIC):
+=== SESSION INTEGRITY CHECK ===
+1. Base net income set: {PASS/FAIL}
+2. Next payday is in future: {PASS/FAIL}
+3. Last balance update ≤ 3 days old: {PASS/FAIL ({N} days)}
+4. At least one bill Include=TRUE: {PASS/FAIL}
+5. Forward reserve computes non-negative: {PASS/FAIL}
+6. Commission tax rate set: {PASS/FAIL}
+7. Variable spend cap set: {PASS/FAIL}
+8. Monthly Savings is a valid number: {PASS/FAIL}
+9. 401(k) match gap returns a number: {PASS/FAIL}
+10. No bill has negative amount: {PASS/FAIL}
+
+Overall: {PASS / DEGRADED ({N} failures)}
+=== END INTEGRITY CHECK ===
+Section 6 — Behavioral guardrails (static):
+=== OPERATING RULES ===
+1. Cite specific data points from the Live Data Snapshot for every numerical claim you 
+   make. Do not cite data that isn't in the snapshot.
+
+2. If the snapshot shows "Last balance update > 3 days ago" OR any Session Integrity 
+   Check has failed that is relevant to the user's question, you MUST refuse to answer 
+   cycle-level questions and prompt Marshall to update the relevant data first. Do not 
+   proceed with stale analysis.
+
+3. Never assume commission income in forward-looking calculations unless Marshall 
+   explicitly opts in. The planning floor is always base net ($3,220/mo).
+
+4. Do not recommend specific investments, allocations, rebalances, or trades. The 
+   brokerage is self-managed. You can observe balances and project growth using the 
+   default return assumption but never recommend "buy X" or "rebalance to Y."
+
+5. Do not produce generic financial advice like "consider an emergency fund" or "have 
+   you thought about a Roth?" — those framings are beneath this advisor. Marshall's 
+   strategy is already defined. Your job is to apply it to his actual numbers.
+
+6. Communicate directly. No softening. No "you might want to consider." Marshall prefers 
+   blunt assessment. If an idea is bad, say so and explain why with numbers.
+
+7. When asked to run a scenario or projection, use the Live Data Snapshot as the 
+   starting state. Show your work with labeled numbers so Marshall can verify.
+
+8. If the snapshot does not contain data needed to answer a question, state so 
+   explicitly. Do not guess or invent numbers.
+
+9. When proposing a decision that Marshall might want to remember (e.g., "pay down 
+   student loan at X rate," "bump 401k to 8%"), end your response with a suggested 
+   "Decision log entry" he can save with one click.
+=== END OPERATING RULES ===
+C2. Wire the Anthropic API call
+Use the Anthropic TypeScript SDK. Model: claude-opus-4-7 as default, with an env var override. Max tokens: 4096. Temperature: 0.3 (low — this is a numerical reasoning task).
+The API call structure:
+typescriptconst response = await client.messages.create({
+  model: 'claude-opus-4-7',
+  max_tokens: 4096,
+  temperature: 0.3,
+  system: buildSystemPrompt(ctx),
+  messages: conversationHistory,
+});
+Store conversation history in the advisor_messages table. Include the data snapshot used for each assistant turn in the data_context_snapshot JSONB column.
+C3. "Data Context" expandable on every assistant message
+Each assistant message in the UI has a small icon (book or database icon) next to it. Clicking reveals a panel showing the data snapshot that was in the system prompt for that turn. This makes every claim auditable.
+UI: collapsible <details> or a modal. Layout matches the snapshot structure from C1 Section 4.
+C4. "Save as Decision" button
+After any assistant message that contains a recommendation or decision point, a button "Save as Decision" appears. Clicking prompts Marshall to confirm/edit the decision, then inserts a row into decisions_log:
+decisions_log columns:
+- title: first line of the decision, editable
+- context: user message that prompted this
+- decision: the assistant's recommendation
+- rationale: the key reasoning (assistant provides, Marshall can edit)
+- conversation_id: link back
+- decided_at: timestamp
+Decisions are surfaced on the Dashboard as a small widget: "Recent Decisions" (3 most recent).
+C5. Staleness refusal (implementation detail)
+If daysSinceLastBalanceUpdate > 3, the system prompt includes an additional directive at the top of Section 6:
+CRITICAL: The checking balance was last updated {N} days ago. Do not perform any 
+cycle-level analysis (Safe to Spend, daily rate, days of coverage, current cycle 
+savings). Prompt Marshall to update the balance first. You may answer structural 
+questions (retirement math, debt strategy, long-term projections) that do not depend 
+on current cycle liquidity.
+
+PART D — BILLS ENGINE REBUILD
+Current state: bills are read-only, fake, and the Include/Skip distinction is unclear.
+D1. Full CRUD on bills
+Every bill row must support:
+
+Add — modal with fields: name, amount, due_day (1-31), frequency, category, autopay, notes
+Edit — click row opens the same modal pre-filled
+Delete — red trash icon with confirm dialog
+Toggle Include — the left-side switch. When FALSE, the bill is greyed out and excluded from all cycle calculations permanently (or until re-toggled).
+
+D2. Distinguish Include vs Skip-this-cycle
+These are two different operations. Make them visually and semantically distinct:
+
+Include toggle (left of row): Permanent. "This bill exists in my life." OFF means the bill is excluded from all calculations indefinitely (e.g., gym prepaid, loan paid off).
+Skip this cycle button (right of row, next to trash): One-time. "This month only, skip this bill." When clicked, adds an entry to a bill_skip_overrides table scoped to the current cycle (today → next payday). The bill still counts in full_month_fixed_bills for Monthly Savings but NOT in current cycle hold.
+
+UI: make the Include switch prominent and labeled. The Skip button should read "Skip this cycle" (not just "Skip") and show a warning color or icon. Once skipped, change button to "Unskip" with the skip date visible.
+D3. Category breakdown card
+Add a card on the Bills page showing:
+CategoryMonthly Total% of BillsAnnual TotalCountEssential$XX%$XNDiscretionary$XX%$XNDebt$XX%$XN
+Verification against current bills (Include=TRUE):
+
+Essential: Verizon 65 + Rent 1000 + Car Insurance 141.95 + Electric 175 + Gas 70 + EZ-Pass 10 = $1,461.95 (6 bills, 80%)
+Discretionary: Claude 21 + YouTube 14 = $35 (2 bills, 2%)
+Debt: Car Loan 337 = $337 (1 bill, 18%)
+Total: $1,833.95
+
+(Gym excluded — Include=FALSE.)
+D4. Timeline view
+A chronological list of upcoming bills for the next 30 days. For each bill: name, due date, amount, days until due. Visually groups: "Due this week," "Next week," "Later this month."
+D5. Bill Health Summary
+A small card at the bottom of the Bills page:
+Autopay Coverage: 7 of 9 active bills on autopay (78%)
+Bills / Income Ratio: $1,833.95 / $3,220 = 56.9% — MONITOR
+Essential / Discretionary Ratio: 41.8× Essential-to-Discretionary
+Subscription Creep Risk: Low — 1.1% of income in subscriptions
+Manual Payment Risk: 2 manual bills (Electric 16th, Gas 19th)
+Use the same thresholds as the workbook (40% = healthy, 50% = monitor, 60%+ = high).
+
+PART E — MISSING FEATURES
+E1. Save Scenarios to DB
+Current Decision Sandbox runs calculations but doesn't persist. Add:
+
+Save button on each scenario type (Vehicle Purchase, Drought Survival, Income Floor, Income Change)
+When clicked: prompt for a name ("2024 Camry — April 2026," "8% raise scenario")
+Store in scenarios table: name, scenario_type, inputs (jsonb), outputs (jsonb), created_at
+Saved Scenarios list at the top of the Decision Sandbox page: click to re-open inputs + outputs
+
+Also remove the current pre-populated car search defaults. Either ship blank, or ship with Marshall's actual completed purchase pre-filled (but labeled "April 2026 purchase — reference"):
+
+Price: 25500
+Down: 7000
+Rate: 4.74
+Term: 60
+Insurance/mo: 141.95
+Target: remove the $315 target comparison — it was the pre-purchase search target and is obsolete
+
+E2. Dashboard missing elements
+Add to the Dashboard:
+
+Staleness banner: If daysSinceLastBalanceUpdate > 3, a prominent warning bar at the top: "Balance last updated {N} days ago. Cycle calculations may be unreliable. [Update Now]"
+Session Integrity banner: If any of the 10 checks in §4.9 fail, a banner: "System Integrity: DEGRADED — {N} checks failing. [View Details]" that expands to show which checks and why.
+Next payday countdown: Show both the date (e.g., "Apr 22, 2026 (tomorrow)") and the day count. Fix the off-by-one.
+Active bills in current cycle list: Below the header cards, show the bills being held against the cycle. Currently bills aren't visible from the Dashboard at all — Marshall has to navigate to Bills to see what's holding back Safe to Spend.
+Monthly Savings Estimate card: Below Required Hold / Forward Reserve, add a fourth card showing Monthly Savings with a tooltip explaining "Forward-looking — what you expect to save this month including forward reserve."
+Recent Decisions widget: 3 most recent entries from decisions_log with link to full log.
+Remove the RED color from Required Hold when it's legitimately $0. Required Hold of zero during the last day of a cycle is a valid state, not an error.
+
+E3. Wealth page completions
+Add to the Wealth page:
+
+Net worth trend chart: Line chart, last 24 months, single series (net worth over time). Use Recharts.
+Savings rate tracker:
+
+Monthly savings (from B3) / monthly gross = current rate
+Target: 20%
+Gap to target
+Trend arrow
+
+
+Net worth FV projection: Given current net worth, monthly savings floor, and 7% return:
+
+At age 35: ${X}
+At age 40: ${X}
+At age 45: ${X}
+
+
+Asset allocation (latest snapshot):
+
+HYSA: X% of total assets
+Brokerage: X%
+401(k): X%
+Roth IRA: X%
+Other: X%
+Rendered as a pie chart or stacked bar.
+
+
+Brokerage holdings breakdown: Optional. List the Schwab positions (SWPPX, AVUV, VXUS, IAU, IBIT, SGOV) with current allocation percentages. Manual entry; this is not a live market data feed.
+
+E4. Debt Strategy framework
+The page currently shows "Rate unknown — verify before strategizing" and nothing else. Build out the full framework with a placeholder rate (5.5%) that's clearly flagged:
+Add to the page:
+
+Standard Repayment Analysis: 10-year term at placeholder 5.5% rate.
+
+Monthly payment: PMT($30,000, 5.5%/12, 120)
+Total paid, total interest
+
+
+Extended Repayment Analysis: 25-year term.
+Accelerated Scenarios: 3yr, 5yr, 7yr payoff.
+Break-even: Invest vs Pay Aggressively.
+
+FV of investing the difference at 7% for 10 years
+vs interest saved by paying 3yr aggressive
+Verdict with the dollar advantage
+
+
+Prominent "Rate not confirmed" banner above all analyses. When Marshall updates the actual rate, the banner disappears and all computations update.
+Impact on monthly burn:
+
+Current savings floor: $X (base net minus fixed bills)
+Savings after 3yr payment: $X
+Savings after 5yr payment: $X
+Savings after standard 10yr: $X
+
+
+
+Use the exact formulas from the workbook Debt Strategy sheet (already ported in the original BUILD_SPEC.md §6.1 item 5).
+E5. Retirement Planning updates (post-match rule change)
+Given the new 50%-up-to-8% match structure (A2):
+
+Match Gap Banner: "Contributing 4.0% vs 8.0% employee contribution ceiling. $1,080.00/year ($90.00/mo) in free employer match uncaptured. To capture the full match, increase your contribution to 8% of gross."
+FV Projections — three columns:
+
+Current (4%): employee 4%, match 2% → total 6% of gross going in
+At match cap (8%): employee 8%, match 4% → total 12% of gross going in
+Aggressive (12%): employee 12%, match 4% (capped) → total 16% of gross going in
+
+Remove the "10%" column; replace with 12% for clearer separation from the 8% cap.
+Cost to close gap: Display the estimated take-home impact:
+
+"Bumping from 4% to 8% adds $180/mo pre-tax contribution. Estimated take-home reduction: $129/mo (at 28.5% marginal rate)."
+
+
+Roth IRA line item: Add a small section showing the new Schwab Roth IRA with $0 balance and a note: "Roth IRA opened — not yet funded. 2025 contribution deadline has passed. 2026 contribution window: Jan 1, 2026 – Apr 15, 2027. Limit: $7,000."
+$1M Target Calculator: Already wired. Update to reflect new current balance ($2,200).
+
+
+PART F — POLISH
+These are low-priority but complete the feel of a real tool.
+
+Date formats: "Jan 2026" not "Jan 31, 2026" for sales months. "Apr 21, 2026" for full dates.
+Pluralization: "1 day," "2 days." Never "1 days."
+Required Hold color: Neutral color (not red) when legitimately $0.
+Currency format: $1,234.56 always. No $1.2K abbreviations.
+Zero formatting: Use — for zero in tables to reduce noise. Keep $0.00 in header cards for clarity.
+Negative numbers: ($155.11) in parentheses.
+Percentage: one decimal (4.7%), not 5% or 4.74% in displays.
+Keyboard shortcut: Cmd+K opens a command palette that can navigate to any page or start an advisor session.
+"0 days until payday": When payday is today, display "Today is payday" (not "0 days").
+
+
+PART G — VERIFICATION TEST SUITE
+Every task above is complete only when these tests pass. Build them as Jest/Vitest tests in lib/finance/__tests__/.
+G1. Commission formula tests (from B1)
+All 10 test rows above must pass to the cent.
+G2. Safe to Spend test
+
+Fixture: 2026-04-10, payday 2026-04-22, checking $2,000, all real bills loaded
+Expected: Required Hold = $259 (YouTube + Electric + Gas), Safe to Spend = $1,741
+
+G3. Forward Reserve test
+
+Fixture: today = any date in April 2026, bills as seeded (excluding gym)
+Expected: Forward Reserve = $1,086 + $138.16 = $1,224.16 (before car loan day confirmed)
+
+G4. Monthly Savings test
+
+Fixture: today 2026-04-21, payday 2026-04-22, March commission $0
+Expected: Monthly Savings ≈ $142 (±$5 depending on car loan due day)
+
+G5. 401(k) match gap test
+
+Fixture: gross $54,000, contribution 4%, multiplier 0.5, ceiling 8%
+Expected: annual match captured $1,080, annual available $2,160, gap $1,080, monthly gap $90
+
+G6. Effective Payday test
+
+2026-04-22 (Wed) → 2026-04-22 (unchanged)
+2026-05-22 (Fri) → 2026-05-22 (unchanged)
+2026-08-22 (Sat) → 2026-08-21 (Fri)
+2026-11-22 (Sun) → 2026-11-20 (Fri)
+
+G7. Advisor integration test (manual)
+
+Open Advisor on a fresh install with seeded data
+Ask: "What's my Safe to Spend right now?"
+Assert: Response cites checking balance, next payday, required hold breakdown
+Assert: Data Context expandable is present and shows the snapshot
+Assert: Response does not say "I don't have your financial data"
+
+G8. Staleness refusal test (manual)
+
+Set last balance update to 5 days ago
+Open Advisor, ask: "Can I afford to spend $200 today?"
+Assert: Response refuses and prompts for balance update
+Ask: "How much should I contribute to my 401k to max the match?"
+Assert: Response answers (structural, not cycle-dependent)
+
+G9. Bill CRUD test (manual)
+
+Add a new bill, verify it appears and affects Monthly Savings immediately
+Edit a bill's amount, verify cascade through Dashboard
+Delete a bill, verify it disappears from all computations
+Toggle Include OFF, verify exclusion from current cycle AND full-month fixed bills
+
+G10. Scenario save test (manual)
+
+Run a Vehicle Purchase scenario, save it with a name
+Navigate away and back
+Verify the saved scenario loads with inputs and outputs intact
+
+
+PART H — SUGGESTED TASK ORDER FOR REPLIT AGENT 4
+Execute in this sequence. Parallel where the same engineer (agent) can do them without stepping on files.
+Phase 1 — Data foundation (serial):
+
+A1 — Purge fake seed data
+A2 — 401(k) match schema change
+A3 — Seed correct bills (ASK MARSHALL for car loan due day first)
+A4 — Seed historical commissions
+A5 — Update account balances
+A6 — Insert current net worth snapshot
+
+Phase 2 — Math layer (parallel possible):
+7. B1 — Commission formulas + tests
+8. B2 — Safe to Spend + test
+9. B3 — Monthly Savings + test
+10. B4 — Forward Reserve + test
+11. B5 — Days Until Payday fix
+12. B6 — Effective Payday verification
+Phase 3 — Advisor (top priority user-facing):
+13. C1 — System prompt assembly
+14. C2 — Anthropic SDK wiring
+15. C3 — Data Context expandable UI
+16. C4 — Save as Decision flow
+17. C5 — Staleness refusal
+Phase 4 — Bills rebuild:
+18. D1 — CRUD
+19. D2 — Include vs Skip distinction
+20. D3 — Category breakdown
+21. D4 — Timeline view
+22. D5 — Bill Health Summary
+Phase 5 — Missing features:
+23. E1 — Save Scenarios
+24. E2 — Dashboard additions
+25. E3 — Wealth page completions
+26. E4 — Debt Strategy framework
+27. E5 — Retirement page match update
+Phase 6 — Polish:
+28. F — All polish items
+Phase 7 — Verification:
+29. G1–G10 — Test suite. All green before calling Phase 1 complete.
+
+PART I — STARTER PROMPT FOR REPLIT AGENT 4
+Paste this into Plan Mode with BUILD_SPEC.md and FIX_PLAN.md both in the repo root:
+
+I have a working prototype in this repo that was built against BUILD_SPEC.md. Several things are broken and several things are missing. The full correction plan is in FIX_PLAN.md at the repo root.
+Read both files in full before planning. FIX_PLAN.md overrides BUILD_SPEC.md where they conflict (FIX_PLAN is newer and reflects corrections from the actual workbook and current reality).
+Generate a task plan following the exact order in Part H of FIX_PLAN.md. Do not reorder. Do not merge tasks. Do not skip verification steps in Part G.
+Critical: do not seed any fake or placeholder data. Every value in the seed migrations must come from the Data Corrections section (Part A). If a field is unknown, leave it NULL and prompt the user on first load — do not guess.
+The single most important task is Part C (AI Advisor rebuild). The advisor currently has no access to the financial data, which defeats the entire purpose of the app. Do not call Phase 1 complete until the advisor can answer "What's my Safe to Spend?" with accurate cited numbers.
+When the plan is ready, show me the task list before executing. I will review before you write code.
+
+
+PART J — OPEN QUESTIONS
+Things the Agent should ask Marshall before starting:
+
+Car loan due day: What day of the month is the Camry payment due per WNY FCU? (Needed for A3.)
+Bill skips for current cycle: Any bills already paid off-schedule this month that should be marked skipped?
+401(k) bump timeline: Is the bump to 8% happening this paycheck or next? Affects Monthly Savings projection.
+Roth IRA 2026 plan: Is Marshall planning to contribute this year? If yes, include a contribution target/pace widget on the Retirement page.
+Anthropic API key: Confirm the key is in Replit Secrets as ANTHROPIC_API_KEY before Part C starts.
+Advisor model: Confirm default is claude-opus-4-7. Alternative for cost: claude-sonnet-4-6.
+
+
+End of FIX_PLAN.md. This document is the authoritative correction plan. Update it in place as fixes land.
