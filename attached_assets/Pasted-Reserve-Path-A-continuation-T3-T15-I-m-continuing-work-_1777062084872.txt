@@ -1,0 +1,110 @@
+Reserve — Path A continuation (T3–T15)
+I'm continuing work on "Reserve", a precision personal finance advisor for Marshall (AE at Odoo). Repo lives at artifacts/finance-advisor in a pnpm monorepo. Source spec: Claude Financial Playbook v7.4 + Reserve Design Spec v2.0 with §3 amendments (rejections A/C/E/F/G/I). No emojis anywhere.
+
+Status from prior chat (do not redo)
+T1 — TypeScript: 0 errors monorepo-wide. pnpm -r exec tsc --noEmit is clean.
+Anthropic SDK 0.78 namespace pattern via re-export from lib/integrations-anthropic-ai/src/index.ts (export type { default as Anthropic } from "@anthropic-ai/sdk").
+ENGINE_TOOLS cast to ToolUnion[] at messages.create call site.
+commissions.ts: salesMonth Date → ISO YYYY-MM-DD normalization before computePayoutDate; as never casts on .values()/.set() matching the existing pattern in balances/wealth/etc. (Drizzle .$type<number>() does NOT propagate to insert/update — this is the established workaround.)
+T2 — Monthly Savings dropped from UI surface. Discretionary is the canonical headline.
+GET /dashboard/monthly-savings returns 404. Removed from openapi.yaml, regenerated api-zod.
+advisorContext.ts: stripped from system prompt, tool list, AND the public snapshot return shape (this last one was the architect blocker — make sure no consumer is reading snapshot.savings).
+Frontend: removed useGetMonthlySavings from dashboard.tsx, retirement.tsx, wealth.tsx, advisor-snapshot-drawer.tsx. Removed dependent UI cards, breakdown rows, FvProjections component, unused CheckCircle2 import, and unused PROJECTION_AGES/CURRENT_AGE/REAL_RETURN constants from wealth.tsx.
+Engine fns kept (used by tests + sessionIntegrityCheck): monthlySavingsEstimate (engine), computeMonthlySavings (server). Do not touch.
+170/170 finance engine tests pass. API server, web app, sandbox workflows all running clean.
+Endpoints verified: /api/dashboard/discretionary 200, /api/dashboard/monthly-savings 404, cycle returns checking $2334 / payday May 7.
+Commit message at .local/.commit_message. Session plan at .local/session_plan.md.
+Locked-in user decisions
+Drop Monthly Savings Estimate from UI surface; Discretionary is canonical headline. Engine fn stays for tests. (done)
+No ANTHROPIC_API_KEY provisioning — Advisor renders with offline state.
+Math doc corrections already propagated where they affect engine; Settings labels reflect them.
+Old Excel workbook unreadable (utf-8 decode failure); engine source remains authoritative.
+Engine math is frozen. Do not modify monthlySavingsEstimate, computeMonthlySavings, computeDiscretionary, computeForwardReserve, computeSafeToSpend, commission tier logic, or pmt/fv/matchGapAnalysis/retirementProjection.
+§3 spec amendments (must be honored)
+Rejection A — focus-visible 2px outline rule on every interactive element.
+Rejection B — fluid hero clamp on STS (clamp() in CSS, not fixed px).
+Rejection C — 12px text-xs floor (--text-xs: 0.75rem minimum, never smaller).
+Rejection D — animation only on STS hero number, integrity chip count, and status badge color. 200ms ease. No shake, no scale, no "every value updates."
+Rejection E — typed priority rollup chip in header (severity dot + headline + count, opens slide-over with grouped issues).
+Rejection F — Commission calculator pre-filled with canonical $700/$6000 + Reset-to-canonical button.
+Rejection G — Mobile bottom nav: 4 direct tabs (Today, Flow, Plan, Settings) + MORE for Tools/Wealth/Debt/Retirement.
+Rejection I — Sandbox-gate MRR Target / NRR Target / Commission Tax Rate behind a "Sandbox overrides" toggle that visually marks them as non-canonical.
+Tasks remaining
+T3: IBM Plex fonts + token rewrite
+artifacts/finance-advisor/index.html — swap Inter for Google Fonts preconnect + IBM Plex Sans + IBM Plex Mono.
+artifacts/finance-advisor/src/index.css — replace :root and .dark tokens per spec §2.2; floor --text-xs at 0.75rem; add focus-visible 2px outline rule; add fluid hero clamp utility.
+Acceptance: numbers render in IBM Plex Mono globally; focus rings visible on keyboard nav.
+T4: Navigation shell + integrity chip
+artifacts/finance-advisor/src/components/layout.tsx — 5-section sidebar grouping (TODAY / FLOW / PLAN / TOOLS / SETTINGS). Keep route paths unchanged.
+New IntegrityChip component in header — typed priority rollup (severity dot + headline + count), opens slide-over with grouped issues. Repackage existing components/integrity-status-banner.tsx (already separates engine vs advisory checks).
+Mobile bottom tab bar: 4 direct (Today, Flow, Plan, Settings) + MORE for Tools/Wealth/Debt/Retirement.
+Acceptance: nav renders desktop + mobile; integrity chip pulls from existing /api/integrity data.
+T5: Overview Zone 1
+Situation block (left-border, status text), STS hero with fluid clamp, action row (LOG SPEND, UPDATE BALANCE, ADD ONE-TIME, OPEN ADVISOR).
+Bottom strip: 3 tiles (Checking, Required Hold, Forward Reserve). Monthly Savings removed. Discretionary is the headline ABOVE the strip.
+Acceptance: STS visible in <3s, no scrolling on 1280×720, single-column on 390px mobile.
+T6: Overview Zones 2 + 3
+Zone 2: 3-column supporting context — Bills in Cycle table, One-Time table, Variable Spend Log (last 6 entries + QS badge).
+Zone 3: single collapsible "Show engine math" with three tabs (Safe to Spend / Discretionary / Forward Reserve). Monthly Savings tab removed.
+Preserve existing row-by-row breakdowns from current dashboard.
+T7: Bills page
+3-stat strip ($/mo active, active/paused, autopay %).
+Category proportional bar (Essential / Debt / Discret.) — clickable filters bill list.
+Bill list with [●]/[○] include-toggle circles, [AUTO] badge, [⋮] popover.
+14-day timeline at bottom.
+Zero horizontal scroll on 390px mobile; include toggle is one tap.
+T8: Commission live calculator
+artifacts/finance-advisor/src/pages/commissions.tsx — top calculator block with canonical $700/$6000 pre-filled, live-update gross + take-home via engine fns from finance-adapter.ts (re-exports pmt/fv/matchGapAnalysis/retirementProjection/etc.), 4-segment tier indicator with dot.
+Reset-to-canonical button. Verification line preserved.
+Compact history table; KPI strip (YTD take-home / 3-mo avg / drought badge).
+Every keystroke recomputes; matches engine output exactly.
+T9: Settings consolidation
+artifacts/finance-advisor/src/pages/settings.tsx — 4 domain groups (CYCLE MECHANICS / INCOME & COMMISSIONS / SPENDING / TARGETS / RETIREMENT).
+Gate MRR Target, NRR Target, Commission Tax Rate behind a "Sandbox overrides" toggle that visually marks them as non-canonical.
+Remove inline Cycle Settings card from dashboard.
+17 settings in one place; sandbox-flagged ones display warning.
+T10: Wealth/Debt/Retirement shared pattern
+Each page: 1-line status summary → primary chart → key decisions → collapsed detail tables.
+Strip any remaining Monthly Savings refs from wealth.tsx + retirement.tsx (use Discretionary or compute on-the-fly from cycle state where needed).
+All three pages match the shared pattern.
+T11: Mobile card-list table treatment
+Reusable MobileCardTable pattern; convert bills, commissions, one-times, debt tables.
+No horizontal scroll on 390px viewport; row data legible at floor 12px.
+T12: Scenarios save/load
+artifacts/finance-advisor/src/pages/sandbox.tsx → rename to Scenarios page.
+Wire existing scenarios table CRUD endpoints at artifacts/api-server/src/routes/scenarios.ts (full CRUD + computeScenarioOutputs already implemented).
+Saved scenario cards with name, type, date, one-line result.
+Scenario persists across reload.
+T13: Advisor offline state
+Apply message bubble + citation style changes from spec §7.
+4 starting-point ghost buttons replace pill row.
+Detect missing ANTHROPIC_API_KEY (env probe through API health) → render "Advisor offline — provision ANTHROPIC_API_KEY to enable" banner; disable input; keep page navigable.
+Page renders cleanly in both modes (online if key ever provisioned, offline today).
+T14: Constrained animation pass
+Add ONLY: STS hero number transition, integrity chip count transition, status badge color transition.
+200ms ease, no shake/scale.
+No flicker on dashboard refresh.
+T15: Verify + test + commit
+Restart all three workflows. Curl key endpoints. Run pnpm --filter @workspace/finance test (expect 170/170). Run pnpm -r exec tsc --noEmit (expect 0).
+Screenshot Overview + Bills + Commissions + Settings + mobile bottom bar.
+Code review via architect skill. End-to-end via testing skill on key flows.
+Commit with concise message.
+Key files to start from
+.local/session_plan.md — full plan
+.local/.commit_message — saved T1+T2 commit text
+artifacts/finance-advisor/index.html — Inter font import to swap (T3)
+artifacts/finance-advisor/src/index.css — token rewrite per spec §2.2 (T3)
+artifacts/finance-advisor/src/components/layout.tsx — 5-section nav rewrite + IntegrityChip (T4)
+artifacts/finance-advisor/src/components/integrity-status-banner.tsx — repackage as IntegrityChip (T4)
+artifacts/finance-advisor/src/pages/dashboard.tsx — Zone 1/2/3 rebuild (T5, T6)
+artifacts/finance-advisor/src/pages/commissions.tsx — live calculator block (T8)
+artifacts/finance-advisor/src/pages/settings.tsx — 4-group consolidation + Sandbox toggle (T9)
+artifacts/finance-advisor/src/lib/finance-adapter.ts — engine fn re-exports for live commission calc
+artifacts/api-server/src/routes/scenarios.ts — existing CRUD for T12
+Start instructions
+Read .local/session_plan.md and .local/.commit_message first.
+Begin at T3 (fonts + tokens) — it unblocks visual work for T4–T11.
+Do not touch engine math. Do not re-add Monthly Savings to any UI surface.
+After each task, restart the relevant workflow and verify in the preview before moving on.
+After T15, commit. Push when ready (use the Git pane in the workspace, since the agent is sandbox-blocked from running git directly).
+That's the full thing. Save it somewhere if you want a backup before pasting into the new chat.
