@@ -1,0 +1,84 @@
+**Confirmed: all three files were in the zip.** `marshall_finance_engine.py` (1,636 lines), `test_engine.py` (1,154 lines, 122 passing tests), and `implementation_notes.md` (203 lines). The implementation notes were present and I read them in full.
+
+---
+
+**COPY-PASTE PROMPT FOR REPLIT AGENT:**
+
+---
+
+I am attaching three files to this project as the new calculation authority for Marshall Finance:
+
+1. `marshall_finance_engine.py` — Python reference implementation, 44 pure functions covering every calculation the app performs. 1,636 lines. Zero external dependencies.
+2. `test_engine.py` — Pytest suite with 122 test cases. All passing in Python. These tests are the specification.
+3. `implementation_notes.md` — Design decisions, the 15 most common defects and how tests catch them, dependency map, and explicit port instructions.
+
+**Place all three files in a new `/reference/` folder at the repo root.** These are the permanent source of truth. Do not modify them. Do not delete them. Every future calculation change in this codebase must be made to the Python reference first, tested, then ported to TypeScript.
+
+**Your mission:** Port every Python function in `marshall_finance_engine.py` to TypeScript in `lib/finance/engine.ts`, and port every test in `test_engine.py` to `lib/finance/engine.test.ts` using Vitest. Then systematically replace every calculation currently in the app with the new TypeScript engine functions.
+
+**Execution rules — non-negotiable:**
+
+1. **Read all three reference files completely before writing any code.** Start with `implementation_notes.md`, then `marshall_finance_engine.py`, then `test_engine.py`. Do not skim.
+
+2. **The Python reference wins every conflict.** If the existing TypeScript in the app disagrees with the Python reference, the TypeScript is wrong. Do not preserve buggy existing logic.
+
+3. **Port in the order specified in the dependency map** (implementation_notes.md §3). Bottom-up. Utilities first, then engines that depend on them, then composite functions last.
+
+4. **Every test in `test_engine.py` must pass in the TypeScript port.** 122 tests in Python → 122 tests in TypeScript. Same inputs, same expected outputs, same assertions. If a test fails, the TypeScript implementation is wrong — not the test.
+
+5. **Follow the exact port instructions in `implementation_notes.md` §4.** The JavaScript `getDay()` vs Python `weekday()` weekday index difference is the single most common porting bug. The `effective_payday` test cases are your reference — verify Saturday→Friday and Sunday→Friday both work before moving on.
+
+6. **Use `Math.round(value * 100) / 100` for two-decimal rounding**, not `Number.toFixed(2)`. Excel uses round-half-up; JavaScript's default is round-half-even. This matters for the `B58` variable spend proration formula.
+
+7. **No financial libraries.** Implement PMT and FV directly per the formulas in the Python reference. Code must be auditable line-by-line against the workbook formulas.
+
+8. **No new calculation logic.** You are translating, not inventing. If the reference doesn't have it, the app doesn't need it. If you believe a calculation is missing, stop and ask me — do not add it autonomously.
+
+9. **Preserve exact numerical precision.** No rounding in intermediate calculations. Only the two ROUND calls explicitly specified in the reference (B58 variable proration, HYSA runway display) should round intermediate values.
+
+10. **After porting, run the full TypeScript test suite.** Report the count of passing tests. If any fail, stop and report which tests failed with the expected vs actual values. Do not attempt to fix failing tests by modifying the tests — only by fixing the implementation.
+
+**Wiring into the existing app:**
+
+After the engine and tests are ported and all 122 tests pass:
+
+- Replace the current `safeToSpend` calculation in the Cycle Dashboard with a call to the new `safeToSpend()` function. Same for `dailyRateStatic`, `dailyRateRealtime`, `daysOfCoverage`, `cycleStatus`, `monthlySavingsEstimate`, `matchGapAnalysis`.
+- Replace the current `billsInCurrentCycle` filter and `forwardReserve` calculation in the Bills Engine with calls to the new functions.
+- Replace the current commission calculations on the Commissions page with `mrrPayoutGross`, `nrrPayoutGross`, `commissionTakeHome`, `confirmedCommissionThisMonth`, `droughtFlag`.
+- Wire the `sessionIntegrityCheck` output into the existing "engine attention needed" banner on the Dashboard. Display the check count and any failed checks.
+- Wire `forwardProjection` into the Dashboard as a new 2-cycle projection panel below the current cycle status.
+- Wire `decisionSandboxCompare` into the Decision Sandbox page to replace any existing PMT/affordability logic.
+- Wire `matchGapAnalysis` into the Retirement page — verify it displays $1,080 annual gap and $90 monthly gap (not the old $540/$45 numbers from the outdated schema).
+
+**Open items I need you to flag for me but NOT resolve autonomously:**
+
+Implementation notes §5 documents three open questions:
+
+- Car loan due day: seed says Day 1, needs verification against WNY FCU paperwork
+- PMT discrepancy: formula computes $346.89, seeded value is $337 — flag the difference
+- Student loan PMT was transcribed wrong in FIX_PLAN — the engine uses the correct $325.58
+
+Surface these as warnings in the app where relevant (e.g., a flag on the car loan row in the Bills Engine). Do not auto-correct.
+
+**Advisor integration:**
+
+The AI Advisor on `/advisor` should have read access to every function in the new engine. When the advisor answers a question, it should call the relevant engine function and cite the result, not compute its own version. Update the advisor's system prompt to include: "All calculations must come from the engine functions in `/lib/finance/engine.ts`. Do not compute values independently. If a number is not available from the engine, say so."
+
+**Deliverable checklist:**
+
+- [ ] All three reference files placed in `/reference/` folder
+- [ ] `lib/finance/engine.ts` contains all 44 functions ported from Python
+- [ ] `lib/finance/engine.test.ts` contains all 122 tests ported to Vitest
+- [ ] `npm run test` or equivalent command runs the suite successfully
+- [ ] Test output shows 122 passing, 0 failing
+- [ ] Dashboard, Bills Engine, Commissions, Decision Sandbox, Retirement, and Advisor pages all use the new engine
+- [ ] Match gap displays $1,080/year and $90/month (verification check)
+- [ ] Report back the final test count and any integration issues encountered
+
+Do not mark this task complete until all 122 tests pass and all six pages are wired to the new engine. This is the single most important change in the app's history. Take the time to do it right.
+
+Begin by reading the three reference files.
+
+---
+
+That's the prompt. Attach the three files, paste this, and let it run. Come back to me if any tests fail or if you want me to review the port before you trust it.
