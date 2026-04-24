@@ -157,4 +157,22 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
+
+  html {
+    /* Respect iOS safe areas at the document level */
+    height: 100%;
+  }
+
+  /*
+   * Prevent iOS Safari from auto-zooming when focusing form fields.
+   * iOS triggers zoom whenever an input's computed font-size is < 16px.
+   * Apply 16px minimum on small viewports only — desktop styling is unchanged.
+   */
+  @media (max-width: 767px) {
+    input,
+    textarea,
+    select {
+      font-size: 16px;
+    }
+  }
 }

@@ -86,7 +86,7 @@ function VehicleScenario({ targetPayment }: { targetPayment: number }) {
         <CardDescription>Evaluate a car purchase against your $315/mo payment target.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
           <div><Label>Sticker Price ($)</Label><Input type="number" value={sticker} onChange={(e) => setSticker(e.target.value)} className="font-mono" /></div>
           <div><Label>Down Payment ($)</Label><Input type="number" value={downPayment} onChange={(e) => setDownPayment(e.target.value)} className="font-mono" /></div>
           <div><Label>Interest Rate (%)</Label><Input type="number" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} className="font-mono" /></div>
@@ -94,7 +94,7 @@ function VehicleScenario({ targetPayment }: { targetPayment: number }) {
           <div><Label>Insurance/mo ($)</Label><Input type="number" value={insurance} onChange={(e) => setInsurance(e.target.value)} className="font-mono" /></div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <div className={`p-4 rounded-xl text-center border-2 ${affordable ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30" : "border-destructive bg-destructive/10"}`}>
             <div className="text-xs text-muted-foreground uppercase mb-1">Monthly Payment</div>
             <div className={`text-2xl font-bold font-mono ${affordable ? "text-emerald-700 dark:text-emerald-300" : "text-destructive"}`}>
@@ -145,13 +145,13 @@ function DroughtSurvivalScenario({ checkingBalance }: { checkingBalance: number 
         <CardDescription>How long can you survive on base pay alone with current liquid assets?</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div><Label>Checking ($)</Label><Input type="number" value={checking} onChange={(e) => setChecking(e.target.value)} className="font-mono" /></div>
           <div><Label>HYSA ($)</Label><Input type="number" value={hysa} onChange={(e) => setHysa(e.target.value)} className="font-mono" /></div>
           <div><Label>Monthly Burn ($)</Label><Input type="number" value={monthlyBurn} onChange={(e) => setMonthlyBurn(e.target.value)} className="font-mono" /></div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="p-4 rounded-xl bg-muted/50 text-center">
             <div className="text-xs text-muted-foreground uppercase mb-1">Total Liquid</div>
             <div className="text-2xl font-bold font-mono">{formatCurrency(totalLiquid)}</div>
@@ -192,7 +192,7 @@ function IncomeFloorScenario() {
         <CardDescription>What gross salary covers your financial floor at a target savings rate?</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <div><Label>Target Monthly Savings ($)</Label><Input type="number" value={targetSavings} onChange={(e) => setTargetSavings(e.target.value)} className="font-mono" /></div>
           <div><Label>Fixed Monthly Bills ($)</Label><Input type="number" value={fixedMonthly} onChange={(e) => setFixedMonthly(e.target.value)} className="font-mono" /></div>
           <div><Label>Variable Cap ($)</Label><Input type="number" value={variableCap} onChange={(e) => setVariableCap(e.target.value)} className="font-mono" /></div>
@@ -238,13 +238,13 @@ function IncomeChangeScenario({ currentBase }: { currentBase: number }) {
         <CardDescription>Model the net impact of a raise or job change.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div><Label>Current Gross Salary ($)</Label><Input type="number" value={currentSalary} onChange={(e) => setCurrentSalary(e.target.value)} className="font-mono" /></div>
           <div><Label>New Gross Salary ($)</Label><Input type="number" value={newSalary} onChange={(e) => setNewSalary(e.target.value)} className="font-mono" /></div>
           <div><Label>Effective Tax Rate (%)</Label><Input type="number" step="0.1" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} className="font-mono" /></div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <div className="p-4 rounded-xl bg-muted/50 text-center">
             <div className="text-xs text-muted-foreground uppercase mb-1">Current Monthly Net</div>
             <div className="text-xl font-bold font-mono">{formatCurrency(currentMonthlyNet)}</div>

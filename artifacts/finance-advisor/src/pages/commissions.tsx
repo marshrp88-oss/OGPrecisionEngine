@@ -99,8 +99,8 @@ export default function Commissions() {
           {!commissions || commissions.length === 0 ? (
             <p className="text-muted-foreground text-sm py-4">No commission records yet.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm font-mono">
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <table className="w-full min-w-[680px] text-sm font-mono">
                 <thead>
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-2 pr-4">Sales Month</th>

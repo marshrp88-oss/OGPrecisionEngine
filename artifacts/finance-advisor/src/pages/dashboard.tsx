@@ -266,7 +266,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stat strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Checking</CardTitle></CardHeader>
           <CardContent>
@@ -308,28 +308,30 @@ export default function Dashboard() {
             {billsInCycle.length === 0 ? (
               <p className="text-sm text-muted-foreground font-mono">None. All Include=TRUE bills due before the next payday have cleared.</p>
             ) : (
-              <table className="w-full text-sm font-mono">
-                <thead>
-                  <tr className="border-b text-muted-foreground text-xs uppercase">
-                    <th className="text-left py-2">Bill</th>
-                    <th className="text-right py-2">Day</th>
-                    <th className="text-right py-2">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {billsInCycle.map((b) => (
-                    <tr key={b.id} className="border-b border-border/40">
-                      <td className="py-2 truncate max-w-[120px]">{b.name}</td>
-                      <td className="text-right py-2">{b.dueDay}</td>
-                      <td className="text-right py-2 font-bold">{formatCurrency(b.amount)}</td>
+              <div className="overflow-x-auto -mx-2 sm:mx-0">
+                <table className="w-full min-w-[320px] text-sm font-mono">
+                  <thead>
+                    <tr className="border-b text-muted-foreground text-xs uppercase">
+                      <th className="text-left py-2 px-2 sm:px-0">Bill</th>
+                      <th className="text-right py-2">Day</th>
+                      <th className="text-right py-2 px-2 sm:px-0">Amount</th>
                     </tr>
-                  ))}
-                  <tr className="font-bold">
-                    <td colSpan={2} className="py-2 text-right">Total</td>
-                    <td className="text-right py-2">{formatCurrency(cycle.billsDueBeforePayday)}</td>
-                  </tr>
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {billsInCycle.map((b) => (
+                      <tr key={b.id} className="border-b border-border/40">
+                        <td className="py-2 px-2 sm:px-0 truncate max-w-[120px]">{b.name}</td>
+                        <td className="text-right py-2">{b.dueDay}</td>
+                        <td className="text-right py-2 px-2 sm:px-0 font-bold">{formatCurrency(b.amount)}</td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold">
+                      <td colSpan={2} className="py-2 px-2 sm:px-0 text-right">Total</td>
+                      <td className="text-right py-2 px-2 sm:px-0">{formatCurrency(cycle.billsDueBeforePayday)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             )}
           </CardContent>
         </Card>

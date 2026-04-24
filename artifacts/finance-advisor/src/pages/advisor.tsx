@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
   Plus,
   Send,
@@ -33,6 +34,7 @@ import {
   Sparkles,
   ClipboardList,
   Clock,
+  MessagesSquare,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -308,61 +310,76 @@ export default function Advisor() {
   const allMessages = (messages as Message[] | undefined) ?? [];
   const lastAssistantId = [...allMessages].reverse().find((m) => m.role === "assistant")?.id ?? null;
   const isStale = cycle?.daysSinceUpdate != null && cycle.daysSinceUpdate > 3;
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+
+  // Conversation list (shared between desktop sidebar and mobile sheet)
+  const ConversationList = ({ onSelect }: { onSelect?: () => void }) => (
+    <>
+      <Button
+        onClick={() => {
+          handleNewSession();
+          onSelect?.();
+        }}
+        disabled={createConv.isPending}
+        data-testid="button-new-conversation"
+        className="w-full min-h-[44px]"
+      >
+        <Plus className="mr-2 h-4 w-4" />New Session
+      </Button>
+
+      <div className="flex-1 overflow-y-auto space-y-1 -mr-2 pr-2 mt-3">
+        {convLoading && <Skeleton className="h-10 w-full" />}
+        {!convLoading && (!conversations || conversations.length === 0) && !pendingNew && (
+          <p className="text-xs text-muted-foreground px-2 py-4">No sessions yet. Start a new one.</p>
+        )}
+        {((conversations as Conversation[] | undefined) ?? []).map((conv) => (
+          <div
+            key={conv.id}
+            className={cn(
+              "flex items-center gap-2 p-3 rounded-lg cursor-pointer group transition-colors min-h-[44px]",
+              activeConvId === conv.id ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/50 border border-transparent",
+            )}
+            onClick={() => {
+              setActiveConvId(conv.id);
+              setPendingNew(false);
+              onSelect?.();
+            }}
+            data-testid={`button-conversation-${conv.id}`}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium truncate" title={conv.title}>{conv.title}</div>
+              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Clock className="h-2.5 w-2.5" />
+                {formatDate(conv.createdAt)}
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-11 w-11 md:h-6 md:w-6 md:opacity-0 md:group-hover:opacity-100 shrink-0"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteConversation(conv.id);
+              }}
+              data-testid={`button-delete-conversation-${conv.id}`}
+            >
+              <Trash2 className="h-4 w-4 md:h-3 md:w-3" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    </>
+  );
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-[calc(100vh-8rem)] gap-4 max-w-[1600px] mx-auto" data-testid="advisor-root">
-        {/* Sidebar */}
-        <div className="w-64 flex flex-col gap-3 shrink-0">
-          <Button
-            onClick={handleNewSession}
-            disabled={createConv.isPending}
-            data-testid="button-new-conversation"
-            className="w-full"
-          >
-            <Plus className="mr-2 h-4 w-4" />New Session
-          </Button>
-
-          <div className="flex-1 overflow-y-auto space-y-1 -mr-2 pr-2">
-            {convLoading && <Skeleton className="h-10 w-full" />}
-            {!convLoading && (!conversations || conversations.length === 0) && !pendingNew && (
-              <p className="text-xs text-muted-foreground px-2 py-4">No sessions yet. Start a new one.</p>
-            )}
-            {((conversations as Conversation[] | undefined) ?? []).map((conv) => (
-              <div
-                key={conv.id}
-                className={cn(
-                  "flex items-center gap-2 p-2 rounded-lg cursor-pointer group transition-colors",
-                  activeConvId === conv.id ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/50 border border-transparent",
-                )}
-                onClick={() => {
-                  setActiveConvId(conv.id);
-                  setPendingNew(false);
-                }}
-                data-testid={`button-conversation-${conv.id}`}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate" title={conv.title}>{conv.title}</div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-2.5 w-2.5" />
-                    {formatDate(conv.createdAt)}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteConversation(conv.id);
-                  }}
-                  data-testid={`button-delete-conversation-${conv.id}`}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
-            ))}
-          </div>
+      <div
+        className="flex h-[calc(100dvh-7rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:h-[calc(100vh-8rem)] gap-4 max-w-[1600px] mx-auto"
+        data-testid="advisor-root"
+      >
+        {/* Sidebar — desktop only */}
+        <div className="w-64 hidden md:flex flex-col gap-3 shrink-0">
+          <ConversationList />
         </div>
 
         {/* Chat area */}
@@ -370,6 +387,29 @@ export default function Advisor() {
           <IntegrityStatusBanner />
           {/* Header bar: status + snapshot + actions */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              {/* Mobile-only conversation list trigger */}
+              <Sheet open={sessionsOpen} onOpenChange={setSessionsOpen}>
+                <SheetTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="md:hidden h-11 px-3"
+                    aria-label="Open conversations"
+                    data-testid="button-mobile-conversations"
+                  >
+                    <MessagesSquare className="h-4 w-4 mr-1.5" />
+                    Sessions
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="left" className="w-[80vw] max-w-xs p-4 flex flex-col">
+                  <SheetHeader className="text-left mb-2">
+                    <SheetTitle>Sessions</SheetTitle>
+                  </SheetHeader>
+                  <ConversationList onSelect={() => setSessionsOpen(false)} />
+                </SheetContent>
+              </Sheet>
+            </div>
             <div className="flex items-center gap-2">
               {isStale && (
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs">

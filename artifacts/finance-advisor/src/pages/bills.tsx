@@ -223,7 +223,7 @@ export default function Bills() {
 
       {/* Bill Totals strip */}
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Monthly</CardTitle>
@@ -302,14 +302,15 @@ export default function Bills() {
               <CardTitle className="text-sm font-medium uppercase tracking-wider">Category Breakdown</CardTitle>
             </CardHeader>
             <CardContent>
-              <table className="w-full text-sm font-mono">
+              <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <table className="w-full min-w-[480px] text-sm font-mono">
                 <thead>
                   <tr className="border-b text-muted-foreground text-xs uppercase">
-                    <th className="text-left py-2">Category</th>
+                    <th className="text-left py-2 px-2 sm:px-0">Category</th>
                     <th className="text-right py-2">#</th>
                     <th className="text-right py-2">Monthly</th>
                     <th className="text-right py-2">% Bills</th>
-                    <th className="text-right py-2">% Income</th>
+                    <th className="text-right py-2 px-2 sm:px-0">% Income</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -331,6 +332,7 @@ export default function Bills() {
                   </tr>
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
 
@@ -384,17 +386,18 @@ export default function Bills() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <table className="w-full text-sm font-mono">
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+            <table className="w-full min-w-[680px] text-sm font-mono">
               <thead>
                 <tr className="border-b text-muted-foreground text-xs uppercase">
-                  <th className="text-left py-2">Bill</th>
+                  <th className="text-left py-2 px-2 sm:px-0">Bill</th>
                   <th className="text-left py-2">Cat</th>
                   <th className="text-right py-2">Day</th>
                   <th className="text-right py-2">Date</th>
                   <th className="text-right py-2">Days</th>
                   <th className="text-right py-2">Amount</th>
                   <th className="text-right py-2">Pay</th>
-                  <th className="text-right py-2">Cycle</th>
+                  <th className="text-right py-2 px-2 sm:px-0">Cycle</th>
                 </tr>
               </thead>
               <tbody>
@@ -412,6 +415,7 @@ export default function Bills() {
                 ))}
               </tbody>
             </table>
+            </div>
           </CardContent>
         </Card>
       )}

@@ -80,7 +80,7 @@ export default function Wealth() {
       </div>
 
       {latestSnapshot && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Net Worth</CardTitle>
@@ -226,8 +226,8 @@ export default function Wealth() {
           {!snapshots || snapshots.length === 0 ? (
             <p className="text-muted-foreground text-sm">No snapshots yet. Add your first net worth snapshot.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm font-mono">
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <table className="w-full min-w-[640px] text-sm font-mono">
                 <thead>
                   <tr className="border-b text-muted-foreground text-xs uppercase tracking-wider">
                     <th className="text-left py-2 pr-4">Date</th>
