@@ -44,7 +44,6 @@ import type {
   GetVariableSpendParams,
   HealthStatus,
   IntegrityCheckResult,
-  MonthlySavings,
   OneTimeExpense,
   PlaybookVersion,
   RetirementPlan,
@@ -3995,81 +3994,6 @@ export function useGetDashboardCycle<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetDashboardCycleQueryOptions(options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * @summary Get monthly savings estimate
- */
-export const getGetMonthlySavingsUrl = () => {
-  return `/api/dashboard/monthly-savings`;
-};
-
-export const getMonthlySavings = async (
-  options?: RequestInit,
-): Promise<MonthlySavings> => {
-  return customFetch<MonthlySavings>(getGetMonthlySavingsUrl(), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetMonthlySavingsQueryKey = () => {
-  return [`/api/dashboard/monthly-savings`] as const;
-};
-
-export const getGetMonthlySavingsQueryOptions = <
-  TData = Awaited<ReturnType<typeof getMonthlySavings>>,
-  TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getMonthlySavings>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetMonthlySavingsQueryKey();
-
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getMonthlySavings>>
-  > = ({ signal }) => getMonthlySavings({ signal, ...requestOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getMonthlySavings>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetMonthlySavingsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getMonthlySavings>>
->;
-export type GetMonthlySavingsQueryError = ErrorType<unknown>;
-
-/**
- * @summary Get monthly savings estimate
- */
-
-export function useGetMonthlySavings<
-  TData = Awaited<ReturnType<typeof getMonthlySavings>>,
-  TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getMonthlySavings>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetMonthlySavingsQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

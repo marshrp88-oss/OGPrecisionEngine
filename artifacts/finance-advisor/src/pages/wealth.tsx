@@ -10,8 +10,6 @@ import {
   useGetBalances,
   getGetBalancesQueryKey,
   useCreateBalance,
-  useGetMonthlySavings,
-  getGetMonthlySavingsQueryKey,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,15 +26,14 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 
 const HYSA_TARGET = 15000;
 
-const PROJECTION_AGES = [35, 40, 45, 55, 65];
-const CURRENT_AGE = 30; // Marshall — adjust if changes
-const REAL_RETURN = 0.07;
+// PROJECTION_AGES / CURRENT_AGE / REAL_RETURN were used by the FvProjections
+// component which has been removed. They will return when the projection is
+// rebuilt on top of Discretionary in a later task.
 
 export default function Wealth() {
   const { data: snapshots, isLoading } = useGetWealthSnapshots({ query: { queryKey: getGetWealthSnapshotsQueryKey() } });
   const { data: creditScores } = useGetCreditScores({ query: { queryKey: getGetCreditScoresQueryKey() } });
   const { data: balances } = useGetBalances({ query: { queryKey: getGetBalancesQueryKey() } });
-  const { data: savings } = useGetMonthlySavings({ query: { queryKey: getGetMonthlySavingsQueryKey() } });
   const deleteSnapshot = useDeleteWealthSnapshot();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -137,30 +134,9 @@ export default function Wealth() {
         </Card>
       )}
 
-      {savings && latestSnapshot && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm uppercase tracking-wider">Savings Rate</CardTitle></CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold font-mono">
-                {savings.totalMonthIncome > 0 ? `${((savings.estimatedMonthlySavings / savings.totalMonthIncome) * 100).toFixed(1)}%` : "—"}
-              </div>
-              <p className="text-xs text-muted-foreground mt-2 font-mono">
-                {formatCurrency(savings.estimatedMonthlySavings)} of {formatCurrency(savings.totalMonthIncome)} monthly income
-              </p>
-              <p className="text-[10px] text-muted-foreground italic mt-1">
-                Includes 401(k) accrual? No — this is post-tax cash flow surplus only.
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm uppercase tracking-wider">Net Worth Projections (real, 7%/yr)</CardTitle></CardHeader>
-            <CardContent>
-              <FvProjections netWorth={latestSnapshot.netWorth} monthlySavings={Math.max(0, savings.estimatedMonthlySavings)} />
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      {/* Savings Rate + FV projections that depended on the old monthly-savings
+          response are removed for now. FV projections will be re-added in a
+          later task using current Discretionary derived from the cycle. */}
 
       {chartData.length > 1 && (
         <Card>
@@ -353,29 +329,10 @@ function AllocationBreakdown({ balances }: { balances: { id: number; accountType
   );
 }
 
-function FvProjections({ netWorth, monthlySavings }: { netWorth: number; monthlySavings: number }) {
-  const annual = monthlySavings * 12;
-  return (
-    <div className="space-y-1.5 font-mono text-sm">
-      {PROJECTION_AGES.map((age) => {
-        const years = age - CURRENT_AGE;
-        if (years <= 0) return null;
-        const fvNet = netWorth * Math.pow(1 + REAL_RETURN, years);
-        const fvSavings = annual > 0 ? annual * ((Math.pow(1 + REAL_RETURN, years) - 1) / REAL_RETURN) : 0;
-        const total = fvNet + fvSavings;
-        return (
-          <div key={age} className="flex justify-between py-1 border-b border-border/30" data-testid={`row-fv-${age}`}>
-            <span className="text-muted-foreground">Age {age} ({years}y)</span>
-            <span className="font-bold">{formatCurrency(total)}</span>
-          </div>
-        );
-      })}
-      <p className="text-[10px] text-muted-foreground italic pt-2">
-        Assumes current net worth ({formatCurrency(netWorth)}) compounding at 7% real, plus {formatCurrency(annual)}/yr contributions. Excludes match changes and Roth funding.
-      </p>
-    </div>
-  );
-}
+// FvProjections previously rendered net worth growth assuming annual savings
+// equal to the Monthly Savings response * 12. Removed alongside that response;
+// the projection will be re-introduced in a later task using a discretionary-
+// derived input.
 
 function AddSnapshotDialog() {
   const [open, setOpen] = useState(false);

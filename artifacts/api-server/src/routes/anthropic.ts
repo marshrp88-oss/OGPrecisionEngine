@@ -1,15 +1,14 @@
 import { Router, type IRouter } from "express";
 import { db, conversations, messages } from "@workspace/db";
 import { eq, asc, desc } from "drizzle-orm";
-import { anthropic } from "@workspace/integrations-anthropic-ai";
+import { anthropic, type Anthropic } from "@workspace/integrations-anthropic-ai";
 import { buildAdvisorContext } from "../lib/advisorContext";
 import { ENGINE_TOOLS, executeEngineTool } from "../lib/engineTools";
-import type {
-  MessageParam,
-  ContentBlock,
-  ToolUseBlock,
-  ToolResultBlockParam,
-} from "@anthropic-ai/sdk/resources/messages";
+type MessageParam = Anthropic.MessageParam;
+type ContentBlock = Anthropic.ContentBlock;
+type ToolUseBlock = Anthropic.ToolUseBlock;
+type ToolResultBlockParam = Anthropic.ToolResultBlockParam;
+type AnthropicToolUnion = Anthropic.ToolUnion;
 import {
   ListAnthropicConversationsResponse,
   CreateAnthropicConversationBody,
@@ -150,7 +149,11 @@ router.post("/anthropic/conversations/:id/messages", async (req, res): Promise<v
       model,
       max_tokens: 8192,
       system: systemPrompt,
-      tools: ENGINE_TOOLS,
+      // ENGINE_TOOLS is typed via a local AnthropicTool interface that uses
+      // `Record<string, unknown>` for properties (to accept readonly literal
+      // schemas). The SDK's stricter `ToolUnion` type is structurally
+      // compatible at runtime; the cast is purely a type bridge.
+      tools: ENGINE_TOOLS as unknown as AnthropicToolUnion[],
       messages: conversation,
     });
 

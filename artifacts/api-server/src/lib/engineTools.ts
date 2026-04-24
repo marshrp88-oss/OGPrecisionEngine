@@ -30,20 +30,16 @@ import {
   hysaGap,
 } from "@workspace/finance";
 
-type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
-
+// Anthropic's tool input_schema is JSON Schema. We rely on `as const` literal
+// types throughout this file for autocompletion at the callsite. Use `unknown`
+// here so readonly literal subtypes are accepted — the SDK validates the
+// shape on the wire.
 interface AnthropicTool {
   name: string;
   description: string;
   input_schema: {
     type: "object";
-    properties: Record<string, JsonValue>;
+    properties: Record<string, unknown>;
     required?: string[];
   };
 }

@@ -553,22 +553,6 @@ export interface DashboardCycle {
   alertThreshold: number;
 }
 
-export interface MonthlySavings {
-  baseNetIncome: number;
-  confirmedCommission: number;
-  totalMonthIncome: number;
-  fullMonthFixedBills: number;
-  remainingVariableSpendProrated: number;
-  knownOneTimeCosts: number;
-  quicksilverAccrual: number;
-  forwardReserve: number;
-  estimatedMonthlySavings: number;
-  matchGapActive: boolean;
-  monthlyMatchGapCost: number;
-  savingsAfterMatchBump: number;
-  canAffordMatchBump: boolean;
-}
-
 export interface AnthropicConversation {
   id: number;
   title: string;

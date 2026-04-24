@@ -952,18 +952,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardCycle"
-  /dashboard/monthly-savings:
-    get:
-      operationId: getMonthlySavings
-      tags: [dashboard]
-      summary: Get monthly savings estimate
-      responses:
-        "200":
-          description: Monthly savings
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MonthlySavings"
+  # NOTE: GET /dashboard/monthly-savings was removed in the v2.0 redesign.
+  # Discretionary is now the canonical headline. The engine still exposes
+  # `monthlySavingsEstimate` for tests and internal computations.
 
   # ─── Anthropic AI ─────────────────────────────────────────────────────────
   /anthropic/conversations:
@@ -1965,49 +1956,8 @@ components:
         - forwardReserve
         - alertThreshold
 
-    MonthlySavings:
-      type: object
-      properties:
-        baseNetIncome:
-          type: number
-        confirmedCommission:
-          type: number
-        totalMonthIncome:
-          type: number
-        fullMonthFixedBills:
-          type: number
-        remainingVariableSpendProrated:
-          type: number
-        knownOneTimeCosts:
-          type: number
-        quicksilverAccrual:
-          type: number
-        forwardReserve:
-          type: number
-        estimatedMonthlySavings:
-          type: number
-        matchGapActive:
-          type: boolean
-        monthlyMatchGapCost:
-          type: number
-        savingsAfterMatchBump:
-          type: number
-        canAffordMatchBump:
-          type: boolean
-      required:
-        - baseNetIncome
-        - confirmedCommission
-        - totalMonthIncome
-        - fullMonthFixedBills
-        - remainingVariableSpendProrated
-        - knownOneTimeCosts
-        - quicksilverAccrual
-        - forwardReserve
-        - estimatedMonthlySavings
-        - matchGapActive
-        - monthlyMatchGapCost
-        - savingsAfterMatchBump
-        - canAffordMatchBump
+    # MonthlySavings schema removed in v2.0 redesign — Discretionary is now
+    # the canonical headline. Engine still computes it internally.
 
     # ─── Anthropic ────────────────────────────────────────────────────────────
     AnthropicConversation:

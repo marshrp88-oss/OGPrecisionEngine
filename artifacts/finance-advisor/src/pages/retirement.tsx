@@ -3,8 +3,6 @@ import {
   useGetRetirement,
   getGetRetirementQueryKey,
   useUpsertRetirement,
-  useGetMonthlySavings,
-  getGetMonthlySavingsQueryKey,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,7 +23,6 @@ function fvMonthly(pv: number, monthlyPayment: number, annualRate: number, years
 
 export default function Retirement() {
   const { data: plan, isLoading } = useGetRetirement({ query: { queryKey: getGetRetirementQueryKey() } });
-  const { data: monthlySavings } = useGetMonthlySavings({ query: { queryKey: getGetMonthlySavingsQueryKey() } });
   const upsert = useUpsertRetirement();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -145,7 +142,6 @@ export default function Retirement() {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetRetirementQueryKey() });
-          queryClient.invalidateQueries({ queryKey: getGetMonthlySavingsQueryKey() });
           setForm(null);
           toast({ title: "Retirement plan saved" });
         },
@@ -179,34 +175,9 @@ export default function Retirement() {
         </Alert>
       )}
 
-      {monthlySavings && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-                Monthly Savings Estimate
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold font-mono">
-                {formatCurrency(monthlySavings.estimatedMonthlySavings)}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">After all bills, variable, one-time, forward reserve</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-                Savings After Match Bump
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold font-mono">{formatCurrency(monthlySavings.savingsAfterMatchBump)}</div>
-              <p className="text-xs text-muted-foreground mt-1">If contribution bumped to {formatPercent(ceiling)}</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      {/* Monthly Savings cards removed — Discretionary on Overview is the
+          canonical month-level cash-flow headline. Match-bump affordability is
+          now expressed via the take-home reduction line in the gap alert. */}
 
       <Card>
         <CardHeader>

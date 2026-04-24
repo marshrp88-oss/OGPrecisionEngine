@@ -36,7 +36,7 @@ router.post("/variable-spend", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [row] = await db.insert(variableSpend).values(parsed.data).returning();
+  const [row] = await db.insert(variableSpend).values(parsed.data as never).returning();
   if (!row) {
     res.status(500).json({ error: "Failed to create entry" });
     return;
@@ -57,7 +57,7 @@ router.patch("/variable-spend/:id", async (req, res): Promise<void> => {
   }
   const [row] = await db
     .update(variableSpend)
-    .set(parsed.data)
+    .set(parsed.data as never)
     .where(eq(variableSpend.id, params.data.id))
     .returning();
   if (!row) {

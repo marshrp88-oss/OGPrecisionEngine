@@ -47,7 +47,6 @@ export * from "./integrityCheck";
 export * from "./integrityCheckResult";
 export * from "./integrityCheckResultOverallStatus";
 export * from "./integrityCheckStatus";
-export * from "./monthlySavings";
 export * from "./oneTimeExpense";
 export * from "./playbookVersion";
 export * from "./retirementPlan";

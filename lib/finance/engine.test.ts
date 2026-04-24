@@ -367,13 +367,15 @@ describe("forwardReserve — Source: Dashboard!B33 / FIX_PLAN §B4", () => {
     const nextPayday = d(2026, 5, 7);
     // baseNetMonthly is set high enough that neither result is floored at 0,
     // so we can prove the $337 delta propagates through.
-    const baseArgs = [
-      6000, // baseNetMonthly
-      0,    // confirmedCommission
-      allBills, nextPayday, today, [], 0, allBills, 600, 30.4,
-    ] as const;
-    const sNoGuard = monthlySavingsEstimate(...baseArgs);
-    const sGuarded = monthlySavingsEstimate(...baseArgs, [carLoan]);
+    const call = (currentCycleBills: Bill[]) =>
+      monthlySavingsEstimate(
+        6000, // baseNetMonthly
+        0,    // confirmedCommission
+        allBills, nextPayday, today, [], 0, allBills, 600, 30.4,
+        currentCycleBills,
+      );
+    const sNoGuard = call([]);
+    const sGuarded = call([carLoan]);
     expect(sNoGuard).toBeGreaterThan(0);
     closeTo(sGuarded - sNoGuard, 337.0, 0.02);
   });

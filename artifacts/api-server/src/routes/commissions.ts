@@ -85,7 +85,10 @@ router.post("/commissions", async (req, res): Promise<void> => {
     parsed.data.nrrAchieved
   );
 
-  const payoutDate = computePayoutDate(parsed.data.salesMonth);
+  // `salesMonth` is `zod.coerce.date()` (Date) in the body schema but the
+  // engine takes an ISO date string. Normalize once here.
+  const salesMonthIso = parsed.data.salesMonth.toISOString().slice(0, 10);
+  const payoutDate = computePayoutDate(salesMonthIso);
 
   const [row] = await db
     .insert(commissions)
@@ -96,7 +99,7 @@ router.post("/commissions", async (req, res): Promise<void> => {
       grossTotal: grossTotal.toString(),
       takeHome: takeHome.toString(),
       payoutDate,
-    })
+    } as never)
     .returning();
 
   if (!row) {
@@ -128,8 +131,13 @@ router.patch("/commissions/:id", async (req, res): Promise<void> => {
   const nrrAchieved = parsed.data.nrrAchieved ?? parseFloat(existing.nrrAchieved);
   const { mrrPayout, nrrPayout, grossTotal, takeHome } = await calcCommission(mrrAchieved, nrrAchieved);
 
-  const salesMonth = parsed.data.salesMonth ?? existing.salesMonth;
-  const payoutDate = computePayoutDate(salesMonth);
+  // `parsed.data.salesMonth` (if provided) is a Date from the zod coercion;
+  // `existing.salesMonth` is an ISO date string from the DB (date column).
+  // Normalize to a single ISO YYYY-MM-DD string before passing to the engine.
+  const salesMonthIso = parsed.data.salesMonth
+    ? parsed.data.salesMonth.toISOString().slice(0, 10)
+    : existing.salesMonth;
+  const payoutDate = computePayoutDate(salesMonthIso);
 
   const [row] = await db
     .update(commissions)
@@ -141,7 +149,7 @@ router.patch("/commissions/:id", async (req, res): Promise<void> => {
       takeHome: takeHome.toString(),
       payoutDate,
       updatedAt: new Date(),
-    })
+    } as never)
     .where(eq(commissions.id, params.data.id))
     .returning();
 

@@ -32,7 +32,7 @@ router.post("/debt", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [row] = await db.insert(debt).values(parsed.data).returning();
+  const [row] = await db.insert(debt).values(parsed.data as never).returning();
   if (!row) {
     res.status(500).json({ error: "Failed to create debt entry" });
     return;
@@ -53,7 +53,7 @@ router.patch("/debt/:id", async (req, res): Promise<void> => {
   }
   const [row] = await db
     .update(debt)
-    .set({ ...parsed.data, updatedAt: new Date() })
+    .set({ ...parsed.data, updatedAt: new Date() } as never)
     .where(eq(debt.id, params.data.id))
     .returning();
   if (!row) {

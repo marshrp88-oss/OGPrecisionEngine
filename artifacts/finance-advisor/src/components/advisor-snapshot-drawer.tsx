@@ -1,8 +1,6 @@
 import {
   useGetDashboardCycle,
   getGetDashboardCycleQueryKey,
-  useGetMonthlySavings,
-  getGetMonthlySavingsQueryKey,
   useRunIntegrityCheck,
 } from "@workspace/api-client-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet";
@@ -55,9 +53,6 @@ export function AdvisorSnapshotDrawer() {
   const { data: cycle } = useGetDashboardCycle({
     query: { queryKey: getGetDashboardCycleQueryKey(), enabled: open },
   });
-  const { data: savings } = useGetMonthlySavings({
-    query: { queryKey: getGetMonthlySavingsQueryKey(), enabled: open },
-  });
   const runIntegrity = useRunIntegrityCheck();
 
   useEffect(() => {
@@ -70,7 +65,6 @@ export function AdvisorSnapshotDrawer() {
 
   const refreshAll = async () => {
     await queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-    await queryClient.invalidateQueries({ queryKey: getGetMonthlySavingsQueryKey() });
     fetch(`${BASE_URL}/api/dashboard/discretionary`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setDiscretionary(d));
@@ -152,12 +146,13 @@ export function AdvisorSnapshotDrawer() {
 
           <Separator />
 
-          {/* Monthly metrics */}
+          {/* Monthly metrics — Discretionary is the canonical headline; Monthly
+              Savings was dropped from the UI per design decision (engine fn
+              still exists for tests). */}
           <div className="space-y-2">
             <h3 className="text-xs uppercase tracking-wider font-mono text-muted-foreground">Month</h3>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2">
               <SnapshotStat label="Discretionary (Mo)" value={fmt(discretionary?.discretionaryThisMonth)} />
-              <SnapshotStat label="Est. Monthly Savings" value={fmt(savings?.estimatedMonthlySavings)} />
             </div>
             {discretionary && (
               <details className="text-xs">
@@ -176,18 +171,12 @@ export function AdvisorSnapshotDrawer() {
 
           <Separator />
 
-          {/* Income context */}
-          <div className="space-y-2">
-            <h3 className="text-xs uppercase tracking-wider font-mono text-muted-foreground">Income context</h3>
-            <div className="space-y-1 text-xs">
-              <Row label="Base net (mo)" value={fmt(savings?.baseNetIncome)} />
-              <Row label="Confirmed commission" value={fmt(savings?.confirmedCommission)} />
-              <Row label="Total month income" value={fmt(savings?.totalMonthIncome)} />
-              <Row label="Forward reserve" value={fmt(savings?.forwardReserve)} />
-            </div>
-          </div>
+          {/* Income-context block (base net, confirmed commission, total
+              month income, forward reserve) was sourced from the Monthly
+              Savings response which is no longer surfaced in the UI. The
+              advisor still has access to these values through the engine
+              context. */}
 
-          <Separator />
 
           {/* Integrity */}
           <div className="space-y-2">

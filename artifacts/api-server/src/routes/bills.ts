@@ -225,7 +225,7 @@ router.post("/bills", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [row] = await db.insert(bills).values(parsed.data).returning();
+  const [row] = await db.insert(bills).values(parsed.data as never).returning();
   if (!row) {
     res.status(500).json({ error: "Failed to create bill" });
     return;
@@ -261,7 +261,7 @@ router.patch("/bills/:id", async (req, res): Promise<void> => {
   }
   const [row] = await db
     .update(bills)
-    .set({ ...parsed.data, updatedAt: new Date() })
+    .set({ ...parsed.data, updatedAt: new Date() } as never)
     .where(eq(bills.id, params.data.id))
     .returning();
   if (!row) {

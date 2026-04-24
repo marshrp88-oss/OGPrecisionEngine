@@ -45,7 +45,7 @@ router.post("/one-time-expenses", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [row] = await db.insert(oneTimeExpenses).values(parsed.data).returning();
+  const [row] = await db.insert(oneTimeExpenses).values(parsed.data as never).returning();
   if (!row) {
     res.status(500).json({ error: "Failed to create expense" });
     return;
@@ -66,7 +66,7 @@ router.patch("/one-time-expenses/:id", async (req, res): Promise<void> => {
   }
   const [row] = await db
     .update(oneTimeExpenses)
-    .set(parsed.data)
+    .set(parsed.data as never)
     .where(eq(oneTimeExpenses.id, params.data.id))
     .returning();
   if (!row) {

@@ -1,9 +1,6 @@
 import { Router, type IRouter } from "express";
-import {
-  GetDashboardCycleResponse,
-  GetMonthlySavingsResponse,
-} from "@workspace/api-zod";
-import { computeCycleState, computeMonthlySavings } from "../lib/financeEngine";
+import { GetDashboardCycleResponse } from "@workspace/api-zod";
+import { computeCycleState } from "../lib/financeEngine";
 import { billsThisMonth } from "../lib/cycleBillEngine";
 import { db, oneTimeExpenses, variableSpend, bills, assumptions, commissions, balances } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
@@ -27,11 +24,6 @@ router.get("/dashboard/cycle", async (_req, res): Promise<void> => {
       nextPayday: cycle.nextPayday?.toISOString().split("T")[0] ?? null,
     })
   );
-});
-
-router.get("/dashboard/monthly-savings", async (_req, res): Promise<void> => {
-  const savings = await computeMonthlySavings();
-  res.json(GetMonthlySavingsResponse.parse(savings));
 });
 
 // Discretionary THIS MONTH — month-frame view of remaining spend capability.

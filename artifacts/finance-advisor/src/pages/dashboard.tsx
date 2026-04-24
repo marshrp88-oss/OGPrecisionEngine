@@ -2,8 +2,6 @@ import {
   useGetDashboardCycle,
   getGetDashboardCycleQueryKey,
   useCreateBalance,
-  useGetMonthlySavings,
-  getGetMonthlySavingsQueryKey,
   useGetBills,
   getGetBillsQueryKey,
   useGetVariableSpend,
@@ -20,7 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { AlertTriangle, RefreshCw, FlaskConical, CheckCircle2, Plus, ChevronRight } from "lucide-react";
+import { AlertTriangle, RefreshCw, FlaskConical, Plus, ChevronRight } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -91,7 +89,6 @@ function paydayCountdownLabel(days: number | null | undefined, paydayIso: string
 
 export default function Dashboard() {
   const { data: cycle, isLoading, error } = useGetDashboardCycle({ query: { queryKey: getGetDashboardCycleQueryKey() } });
-  const { data: savings } = useGetMonthlySavings({ query: { queryKey: getGetMonthlySavingsQueryKey() } });
   const { data: bills } = useGetBills({ query: { queryKey: getGetBillsQueryKey() } });
 
   const { data: discretionary } = useQuery<DiscretionaryResp>({
@@ -288,13 +285,6 @@ export default function Dashboard() {
             <p className="text-xs text-muted-foreground mt-1">Next-month 1st-7th + 7d variable</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Monthly Savings Est.</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold font-mono">{savings ? formatCurrency(savings.estimatedMonthlySavings) : "—"}</div>
-            <p className="text-xs text-muted-foreground mt-1">Forward-looking after reserve</p>
-          </CardContent>
-        </Card>
       </div>
 
       {discretionary?.discipline && <DisciplineCard d={discretionary.discipline} />}
@@ -354,38 +344,13 @@ export default function Dashboard() {
             <Row label="− One-Time Costs in Cycle" value={cycle.oneTimeDueBeforePayday} negative />
             <Row label="= Safe to Spend" value={cycle.safeToSpend} bold />
             <p className="text-xs text-muted-foreground pt-2 border-t border-border/30 mt-2">
-              Forward Reserve ({formatCurrency(cycle.forwardReserve)}) is excluded from Safe to Spend per spec — it factors into Monthly Savings only.
+              Forward Reserve ({formatCurrency(cycle.forwardReserve)}) is excluded from Safe to Spend per spec — it is reserved for next-cycle bills.
             </p>
           </AccordionContent>
         </AccordionItem>
 
-        {savings && (
-          <AccordionItem value="savings" className="border rounded-xl px-4 bg-card">
-            <AccordionTrigger className="hover:no-underline font-mono text-sm py-4">
-              <span className="flex items-center gap-2"><FlaskConical className="h-4 w-4" />Monthly Savings — math breakdown</span>
-            </AccordionTrigger>
-            <AccordionContent className="pt-2 pb-6 space-y-3 font-mono text-sm">
-              <Row label="Base Net Income" value={savings.baseNetIncome} />
-              <Row label="+ Confirmed Commission This Month" value={savings.confirmedCommission} />
-              <Row label="= Total Month Income" value={savings.totalMonthIncome} bold />
-              <Row label="− Full-Month Fixed Bills (Include=TRUE)" value={savings.fullMonthFixedBills} negative />
-              <Row label="− Variable Spend (prorated remaining)" value={savings.remainingVariableSpendProrated} negative />
-              <Row label="− Known One-Time Costs (unpaid)" value={savings.knownOneTimeCosts} negative />
-              <Row label="− QuickSilver Balance Owed (manual CC payoff)" value={(savings as unknown as { quicksilverBalanceOwed?: number }).quicksilverBalanceOwed ?? 0} negative />
-              <Row label="− Forward Reserve" value={savings.forwardReserve} negative />
-              <Row label="= Estimated Monthly Savings" value={savings.estimatedMonthlySavings} bold />
-              <p className="text-[10px] text-muted-foreground italic pt-1">
-                Context: QuickSilver charges this month total {formatCurrency(savings.quicksilverAccrual)} (logged gas/food on card). They are already inside the variable-cap reservation; only the carry-over balance owed is reserved separately.
-              </p>
-              {savings.matchGapActive && (
-                <div className="mt-3 pt-3 border-t border-border/30">
-                  <p className="text-amber-700 dark:text-amber-400">401(k) Match Gap Active: {formatCurrency(savings.monthlyMatchGapCost)}/mo to capture full match.</p>
-                  <p className="text-xs text-muted-foreground mt-1">Savings after match bump: {formatCurrency(savings.savingsAfterMatchBump)} ({savings.canAffordMatchBump ? "affordable" : "would tighten cycle"})</p>
-                </div>
-              )}
-            </AccordionContent>
-          </AccordionItem>
-        )}
+        {/* Monthly Savings math breakdown removed — Discretionary is the
+            canonical month-level headline. Engine fn retained for tests. */}
 
         {discretionary && (
           <AccordionItem value="discretionary" className="border rounded-xl px-4 bg-card">
@@ -558,7 +523,6 @@ function VariableSpendWidget() {
     }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetMonthlySavingsQueryKey() });
         queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
         setOpen(false);
         setForm((f) => ({ ...f, amount: "", notes: "" }));
@@ -663,7 +627,6 @@ function OneTimeInlineWidget() {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetOneTimeExpensesQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetMonthlySavingsQueryKey() });
         queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
         toast({ title: paid ? "Marked unpaid" : "Marked paid" });
       },
@@ -738,7 +701,6 @@ function UpdateBalanceDialog() {
     }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetMonthlySavingsQueryKey() });
         queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
         queryClient.invalidateQueries({ queryKey: ["dashboard-integrity"] });
         setOpen(false);

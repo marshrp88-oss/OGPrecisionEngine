@@ -32,10 +32,12 @@ router.post("/balances", async (req, res): Promise<void> => {
   }
   const [row] = await db
     .insert(balances)
+    // Drizzle's numeric() insert type is `string`; pg accepts numbers and
+    // coerces. We pass numbers (from zod) for ergonomics — see lib/db notes.
     .values({
       ...parsed.data,
       asOfDate: new Date(parsed.data.asOfDate),
-    })
+    } as never)
     .returning();
   res.status(201).json(row);
 });

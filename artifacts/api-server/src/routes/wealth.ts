@@ -75,7 +75,7 @@ router.post("/wealth/snapshots", async (req, res): Promise<void> => {
       totalLiabilities: totalLiabilities.toString(),
       netWorth: netWorth.toString(),
       changeVsPrior: changeVsPrior != null ? changeVsPrior.toString() : null,
-    })
+    } as never)
     .returning();
 
   if (!row) {
@@ -122,7 +122,7 @@ router.patch("/wealth/snapshots/:id", async (req, res): Promise<void> => {
       totalAssets: totalAssets.toString(),
       totalLiabilities: totalLiabilities.toString(),
       netWorth: netWorth.toString(),
-    })
+    } as never)
     .where(eq(wealthSnapshots.id, params.data.id))
     .returning();
 
@@ -158,7 +158,7 @@ router.post("/wealth/credit-scores", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [row] = await db.insert(creditScores).values(parsed.data).returning();
+  const [row] = await db.insert(creditScores).values(parsed.data as never).returning();
   if (!row) {
     res.status(500).json({ error: "Failed to create credit score" });
     return;

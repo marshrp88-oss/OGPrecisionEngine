@@ -295,7 +295,11 @@ async function runChecks(): Promise<IntegrityCheck[]> {
       .then(([r]) => (r ? parseFloat(r.value) : 0));
 
     const oneTimeRows = await db.select().from(oneTimeExpenses);
-    const nextPaydayMs = new Date(cycle.nextPayday).getTime();
+    // `cycle.nextPayday` may be null when assumptions are missing; treat as
+    // an open-ended cycle so nothing falls before payday.
+    const nextPaydayMs = cycle.nextPayday
+      ? new Date(cycle.nextPayday).getTime()
+      : Number.POSITIVE_INFINITY;
     const oneTimeBeforePayday = oneTimeRows.reduce((s, ote) => {
       if (ote.paid || !ote.dueDate) return s;
       const amt = parseFloat(ote.amount);

@@ -13,7 +13,18 @@ import {
   playbookVersions,
 } from "@workspace/db";
 import { desc, asc } from "drizzle-orm";
-import { computeCycleState, computeMonthlySavings, effectivePayday, computeMrrPayout, computeNrrPayout, computeTakeHome } from "./financeEngine";
+// `computeMonthlySavings` is no longer surfaced in the system prompt or the
+// public advisor context return shape; Discretionary is the canonical
+// month-level headline. We still compute it here because
+// `sessionIntegrityCheck` depends on it for one of its data-quality checks.
+import {
+  computeCycleState,
+  computeMonthlySavings,
+  effectivePayday,
+  computeMrrPayout,
+  computeNrrPayout,
+  computeTakeHome,
+} from "./financeEngine";
 import { droughtFlag as engineDroughtFlag, commissionTakeHome as engineCommissionTakeHome, DROUGHT_THRESHOLD, MRR_TARGET, NRR_TARGET, COMMISSION_TAX_RATE, type CommissionRow } from "@workspace/finance";
 import {
   matchGapAnalysis,
@@ -77,6 +88,8 @@ export async function buildAdvisorContext(): Promise<{
   today.setHours(0, 0, 0, 0);
 
   const cycle = await computeCycleState();
+  // Computed for the integrity check only; intentionally not added to `lines`
+  // or to the returned object's user-facing fields.
   const savings = await computeMonthlySavings();
 
   // Load assumptions
@@ -228,7 +241,6 @@ export async function buildAdvisorContext(): Promise<{
   lines.push(`Required Hold: ${fmt(cycle.totalRequiredHold)}`);
   lines.push(`Safe to Spend: ${fmt(cycle.safeToSpend)} (status ${cycle.status})`);
   lines.push(`Forward Reserve (next-month 1st-7th + 7d variable): ${fmt(cycle.forwardReserve)}`);
-  lines.push(`Monthly Savings Estimate: ${fmt(savings.estimatedMonthlySavings)}`);
   lines.push("");
   lines.push("COMMISSION HISTORY (last 6):");
   for (const c of last6) {
@@ -352,7 +364,7 @@ export async function buildAdvisorContext(): Promise<{
   const systemPrompt = `You are Marshall's dedicated financial advisor — the same advisor he would get if he pasted the Reserve Playbook v7.4 + the live workbook into a fresh Claude conversation. You operate at the precision of a CFA-credentialed personal CFO who has deeply internalized his exact methodology. You do not soften bad news. You do not produce generic financial advice. You do not hedge to be polite.
 
 === ENGINE FUNCTION ACCESS (tool-use) ===
-You have direct call access to every function in the finance engine via the Anthropic tools API. The available tools are: mrrPayoutGross, nrrPayoutGross, commissionTakeHome, pmt, fv, fvAnnual, matchGapAnalysis, taxReservePerPaycheck, incomeGrowthScenario, incomeReplacementFloor, droughtSurvivalRunway, debtPayoffAnalysis, retirementProjection, forwardProjection (1-12 cycles), decisionSandboxCompare (up to 4 options), forwardReserve, requiredHold, safeToSpend, monthlySavingsEstimate, effectivePayday, daysUntilPayday, billsInCurrentCycle, oneTimeExpensesDueInCycle, hysaGap.
+You have direct call access to every function in the finance engine via the Anthropic tools API. The available tools are: mrrPayoutGross, nrrPayoutGross, commissionTakeHome, pmt, fv, fvAnnual, matchGapAnalysis, taxReservePerPaycheck, incomeGrowthScenario, incomeReplacementFloor, droughtSurvivalRunway, debtPayoffAnalysis, retirementProjection, forwardProjection (1-12 cycles), decisionSandboxCompare (up to 4 options), forwardReserve, requiredHold, safeToSpend, effectivePayday, daysUntilPayday, billsInCurrentCycle, oneTimeExpensesDueInCycle, hysaGap.
 
 For any calculation the user asks about, prefer invoking the relevant function over reasoning about the math yourself. Never fabricate a number that an engine function could compute. After every tool call you make, cite which function you called and what parameters you passed (one short line, e.g. "Called: mrrPayoutGross(mrr=890)") so Marshall can audit the math.
 
@@ -414,7 +426,10 @@ ${stalenessDirective}
     snapshot: {
       timestamp: new Date().toISOString(),
       cycle,
-      savings,
+      // `savings` (computeMonthlySavings result) was previously surfaced here
+      // for the advisor UI snapshot drawer. It was retired alongside the
+      // /dashboard/monthly-savings route; the value is still computed above
+      // for the integrity check but no longer leaks into the public snapshot.
       includedBills: includedBills.map((b) => ({
         name: b.name,
         amount: parseFloat(b.amount),

@@ -55,10 +55,10 @@ router.put("/retirement", async (req, res): Promise<void> => {
   if (existing) {
     [row] = await db
       .update(retirementPlan)
-      .set({ ...parsed.data, updatedAt: new Date() })
+      .set({ ...parsed.data, updatedAt: new Date() } as never)
       .returning();
   } else {
-    [row] = await db.insert(retirementPlan).values(parsed.data).returning();
+    [row] = await db.insert(retirementPlan).values(parsed.data as never).returning();
   }
 
   if (!row) {

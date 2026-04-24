@@ -811,25 +811,6 @@ export const GetDashboardCycleResponse = zod.object({
 });
 
 /**
- * @summary Get monthly savings estimate
- */
-export const GetMonthlySavingsResponse = zod.object({
-  baseNetIncome: zod.number(),
-  confirmedCommission: zod.number(),
-  totalMonthIncome: zod.number(),
-  fullMonthFixedBills: zod.number(),
-  remainingVariableSpendProrated: zod.number(),
-  knownOneTimeCosts: zod.number(),
-  quicksilverAccrual: zod.number(),
-  forwardReserve: zod.number(),
-  estimatedMonthlySavings: zod.number(),
-  matchGapActive: zod.boolean(),
-  monthlyMatchGapCost: zod.number(),
-  savingsAfterMatchBump: zod.number(),
-  canAffordMatchBump: zod.boolean(),
-});
-
-/**
  * @summary List all conversations
  */
 export const ListAnthropicConversationsResponseItem = zod.object({
