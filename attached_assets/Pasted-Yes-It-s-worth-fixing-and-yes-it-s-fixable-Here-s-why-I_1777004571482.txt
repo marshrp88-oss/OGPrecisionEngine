@@ -1,0 +1,66 @@
+Yes. It's worth fixing, and yes, it's fixable.
+Here's why I'm saying that with conviction rather than hedging.
+You already paid the expensive costs. The engine is built, tested, and wired into six pages. Phase 1 and Phase 2 are done. What remains is a single architectural upgrade — turning the advisor from a read-only reasoner into a function-calling agent. That's not another multi-week project. It's a well-defined task that Replit Agent has done before for other apps, it's supported natively by Claude's API, and the engine you already have is exactly what it needs to call.
+The alternative is worse than the work. If you stop here, you have a good current-cycle tool but you still need Excel plus Claude-in-chat for every forward-planning question, every commission scenario, every purchase decision. That's the workflow you started this project to eliminate. Stopping 85% of the way there means you carry the maintenance burden of two systems forever.
+One honest caveat: after this fix, there may still be small UX issues, occasional hallucinated function calls, or edge cases the advisor handles poorly. That's true of any AI system. But the architectural gap will be closed. You'll be iterating on polish, not rebuilding.
+Ship it.
+
+FULL UPDATED FINAL PROMPT FOR REPLIT AGENT:
+
+The finance engine port (Phase 2) is complete and working for current-cycle calculations. A capability audit has confirmed the AI Advisor is a read-only reasoning layer over a static snapshot, with no function-call capability, no live state refresh, and no hypothetical overlay support. This is the final architectural gap. Close it.
+MISSION
+Upgrade the AI Advisor from read-only snapshot reasoning to a full function-calling agent with per-turn state refresh and hypothetical scenario support. No database write access. No new UI pages. No changes to existing engine functions.
+CAPABILITY 1 — DIRECT ENGINE FUNCTION ACCESS
+Give the advisor the ability to invoke any function exported from lib/finance/engine.ts during a conversation using the underlying LLM's tool-use API. Create a tool manifest that exposes every engine function with its TypeScript signature, parameter names, and return type. Register these tools with the advisor at session initialization.
+At minimum, the following functions must be callable by the advisor with dynamic user-provided parameters:
+
+mrrPayoutGross, nrrPayoutGross, commissionTakeHome
+forwardProjection (accept dynamic cycle count from 1 to 12)
+decisionSandboxCompare (accept an array of up to 4 option objects)
+pmt, fv, fvAnnual
+incomeReplacementFloor, droughtSurvivalRunway
+matchGapAnalysis (accept hypothetical contribution rates)
+taxReservePerPaycheck, incomeGrowthScenario
+debtPayoffAnalysis, retirementProjection
+safeToSpend, monthlySavingsEstimate, forwardReserve, requiredHold (for override scenarios)
+
+The advisor's system prompt must include: "You have direct call access to every function in the finance engine. For any calculation the user asks about, prefer invoking the relevant function over reasoning about the math yourself. Never fabricate a number that an engine function could compute. Always cite which function you called and what parameters you passed."
+CAPABILITY 2 — PER-TURN SNAPSHOT REFRESH
+Currently the session snapshot is generated once when the advisor session starts. Change this so the snapshot is regenerated at the start of every advisor turn. When the user updates their checking balance, adds a bill, or logs variable spend in the UI, the very next advisor response must reflect that updated state.
+Include the snapshot generation timestamp in the advisor's context on every turn and allow the advisor to cite it when relevant ("as of your most recent balance update at 4:18 PM..."). If the snapshot is more than 3 days stale, the advisor must surface that warning unprompted at the start of its response.
+CAPABILITY 3 — HYPOTHETICAL OVERLAY SUPPORT
+Allow the advisor to accept temporary input overrides without persisting them. When a user proposes a scenario ("if I close a $3,000 deal," "if I add a $500 expense in May," "if I bump my 401(k) to 6%"), the advisor must construct an in-memory overlay of the relevant data structure, pass that overlay into the appropriate engine function, return the computed result, and clearly label the output as a hypothetical scenario.
+The overlay must never write to the database. When the conversation turn ends, the overlay is discarded. The next user message starts from the real current state unless the user explicitly re-states the hypothetical.
+The advisor's system prompt must include: "When the user proposes a hypothetical, create an in-memory overlay of the relevant inputs, call the relevant engine function against it, and return the result clearly labeled as scenario output. Never persist hypothetical values to the database. Always distinguish in your response between real current state and hypothetical scenario results."
+EXPLICITLY OUT OF SCOPE
+Do not give the advisor database write access. Logging variable spend, updating balances, adding bills, recording decisions — all remain user actions in the UI. The advisor recommends, the user actuates. This separation is intentional.
+Do not add new engine functions. The engine is locked.
+Do not modify the 123 existing tests. They must still all pass after this upgrade.
+Do not change the database schema.
+DELIVERABLE VERIFICATION — RUN THESE FIVE TESTS
+After implementation, run these exact tests in sequence and report the results verbatim. Do not mark the task complete until all five pass.
+Test 1 — Direct function call.
+Ask advisor: "Compute mrrPayoutGross(890). Return only the numerical result."
+Expected: A specific number (approximately $1,547.52 gross). Advisor cites the function it called.
+Test 2 — Multi-cycle projection.
+Ask advisor: "Run forwardProjection(cycles=6). Show me the ending checking balance at each of the next 6 paydays assuming no commission."
+Expected: Six rows with payday dates and projected ending balances. Advisor cites the function and parameters.
+Test 3 — Decision sandbox comparison.
+Ask advisor: "Compare two cars: a 2024 Camry at $22,000, 4.74% APR, 60 months, $4,000 down, $155/mo insurance+taxes. And a 2023 Crosstrek at $19,000, 4.74% APR, 60 months, $4,000 down, $145/mo insurance+taxes. Use decisionSandboxCompare."
+Expected: Full comparison output with monthly payment, total monthly cost, daily lifestyle cost, HYSA runway, and affordability flag for each option.
+Test 4 — Live state refresh.
+In the UI, change your checking balance from $2,152 to $2,500 and save. Immediately send this message to the advisor: "What is my current checking balance and what is my Safe to Spend?"
+Expected: Advisor reflects $2,500 balance without requiring a new session. Snapshot timestamp in the response shows it was regenerated.
+Test 5 — Hypothetical overlay.
+Ask advisor: "If I had a $500 one-time expense due May 10, what would my forward projection look like for the next 3 cycles? Run the hypothetical scenario, then confirm that no persistent change was made to my database."
+Expected: Three-cycle projection with the $500 expense included. Advisor explicitly states the scenario was not persisted. Subsequent queries about real current state show the $500 is not in the database.
+REPORTING
+When complete, report back with:
+
+List of files modified or created
+Confirmation that all 123 engine tests still pass
+Verbatim advisor responses to all five tests above
+Any implementation issues you encountered and how you resolved them
+Any functions from the engine that you could not wire up as tools and why
+
+Do not mark this task complete until all five tests pass unambiguously. This is the final architectural piece. Take the time to do it right.

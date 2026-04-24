@@ -3,6 +3,13 @@ import { db, conversations, messages } from "@workspace/db";
 import { eq, asc, desc } from "drizzle-orm";
 import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { buildAdvisorContext } from "../lib/advisorContext";
+import { ENGINE_TOOLS, executeEngineTool } from "../lib/engineTools";
+import type {
+  MessageParam,
+  ContentBlock,
+  ToolUseBlock,
+  ToolResultBlockParam,
+} from "@anthropic-ai/sdk/resources/messages";
 import {
   ListAnthropicConversationsResponse,
   CreateAnthropicConversationBody,
@@ -118,7 +125,9 @@ router.post("/anthropic/conversations/:id/messages", async (req, res): Promise<v
     .where(eq(messages.conversationId, params.data.id))
     .orderBy(asc(messages.createdAt));
 
-  // Build live system prompt with current financial snapshot + integrity check
+  // Build live system prompt with current financial snapshot + integrity check.
+  // Per Capability 2: this is regenerated on every advisor turn, so the snapshot
+  // always reflects the latest balances/bills/commissions/variable spend.
   const { systemPrompt } = await buildAdvisorContext();
 
   // Set up SSE
@@ -127,26 +136,62 @@ router.post("/anthropic/conversations/:id/messages", async (req, res): Promise<v
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
 
-  const anthropicMessages = history.map((m) => ({
+  const conversation: MessageParam[] = history.map((m) => ({
     role: m.role as "user" | "assistant",
     content: m.content,
   }));
 
   let assistantContent = "";
+  const model = process.env.ANTHROPIC_MODEL ?? "claude-opus-4-7";
+  const MAX_TOOL_TURNS = 8;
 
-  const stream = await anthropic.messages.stream({
-    model: process.env.ANTHROPIC_MODEL ?? "claude-opus-4-7",
-    max_tokens: 8192,
-    system: systemPrompt,
-    messages: anthropicMessages,
-  });
+  for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+    const response = await anthropic.messages.create({
+      model,
+      max_tokens: 8192,
+      system: systemPrompt,
+      tools: ENGINE_TOOLS,
+      messages: conversation,
+    });
 
-  for await (const chunk of stream) {
-    if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
-      const text = chunk.delta.text;
-      assistantContent += text;
-      res.write(`data: ${JSON.stringify({ content: text, done: false })}\n\n`);
+    const textBlocks = response.content.filter(
+      (b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text",
+    );
+    const toolUses = response.content.filter(
+      (b): b is ToolUseBlock => b.type === "tool_use",
+    );
+
+    for (const t of textBlocks) {
+      assistantContent += (assistantContent ? "\n\n" : "") + t.text;
+      res.write(`data: ${JSON.stringify({ content: t.text, done: false })}\n\n`);
     }
+
+    if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
+      break;
+    }
+
+    // Execute every requested tool call and feed results back.
+    const toolResults: ToolResultBlockParam[] = [];
+    for (const tu of toolUses) {
+      try {
+        const result = executeEngineTool(tu.name, tu.input);
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: tu.id,
+          content: JSON.stringify(result),
+        });
+      } catch (err) {
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: tu.id,
+          content: `Tool error: ${err instanceof Error ? err.message : String(err)}`,
+          is_error: true,
+        });
+      }
+    }
+
+    conversation.push({ role: "assistant", content: response.content });
+    conversation.push({ role: "user", content: toolResults });
   }
 
   // Save assistant response
