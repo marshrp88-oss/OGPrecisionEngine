@@ -1020,7 +1020,6 @@ describe("forwardProjection — Source: BUILD_SPEC §5.2 / FIX_PLAN §B3", () =>
     const commissions = [new CommissionRow(d(2026, 3, 1), 700.0, 0.0)]; // payout Apr 22
     const result = forwardProjection({
       currentChecking: 2000.0,
-      currentMonthlySavings: 142.17,
       bills: bills(),
       today: d(2026, 4, 21),
       nextPaydayNominal: d(2026, 4, 22),
@@ -1055,7 +1054,6 @@ describe("forwardProjection — Source: BUILD_SPEC §5.2 / FIX_PLAN §B3", () =>
   it("payday-sequence advances 7 → 22 → next-month-7", () => {
     const result = forwardProjection({
       currentChecking: 1000.0,
-      currentMonthlySavings: 0.0,
       bills: bills(),
       today: d(2026, 4, 1),
       nextPaydayNominal: d(2026, 4, 7),
@@ -1075,7 +1073,6 @@ describe("forwardProjection — Source: BUILD_SPEC §5.2 / FIX_PLAN §B3", () =>
     const heavy = [new Bill("Big Rent", 5000.0, 4, true)];
     const result = forwardProjection({
       currentChecking: 0.0,
-      currentMonthlySavings: 0.0,
       bills: heavy,
       today: d(2026, 4, 21),
       nextPaydayNominal: d(2026, 4, 22),
@@ -1092,7 +1089,6 @@ describe("forwardProjection — Source: BUILD_SPEC §5.2 / FIX_PLAN §B3", () =>
     const commissions = [new CommissionRow(d(2026, 3, 1), 700.0, 0.0)];
     const result = forwardProjection({
       currentChecking: 0.0,
-      currentMonthlySavings: 0.0,
       bills: [],
       today: d(2026, 5, 1),
       nextPaydayNominal: d(2026, 5, 7),

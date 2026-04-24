@@ -903,7 +903,6 @@ export interface ProjectionCycle {
 
 export interface ForwardProjectionArgs {
   currentChecking: number;
-  currentMonthlySavings: number;
   bills: Bill[];
   today: Date;
   nextPaydayNominal: Date;
