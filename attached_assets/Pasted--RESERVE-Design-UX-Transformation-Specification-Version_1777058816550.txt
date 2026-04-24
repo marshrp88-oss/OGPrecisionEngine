@@ -1,0 +1,614 @@
+# RESERVE — Design & UX Transformation Specification
+**Version:** 2.0  
+**Status:** Authoritative redesign spec — supersedes current UI patterns  
+**Audience:** Replit Agent 4 / implementing engineer  
+**Constraint:** All engine math, API routes, and @workspace/finance package are frozen. This document covers presentation layer only.
+
+---
+
+## 0. What This Document Is
+
+A complete prescription for transforming the Reserve UI from a dense engineering control panel into a precision financial instrument that feels as sophisticated as the math it runs. Every section is actionable. Nothing here requires touching the engine, DB schema, or API routes.
+
+---
+
+## 1. Design Philosophy
+
+### 1.1 The Single Governing Principle
+Reserve is a **cockpit, not a dashboard.** A cockpit gives a pilot immediate situational awareness — one glance tells you altitude, heading, fuel. Every element earns its place by answering "what does Marshall need to know or do right now." Anything that doesn't answer that question is noise.
+
+### 1.2 Aesthetic Direction: **Financial Terminal — Refined**
+Think Bloomberg Terminal meets a well-designed Swiss watch interface. Not the garish colors of Bloomberg — the precision of it. Characteristics:
+
+- **Typographic hierarchy does all the work.** Size, weight, and tracking communicate importance. No decorative gradients, no hero illustrations, no card shadows competing for attention.
+- **Monospace numbers, always.** Every dollar amount, percentage, and day count uses a monospace font. Numbers must align vertically in any column, no exceptions.
+- **Color is semantic, never decorative.** Green means safe. Amber means watch. Red means act. These colors appear only in status contexts. Background, borders, and labels are achromatic.
+- **Density is a feature, not a problem.** Marshall is a sophisticated user. Compress, don't pad. Information should be retrievable in under 3 seconds.
+- **Motion is purposeful.** One number updating animates. A status changing animates. Background elements do not move.
+
+### 1.3 What Gets Eliminated
+- All stacked alert banners (replaced by a single priority rollup)
+- All three math-breakdown accordions on the dashboard (replaced by one unified drill-down)
+- Inline Cycle Settings on the dashboard (moved to Settings where it belongs)
+- Static commission reference card (replaced by a live calculator)
+- Repeated numbers (each figure appears exactly once at the top level)
+- "Spend safely" and similar soft editorial copy (replaced by direct labels)
+
+---
+
+## 2. Visual System
+
+### 2.1 Typography
+Replace Inter + Space Mono with:
+
+- **Display / Hero numbers:** `IBM Plex Mono` — industrial, precise, authoritative. Used for all dollar amounts, percentages, day counts, and status labels.
+- **UI Labels / Navigation / Body:** `IBM Plex Sans` — the pairing is designed to work together. Clean, serious, slightly condensed.
+- **Load via Google Fonts:**
+```css
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+```
+
+**Scale:**
+```css
+--text-hero: 3.5rem/1     IBM Plex Mono 600   /* Safe to Spend hero */
+--text-xl:   1.5rem/1.2   IBM Plex Mono 500   /* Section numbers */
+--text-lg:   1.125rem/1.4 IBM Plex Sans 500   /* Card headers */
+--text-base: 0.875rem/1.5 IBM Plex Sans 400   /* Body, labels */
+--text-sm:   0.75rem/1.4  IBM Plex Sans 400   /* Secondary labels */
+--text-xs:   0.6875rem/1.3 IBM Plex Mono 400  /* Table cells, micro-data */
+```
+
+### 2.2 Color Tokens
+Dark background, near-black. All achromatic except semantic colors.
+
+```css
+:root {
+  /* Backgrounds */
+  --bg-base:      hsl(220 13% 5%);      /* Page background */
+  --bg-surface:   hsl(220 13% 8%);      /* Cards */
+  --bg-elevated:  hsl(220 13% 11%);     /* Hover states, inputs */
+  --bg-overlay:   hsl(220 13% 14%);     /* Modals, popovers */
+
+  /* Borders */
+  --border-subtle:  hsl(220 10% 14%);   /* Card borders */
+  --border-default: hsl(220 10% 20%);   /* Input borders, dividers */
+  --border-strong:  hsl(220 10% 30%);   /* Focused inputs */
+
+  /* Text */
+  --text-primary:   hsl(220 10% 96%);   /* Headlines, hero numbers */
+  --text-secondary: hsl(220 8% 65%);    /* Labels, subtitles */
+  --text-muted:     hsl(220 6% 40%);    /* Helper text, disabled */
+
+  /* Semantic — the only real colors in the system */
+  --green:       hsl(152 60% 45%);      /* GREEN status */
+  --green-dim:   hsl(152 40% 12%);      /* GREEN background tint */
+  --amber:       hsl(38 90% 50%);       /* YELLOW/WARN status */
+  --amber-dim:   hsl(38 50% 10%);       /* YELLOW background tint */
+  --red:         hsl(0 72% 50%);        /* RED status */
+  --red-dim:     hsl(0 40% 10%);        /* RED background tint */
+
+  /* Accent — one blue for interactive elements only */
+  --accent:      hsl(214 85% 55%);      /* Links, active nav, buttons */
+  --accent-dim:  hsl(214 50% 12%);      /* Button backgrounds */
+
+  /* Chart palette — 5 colors for Recharts only */
+  --chart-1: hsl(214 85% 55%);
+  --chart-2: hsl(152 60% 45%);
+  --chart-3: hsl(38 90% 50%);
+  --chart-4: hsl(270 60% 60%);
+  --chart-5: hsl(0 72% 50%);
+}
+```
+
+### 2.3 Component Patterns
+
+**Card:** Flat. No shadow. 1px border `var(--border-subtle)`. Background `var(--bg-surface)`. Radius 6px. Padding 16px (compact), 24px (standard).
+
+**Status Badge:** Monospace text, uppercase, letter-spacing 0.08em, 5px vertical padding, 10px horizontal. Background is the `*-dim` variant, text is the full color.
+```
+GREEN  → bg-green-dim, text-green
+YELLOW → bg-amber-dim, text-amber
+RED    → bg-red-dim,   text-red
+```
+
+**Stat Row (used everywhere):**
+```
+[Label ............. $1,234.56]
+```
+Label in `text-secondary text-sm`, value in `IBM Plex Mono text-sm text-primary`, right-aligned. Dot leader between them. This pattern replaces the current Row component.
+
+**Divider:** 1px `var(--border-subtle)`. Used between logical groups within a card. Not between every row.
+
+**Button — Primary:** Flat background `var(--accent-dim)`, text `var(--accent)`, border `1px solid var(--accent)` at 30% opacity. Hover: border at 60% opacity, background slightly lighter. No rounded corners — 4px radius. All-caps label, letter-spacing 0.06em, IBM Plex Sans 500.
+
+**Button — Ghost:** No background, no border. Text `var(--text-secondary)`. Hover: text `var(--text-primary)`.
+
+**Input:** Background `var(--bg-elevated)`, border `var(--border-default)`. Focus: border `var(--border-strong)`. Font IBM Plex Mono for numeric inputs, IBM Plex Sans otherwise. No box-shadow focus rings — border change only.
+
+### 2.4 Motion
+```css
+/* Global transition for interactive elements */
+* { transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, opacity 120ms ease; }
+
+/* Number update animation — apply when a value changes */
+@keyframes value-update {
+  0%   { opacity: 0.4; transform: translateY(3px); }
+  100% { opacity: 1;   transform: translateY(0); }
+}
+.value-updated { animation: value-update 200ms ease-out; }
+
+/* Status change — pulse once */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+.status-changed { animation: status-pulse 400ms ease-in-out; }
+
+/* Page enter */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-enter { animation: page-enter 180ms ease-out; }
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+```
+
+---
+
+## 3. Information Architecture
+
+### 3.1 Navigation Restructure
+Current state: 10 flat peers in sidebar. No hierarchy.  
+New state: 5 sections, 10 destinations, logical grouping.
+
+```
+TODAY
+  ├── Overview          (replaces Cycle Dashboard)
+  └── Advisor           (AI chat — elevated to section peer)
+
+MONEY FLOW
+  ├── Bills             (unchanged)
+  ├── One-Time          (unchanged)
+  └── Commissions       (upgraded)
+
+PLAN
+  ├── Wealth            (upgraded)
+  ├── Debt              (upgraded)
+  └── Retirement        (upgraded)
+
+TOOLS
+  └── Scenarios         (upgraded, renamed from Decision Sandbox)
+
+CONFIG
+  └── Settings          (consolidated)
+```
+
+**Nav visual treatment:**
+- Section headers: `text-xs uppercase tracking-widest text-muted` — not clickable
+- Nav items: `text-sm IBM Plex Sans` left-padded 16px under their section
+- Active item: left 2px border `var(--accent)`, text `var(--text-primary)`, background `var(--bg-elevated)`
+- Inactive: text `var(--text-secondary)`, no background
+- Notification dots: small 6px circles in `var(--amber)` or `var(--red)` after the label — for integrity failures, drought flag, match gap, stale data. Never text badges.
+
+### 3.2 Global Header Bar (mobile + desktop)
+A single 48px bar across the top:
+- Left: "RESERVE" wordmark — IBM Plex Mono 600, tracking 0.15em, `text-primary`
+- Center (mobile only): current page title
+- Right: Integrity chip + Update Balance button
+
+**Integrity chip** (replaces the current banner system):
+```
+● 2 issues        ← amber dot + count when degraded
+● All clear       ← green dot when pass
+```
+Clicking opens a slide-over panel with the full 10-point list. This chip is the single notification surface. All five stacked banners on the current dashboard are eliminated. The chip handles everything.
+
+---
+
+## 4. The Overview Page (replaces Cycle Dashboard)
+
+This is the most important page. The current version is a control panel that requires 30 seconds of scanning to understand the situation. The new version answers the question in 3 seconds and lets Marshall drill in from there.
+
+### 4.1 Layout — Three Zones
+
+```
+┌─────────────────────────────────────────────┐
+│  ZONE 1: SITUATION (above fold, always)     │
+│  The answer. No scrolling required.         │
+├─────────────────────────────────────────────┤
+│  ZONE 2: SUPPORTING CONTEXT (below fold)    │
+│  Bills, variable spend, one-times.          │
+├─────────────────────────────────────────────┤
+│  ZONE 3: MATH (collapsed, on demand)        │
+│  Single unified drill-down. Not 3 accordions│
+└─────────────────────────────────────────────┘
+```
+
+### 4.2 Zone 1 — The Situation Block
+
+Full-width card, status-colored left border (4px, GREEN/YELLOW/RED). Two columns:
+
+**Left column — The Primary Answer:**
+```
+SAFE TO SPEND
+$729.00                    ← text-hero IBM Plex Mono
+────────────────────────
+$52.07 / day  ·  14 days to May 7
+```
+- No status badge here — the colored border is the status signal
+- Daily rate is real-time (tightens as payday approaches)
+- Payday date is the effective date, weekend-adjusted, always shown
+
+**Right column — The Month View:**
+```
+DISCRETIONARY THIS MONTH
+$445.68                    ← text-xl IBM Plex Mono
+
+Variable remaining   $362.36 of $600
+CC balance owed      $0.00
+```
+
+Separator between columns: 1px vertical `var(--border-subtle)`.
+
+Below the two columns, a single line:
+```
+Checking $2,152.00  ·  Required Hold $1,423.00  ·  Forward Reserve $1,561.16  ·  Monthly Savings $345.68
+```
+All in `text-xs IBM Plex Mono text-secondary`. This is the 4-up stat strip — compressed to one line instead of 4 cards.
+
+**If status is YELLOW or RED**, the left border pulses once on load and the safe-to-spend number renders in the semantic color instead of `text-primary`.
+
+### 4.3 Zone 1 — Discipline Strip
+Three inline metrics, one line below the situation block:
+
+```
+Fixed / Income   57%  [MONITOR]    Variable Pace   52%  [ON PACE]    Savings Rate   24%  [BELOW TARGET]
+```
+Each metric: label in `text-xs text-secondary`, value in `IBM Plex Mono text-sm`, status badge inline. No separate card. One line.
+
+### 4.4 Zone 1 — Action Row
+The one primary action per page. Currently missing entirely.
+
+```
+[↑ UPDATE BALANCE]   [+ LOG SPEND]   [+ ONE-TIME]   [? ASK ADVISOR]
+```
+Four ghost buttons in a row. This is the answer to "what do I do next." Update Balance opens the existing dialog. Log Spend opens a quick-add for variable spend. One-Time opens the one-time expense dialog. Ask Advisor navigates to /advisor with context pre-loaded.
+
+### 4.5 Zone 2 — Supporting Context
+
+Three columns, side by side (stack vertically on mobile):
+
+**Bills in Cycle** — clean table, no card header, just the data:
+```
+BILL                     DAY    AMOUNT
+Car Loan (2024 Camry)      1    $337.00
+Phone (Verizon)            2     $65.00
+Claude Subscription        3     $21.00
+Rent                       4  $1,000.00
+─────────────────────────────────────
+Total hold               $1,423.00
+```
+Table headers: `text-xs uppercase tracking-wide text-muted`. Rows: `text-xs IBM Plex Mono`. Total row: `text-sm IBM Plex Mono font-600 border-t border-subtle pt-2`.
+
+**One-Time This Month** — same table pattern. If empty: single line `— All clear` in `text-muted`.
+
+**Variable Spend Log** — last 6 entries, most recent first:
+```
+Apr 13  Fuel          $65.00  QS
+Apr 13  Household     $21.99  QS
+Apr 6   Groceries    $112.45  QS
+Apr 6   Dining        $38.20  QS
+──────────────────────────────
+Logged MTD  $237.64    QS Blind Spot  $215.65
+```
+"QS" badge is a 2-character monospace tag in `amber-dim` background. The "Log" button is a ghost button top-right of the column.
+
+### 4.6 Zone 3 — Math Drill-Down
+One single collapsible section at the bottom, not three. Labeled "Show engine math." When expanded, three tabs: Safe to Spend | Monthly Savings | Discretionary. Each tab shows the existing row-by-row breakdown. This is the current accordion content, consolidated and de-emphasized.
+
+---
+
+## 5. Bills Page
+
+### 5.1 Current Problems
+- Multiple wide tables force horizontal scroll on mobile
+- No visual hierarchy between active and inactive bills
+- Include toggle is not prominently labeled
+- Category breakdown is a table when it should be a visual
+
+### 5.2 New Layout
+
+**Top:** Three stat pills in a row:
+```
+$1,833.95 / mo active    ·    9 active / 1 paused    ·    78% autopay
+```
+
+**Category Visual:** Replace the category breakdown table with a proportional bar:
+```
+Essential ████████████████████ 80%   $1,461.95
+Debt      ████                 18%     $337.00
+Discret.  █                     2%      $35.00
+```
+Each segment is clickable — filters the bill list below. IBM Plex Mono for amounts, IBM Plex Sans for labels.
+
+**Bill List:** Replace the current table with a structured list where each bill is one row:
+```
+[●] Car Loan (2024 Camry)    Day 1    $337.00    Debt    [AUTO]    [⋮]
+[●] Phone (Verizon)          Day 2     $65.00    Essen.  [AUTO]    [⋮]
+[○] Gym Membership           Day 2     $27.00    Discr.  [AUTO]    [⋮]  ← greyed, Include=FALSE
+```
+- `[●]` / `[○]` is the Include toggle — a filled/hollow circle, not a switch. Immediately legible.
+- Greyed rows have `opacity: 0.45` on the entire row
+- `[AUTO]` badge: green-dim background, "AUTO" in IBM Plex Mono xs
+- `[⋮]` opens edit/delete popover
+- No horizontal scroll. Everything fits in the row.
+
+**14-Day Timeline:** Below the list, a compact day-by-day view:
+```
+Apr 25  —
+Apr 26  —
+Apr 27  —
+...
+May 1   Car Loan $337 · Verizon $65
+May 3   Claude $21
+May 4   Rent $1,000
+```
+Left column is the date (IBM Plex Mono xs text-muted), right is bills due. No card — just the list.
+
+---
+
+## 6. Commissions Page
+
+### 6.1 The Missing Feature — Live Payout Calculator
+This is the biggest gap on the page. Replace the static reference card with an interactive calculator at the top.
+
+```
+PAYOUT CALCULATOR
+─────────────────────────────────────────────
+MRR Achieved    [_________]    NRR Achieved    [_________]
+                          ↕ updates live ↕
+Gross Payout    $1,547.52        Take-Home    $874.35
+─────────────────────────────────────────────
+MRR $890 lands in Tier 4 (above target). NRR $0.
+```
+Inputs are IBM Plex Mono. Results update on every keystroke via the engine function `computeMrrPayout` + `computeNrrPayout`. The tier visualization shows which tier the current MRR/NRR falls in — a simple horizontal bar with 4 segments, an indicator dot moving along it.
+
+### 6.2 Commission History Table
+Clean, compact. Each row:
+```
+Sales Month    MRR       NRR    Gross      Take-Home    Payout Date    Status
+Jan 2026    $0.00     $0.00    $0.00         $0.00    Feb 22, 2026    PAID
+Dec 2025  $890.00     $0.00  $1,547.52     $874.35    Jan 22, 2026    PAID
+```
+Status badges: PAID (green-dim), CONFIRMED (accent-dim), PROJECTED (text-muted border).
+
+### 6.3 KPI Strip
+```
+YTD Take-Home   $874.35    ·    3-Mo Avg   $218.59    ·    Drought   ACTIVE  ←  amber badge
+```
+One line, above the calculator.
+
+---
+
+## 7. Advisor Page
+
+This is already the strongest page. Minor refinements only.
+
+### 7.1 Changes
+- Replace the suggested-prompt pills with a cleaner set of 4 primary starting points — each a full-width ghost button with a one-line description:
+```
+[→ Cycle health check            What can I spend and what's the risk?      ]
+[→ Can I afford $X?              Runs a cycle-frame affordability check      ]
+[→ Commission drought scenario   3-month $0 commission survival runway       ]
+[→ Retirement gap analysis       What does bumping to 8% actually cost?      ]
+```
+- Snapshot drawer: already good. Just restyle to match new visual system.
+- Message bubbles: user messages right-aligned, `bg-elevated`. Assistant messages left-aligned, no background — just text. This is cleaner and puts focus on the content.
+- Data citation: inline `[source: Checking $2,152, updated 0d ago]` in `text-xs text-muted IBM Plex Mono` after any cited figure, instead of the current expandable block. The block is hidden by default but accessible via a small `[+]` icon.
+
+---
+
+## 8. Settings Page
+
+### 8.1 Consolidation
+Current state: 12 assumptions in one flat card + 5 more inline on the dashboard. Total: 17 settings in 2 places.  
+New state: all settings in one place, grouped by domain.
+
+```
+CYCLE MECHANICS
+  Minimum Cushion          $0
+  Pending Holds Reserve    $0
+  YELLOW Threshold         $400     ← tied to: deferred federal tax
+  Month Length             30.4 days
+
+INCOME & COMMISSIONS
+  Base Net Monthly         $3,220
+  Commission Tax Rate      43.5%
+  MRR Target               $700
+  NRR Target               $6,000
+
+SPENDING
+  Variable Spend Cap       $600/mo
+  QuickSilver Balance      $0        ← CC accrual not yet posted
+
+TARGETS
+  HYSA Target              $15,000
+  Savings-to-HYSA Ratio    50%
+
+RETIREMENT
+  Gross Salary             $54,000
+  Contribution %           4%
+  Match Multiplier         50%
+  Employee Ceiling         8%
+```
+
+Each section has a section header in `text-xs uppercase tracking-widest text-muted`. Each row is label + input + save button + description line. Save buttons are inline, not per-section. This is identical to the current UX pattern — just organized.
+
+Remove "Cycle Settings" from the dashboard entirely. Link from the dashboard discipline strip to `/settings#cycle-mechanics` if needed.
+
+---
+
+## 9. Wealth, Debt, Retirement — Shared Pattern
+
+These three pages share a problem: they're walls of cards with no clear reading order or primary action. Apply this structure to all three:
+
+**Page pattern:**
+```
+1. One-line status summary at the top
+   "Net Worth $22,200  ·  HYSA target met  ·  401k gap $90/mo"
+
+2. Primary chart (Recharts) — the trend at a glance
+
+3. Key decisions — 2-3 specific actionable items
+   "→ Bump 401k from 4% to 8% — costs $129/mo take-home, captures $1,080/yr"
+
+4. Detail tables — the full data, collapsed by default
+```
+
+**Wealth:** Net worth line chart (already exists) + HYSA gap (now just one stat, target met = green checkmark) + asset allocation horizontal bar.
+
+**Debt:** Balance table with computed payoff dates + "Invest vs Pay" verdict card (one number: "$X advantage to investing at current rates") + payoff scenario selector.
+
+**Retirement:** Match gap banner (ACTIVE, $90/mo, $1,080/yr) + three-lane projection chart (Current 4% / Match Cap 8% / Aggressive 12%) + $1M calculator.
+
+---
+
+## 10. Mobile Strategy
+
+### 10.1 The Core Problem
+Current mobile is a compressed desktop. The dashboard is 5+ viewport heights of stacked cards. Tables require horizontal scrolling. Font sizes drop to 10px.
+
+### 10.2 Mobile-Specific Layout
+
+**Overview page on mobile:**
+Zone 1 takes the full first viewport. Nothing else is above the fold. The situation block is all that renders before any scroll.
+
+The action row becomes a 2×2 grid of large tap targets (min 48px height each).
+
+Zones 2 and 3 are collapsed by default on mobile. Single "See details →" link below Zone 1.
+
+**Tables on mobile:** Every table becomes a card list on screens < 640px.  
+Instead of:
+```
+BILL          DAY   AMOUNT
+Car Loan        1   $337.00
+```
+Show:
+```
+┌──────────────────────────┐
+│ Car Loan (2024 Camry)    │
+│ Due Day 1  ·  $337.00    │
+│ Debt  ·  Autopay         │
+└──────────────────────────┘
+```
+This eliminates all horizontal scrolling on mobile.
+
+**Navigation on mobile:** Bottom tab bar with 5 items (Today, Flow, Plan, Tools, Settings) instead of the hamburger sheet. The hamburger pattern requires two taps to navigate. A bottom bar requires one. The sub-pages within each section are accessible via a slide-up sheet from the tab.
+
+---
+
+## 11. Scenarios Page (renamed from Decision Sandbox)
+
+### 11.1 Changes
+- Rename to "Scenarios" in nav
+- Save/load scenarios from DB (already in the schema, not wired to UI)
+- Each saved scenario appears as a card with its name, type, date, and one-line result:
+```
+[2024 Camry — April 2026]  Vehicle  Apr 2026  $337/mo  ·  $25,072 total cost  ·  Affordable
+[8% 401k bump]             Income   Apr 2026  −$129/mo take-home  ·  +$1,080/yr match
+```
+- "New Scenario" button at top creates a new unnamed tab
+- Result panels use the same stat-row pattern as everywhere else — no special card design
+
+### 11.2 What Doesn't Change
+The four scenario types (Vehicle, Drought, Income Floor, Income Change) and all their math remain identical. Only the layout and persistence changes.
+
+---
+
+## 12. Implementation Instructions for Replit Agent 4
+
+Execute in this order. Do not skip steps or reorder.
+
+### Step 1 — Install fonts
+In `artifacts/finance-advisor/index.html`, add the Google Fonts import for IBM Plex Mono + IBM Plex Sans. In `src/index.css`, replace the current font-family declarations on `:root` and `body`.
+
+### Step 2 — Replace color tokens
+In `src/index.css` lines 1–230, replace the current `:root` / `.dark` color variables with the tokens from §2.2 of this document. Keep all existing variable names that are referenced in components — add the new ones alongside and migrate references progressively.
+
+### Step 3 — Rebuild the navigation shell
+In `components/layout.tsx`, implement the 5-section navigation structure from §3.1. Add the integrity chip to the header. Do NOT change any route paths — only the nav labels and grouping change.
+
+### Step 4 — Rebuild Overview page (Zone 1 only first)
+In `pages/dashboard.tsx` (or equivalent), implement Zone 1 from §4.2–4.4. Wire to existing `/api/dashboard/cycle` and `/api/dashboard/discretionary` endpoints. Do not change the API. The three-accordion math section becomes one collapsed section at the bottom. Inline Cycle Settings are removed from this page.
+
+### Step 5 — Implement Zone 2 and Zone 3 on Overview
+Add the three-column supporting context (§4.5) and the unified math drill-down (§4.6).
+
+### Step 6 — Rebuild Bills page
+Implement the category bar, bill list with circle toggles, and compact timeline from §5.
+
+### Step 7 — Add live commission calculator
+In `pages/commissions.tsx`, add the interactive payout calculator from §6.1 above the history table. Wire to `computeMrrPayout` and `computeNrrPayout` from `@workspace/finance`.
+
+### Step 8 — Consolidate Settings
+Move the 5 inline Cycle Settings from the dashboard into `pages/settings.tsx`. Organize all settings into the 4 domain groups from §8.1.
+
+### Step 9 — Apply shared page pattern to Wealth, Debt, Retirement
+Implement the status summary + primary chart + key decisions + collapsed detail structure from §9.
+
+### Step 10 — Mobile bottom tab bar
+Replace the hamburger sheet with a bottom tab bar on screens < 640px. Five tabs: Today, Flow, Plan, Tools, Settings.
+
+### Step 11 — Table → card-list on mobile
+For all tables inside pages, add `md:table` + mobile card-list rendering as described in §10.2.
+
+### Step 12 — Scenarios save/load
+Wire the existing `scenarios` table to the UI — save button, scenario list, load behavior from §11.
+
+### Step 13 — Advisor page refinements
+Apply the message bubble style changes and citation format from §7.
+
+### Step 14 — Animation pass
+Apply the CSS animations from §2.4 to: number updates on the dashboard (when balance is refreshed), status changes, page enters.
+
+---
+
+## 13. What Does Not Change
+
+These are frozen. Do not touch:
+
+- Any file in `lib/finance/engine.ts` or `@workspace/finance`
+- Any API route shape or response schema
+- `advisorContext.ts` system prompt logic
+- `integrity.ts` check definitions
+- All 170 unit tests
+- The database schema
+- Authentication (there is none — keep it that way)
+- Route paths
+
+The transformation is entirely in `artifacts/finance-advisor/src/` — pages, components, and CSS. The engine, API, and data layer are already correct.
+
+---
+
+## 14. Success Criteria
+
+The redesign is complete when:
+
+1. The Overview page communicates Safe to Spend, Daily Rate, and cycle status in under 3 seconds without scrolling
+2. Zero horizontal scroll on any page on a 390px mobile viewport
+3. The five stacked banners are gone — replaced by the single integrity chip
+4. The Commission page has a working live payout calculator
+5. All 17 settings are in Settings and zero settings are on the dashboard
+6. Saved scenarios persist across sessions
+7. IBM Plex Mono renders for all numbers on all pages
+8. The bottom tab bar renders on mobile
+9. All 170 engine tests still pass (the engine was not touched)
+10. The advisor page renders correctly with the new visual system
+
+---
+
+*End of RESERVE Design Specification v2.0. This document is the authoritative redesign contract. The engine spec (Logic & Math companion doc) governs all numbers. This document governs everything the user sees.*
