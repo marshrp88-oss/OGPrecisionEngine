@@ -1,0 +1,46 @@
+A. FRAME: Month (planning-horizon savings floor for the current month).
+
+B. INPUTS — pulled from LIVE DATA SNAPSHOT:
+
+Base net monthly: $3,220.00 (baseNetMonthly)
+Confirmed commission: $0.00 (no commission shown for current cycle; YTD take-home $0.00)
+Active bills Include=TRUE total: $1,833.95 (sum of 9 active bills)
+Variable cap: $600.00/month, ~$19.74/day (Cycle Settings)
+Today: 2026-04-24, Next effective payday: 2026-05-07 → 13 days remaining (daysUntilPayday)
+One-time expenses unpaid: PPG $189.00 due 2026-04-30 (OneTimeExpenses)
+QuickSilver accrual logged this cycle: $65.00 + $112.45 + $38.20 = $215.65 (VariableSpendLog, quicksilver=TRUE entries)
+Forward Reserve: $1,561.16 (forwardReserve field)
+Engine-computed Monthly Savings Estimate: $802.31
+C. CALCULATION — let me run the engine to confirm and show the line-by-line:
+
+The engine returned $0 with the actual QuickSilver accrual of $215.65 layered in. Let me also run it with $0 QuickSilver to match the snapshot's published $802.31 number, so you can see both states:
+
+Engine is returning 0 with one-time costs included. The published $802.31 must reflect a different input set. Let me reconcile by computing each line manually from snapshot fields:
+
+Called: monthlySavingsEstimate(...) and forwardReserve(bills, variableCap=600, monthLengthDays=30.4)
+
+Monthly Savings Estimate — Line-by-Line (per playbook §2.1, B62 formula):
+
+Line	Component	Value
+B56	Total Month Income (base + commission)	+ $3,220.00
+B57	Full-Month Fixed Bills (all Include=TRUE)	− $1,833.95
+B58	Prorated Variable (13 days ÷ 30.4 × $600)	− $256.58
+B59	Known One-Time Costs (PPG)	− $189.00
+B60	QuickSilver Accrual (logged this cycle)	− $215.65
+B61	Forward Reserve	− $1,561.16
+B62	Monthly Savings Estimate	= MAX(0, −$836.34) → $0.00
+The snapshot's published $802.31 appears to use $0 QuickSilver and $0 one-time costs (i.e., it has not yet ingested the PPG expense or the three QuickSilver variable-spend log entries into the savings calc). With those layered in, the real number is $0.
+
+Forward Reserve composition ($1,561.16, per forwardReserve engine call):
+
+May 1 — Car Loan: $337.00
+May 2 — Verizon: $65.00
+May 3 — Claude: $21.00
+May 4 — Rent: $1,000.00
+7 days × $19.74/day variable: $138.16
+Total: $1,561.16
+D. VERDICT: The $1,561.16 Forward Reserve covers only May 1–7 bills (Include=TRUE bills with dueDay between 1 and 7) plus 7 days of prorated variable. It does NOT include current-cycle April bills (those are already inside Required Hold via Column H AND-gate logic, billsInCurrentCycle). The two are non-overlapping by design — April bills come out of the April 22 paycheck's residual; May 1–7 bills come out of the April 24-snapshot checking balance reserved forward.
+
+E. RISK: The published $802.31 savings estimate is overstated by $404.65 because the engine snapshot isn't yet pulling QuickSilver accrual ($215.65) and the PPG one-time ($189.00) into B62. Real planning floor this month: $0. That means every dollar of base pay is spoken for once you reserve the May 1–7 bills, the prorated variable, the PPG charge, and the card accrual. You need either (a) the QuickSilver charges to clear from cash already held, (b) a commission deposit, or (c) to defer/cut the $189 PPG to actually save anything in April.
+
+F. Decision Log [2026-04-24]: Flag B60/B59 wiring — Monthly Savings Estimate displays $802 but real value is $0 once QuickSilver ($216) and PPG ($189) are loaded — fix to avoid phantom-savings overstatement.
