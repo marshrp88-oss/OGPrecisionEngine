@@ -158,7 +158,7 @@ export default function Commissions() {
           <div>&gt; $5,999.40: × 0.042</div>
           <div className="mt-3 text-amber-600 dark:text-amber-400 font-semibold">Tax Rate: 43.5%</div>
           <div className="text-xs text-muted-foreground mt-2">
-            Verification (hitting target): $700 MRR → payout $1,424.02; $6,000 NRR → payout $611.95.
+            Verification (hitting target): $700 MRR → payout $1,424.02; $6,000 NRR → payout $611.95; total gross $2,035.97, take-home $1,150.32.
           </div>
         </CardContent>
       </Card>
