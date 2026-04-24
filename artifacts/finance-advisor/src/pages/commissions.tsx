@@ -19,6 +19,7 @@ import { AlertTriangle, Plus, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { CommissionCalculator } from "@/components/commission-calculator";
 
 export default function Commissions() {
   const { data: commissions, isLoading } = useGetCommissions({ query: { queryKey: getGetCommissionsQueryKey() } });
@@ -90,6 +91,8 @@ export default function Commissions() {
           </Card>
         </div>
       )}
+
+      <CommissionCalculator />
 
       <Card>
         <CardHeader>

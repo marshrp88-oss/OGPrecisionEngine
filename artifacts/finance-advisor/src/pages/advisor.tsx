@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   useListAnthropicConversations,
   getListAnthropicConversationsQueryKey,
@@ -35,6 +36,7 @@ import {
   ClipboardList,
   Clock,
   MessagesSquare,
+  PowerOff,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -116,6 +118,21 @@ export default function Advisor() {
   const { data: cycle } = useGetDashboardCycle({
     query: { queryKey: getGetDashboardCycleQueryKey() },
   });
+
+  // Health probe — gates the composer when AI_INTEGRATIONS_ANTHROPIC_API_KEY
+  // is missing. We can't use the codegen client (it strips unknown fields), so
+  // we hit the raw endpoint. Spec §3 — Advisor Offline State.
+  const { data: health, isLoading: healthLoading } = useQuery({
+    queryKey: ["advisor-health"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}/api/healthz`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as { status: string; advisor_enabled?: boolean };
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const advisorEnabled = health?.advisor_enabled !== false; // default ON until probe succeeds
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -242,6 +259,14 @@ export default function Advisor() {
     const toSend = (overrideContent ?? message).trim();
     // Reentrancy guard: block if already streaming OR a lazy-create is in flight
     if (!toSend || isStreaming || createConv.isPending) return;
+    if (!advisorEnabled) {
+      toast({
+        title: "Advisor offline",
+        description: "The Anthropic API key isn't configured on the server.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     setMessage("");
 
@@ -505,6 +530,25 @@ export default function Advisor() {
             </div>
           )}
 
+          {/* Offline banner (Spec §3 — Advisor Offline State) */}
+          {!healthLoading && !advisorEnabled && (
+            <div
+              className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-amber-800 dark:text-amber-200"
+              role="status"
+              data-testid="advisor-offline-banner"
+            >
+              <PowerOff className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="text-sm">
+                <p className="font-semibold">Advisor offline</p>
+                <p className="text-xs opacity-90">
+                  No AI key is configured on the server. The composer is disabled — past sessions stay readable. Set
+                  <code className="font-mono mx-1 px-1 rounded bg-amber-500/20">AI_INTEGRATIONS_ANTHROPIC_API_KEY</code>
+                  to bring the advisor back online.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Composer */}
           <div className="flex gap-2 items-end">
             <div className="flex-1 relative">
@@ -514,11 +558,13 @@ export default function Advisor() {
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  activeConvId
-                    ? "Ask anything — what-if scenarios, audits, decisions, projections…"
-                    : "Type your first question — a session will be created automatically."
+                  !advisorEnabled
+                    ? "Advisor is offline — no AI key configured."
+                    : activeConvId
+                      ? "Ask anything — what-if scenarios, audits, decisions, projections…"
+                      : "Type your first question — a session will be created automatically."
                 }
-                disabled={isStreaming || createConv.isPending}
+                disabled={isStreaming || createConv.isPending || !advisorEnabled}
                 rows={1}
                 className="resize-none min-h-[44px] pr-12 leading-relaxed"
                 data-testid="input-message"
@@ -541,7 +587,7 @@ export default function Advisor() {
             ) : (
               <Button
                 onClick={() => handleSend()}
-                disabled={!message.trim() || createConv.isPending}
+                disabled={!message.trim() || createConv.isPending || !advisorEnabled}
                 size="icon"
                 className="h-11 w-11"
                 aria-label="Send message"

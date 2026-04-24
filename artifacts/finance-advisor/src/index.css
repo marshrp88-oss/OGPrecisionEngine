@@ -131,10 +131,14 @@
   --sidebar-accent-foreground: 240 4.8% 95.9%;
   --sidebar-ring: 217.2 91.2% 59.8%;
 
-  --app-font-sans: 'Inter', system-ui, sans-serif;
+  --app-font-sans: 'IBM Plex Sans', system-ui, sans-serif;
   --app-font-serif: Georgia, serif;
-  --app-font-mono: 'Space Mono', 'Menlo', monospace;
+  --app-font-mono: 'IBM Plex Mono', 'Menlo', monospace;
   --radius: 0.5rem;
+
+  /* Reserve Design Spec v2.0 §2.4 — motion tokens (subtle, never theatrical). */
+  --reserve-motion-fast: 200ms;
+  --reserve-easing: cubic-bezier(0.2, 0, 0.2, 1);
 
   --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
   --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
@@ -164,6 +168,22 @@
   }
 
   /*
+   * Spec §3A — Persistent 2px focus ring on all interactive elements.
+   * Apply on :focus-visible only so mouse clicks stay clean.
+   */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* Spec §3C — typographic floor: never render text below 12px. */
+  .text-\[10px\],
+  .text-\[11px\] {
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+  }
+
+  /*
    * Prevent iOS Safari from auto-zooming when focusing form fields.
    * iOS triggers zoom whenever an input's computed font-size is < 16px.
    * Apply 16px minimum on small viewports only — desktop styling is unchanged.
@@ -174,5 +194,23 @@
     select {
       font-size: 16px;
     }
+  }
+}
+
+@layer utilities {
+  /* Spec §3D — only three things may animate: STS hero, integrity count,
+     status badge color. All use this same constrained transition. No shake,
+     no scale, no bouncy springs. */
+  .reserve-animate {
+    transition:
+      color var(--reserve-motion-fast) var(--reserve-easing),
+      background-color var(--reserve-motion-fast) var(--reserve-easing),
+      border-color var(--reserve-motion-fast) var(--reserve-easing),
+      opacity var(--reserve-motion-fast) var(--reserve-easing);
+  }
+
+  /* Reserve safe-area helpers for mobile bottom nav. */
+  .reserve-bottom-pad {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
   }
 }

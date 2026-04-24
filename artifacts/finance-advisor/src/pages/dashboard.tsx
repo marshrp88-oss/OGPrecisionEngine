@@ -7,9 +7,6 @@ import {
   useGetVariableSpend,
   getGetVariableSpendQueryKey,
   useCreateVariableSpendEntry,
-  useGetAssumptions,
-  getGetAssumptionsQueryKey,
-  useUpdateAssumption,
   useGetOneTimeExpenses,
   getGetOneTimeExpensesQueryKey,
   useUpdateOneTimeExpense,
@@ -289,8 +286,6 @@ export default function Dashboard() {
 
       {discretionary?.discipline && <DisciplineCard d={discretionary.discipline} />}
 
-      <CycleSettingsInline />
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card>
           <CardHeader><CardTitle className="text-sm font-medium uppercase tracking-wider">Bills In Current Cycle</CardTitle></CardHeader>
@@ -422,70 +417,9 @@ function Row({ label, value, negative, bold }: { label: string; value: number; n
   );
 }
 
-function CycleSettingsInline() {
-  const { data: assumps } = useGetAssumptions({ query: { queryKey: getGetAssumptionsQueryKey() } });
-  const updateMut = useUpdateAssumption();
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    if (!assumps) return;
-    const next: Record<string, string> = {};
-    for (const key of ["minimum_cushion", "pending_holds_reserve", "alert_threshold", "variable_spend_until_payday", "quicksilver_balance_owed"]) {
-      const a = assumps.find((x) => x.key === key);
-      if (a && drafts[key] === undefined) next[key] = a.value;
-    }
-    if (Object.keys(next).length > 0) setDrafts((d) => ({ ...next, ...d }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assumps]);
-
-  const save = (key: string) => {
-    const val = drafts[key];
-    if (val === undefined) return;
-    updateMut.mutate({ key, data: { value: val } }, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetAssumptionsQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-        queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-        toast({ title: `Saved: ${key}` });
-      },
-    });
-  };
-
-  const fields: { key: string; label: string; help: string }[] = [
-    { key: "minimum_cushion", label: "Min Cushion", help: "Always-hold reserve" },
-    { key: "pending_holds_reserve", label: "Pending Holds", help: "In-flight charges buffer" },
-    { key: "alert_threshold", label: "Yellow Threshold", help: "Triggers YELLOW status" },
-    { key: "variable_spend_until_payday", label: "Spent Variable", help: "Already-spent this cycle" },
-    { key: "quicksilver_balance_owed", label: "QuickSilver Balance", help: "CC balance to pay mid-next-month" },
-  ];
-
-  return (
-    <Card>
-      <CardHeader className="pb-2"><CardTitle className="text-sm font-medium uppercase tracking-wider">Cycle Settings (inline edit)</CardTitle></CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-          {fields.map((f) => (
-            <div key={f.key} className="grid gap-1">
-              <Label className="text-xs">{f.label}</Label>
-              <div className="flex gap-1">
-                <Input
-                  className="font-mono text-sm h-9"
-                  value={drafts[f.key] ?? ""}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [f.key]: e.target.value }))}
-                  data-testid={`input-cycle-${f.key}`}
-                />
-                <Button size="sm" variant="outline" onClick={() => save(f.key)} data-testid={`button-save-cycle-${f.key}`}>Save</Button>
-              </div>
-              <p className="text-[10px] text-muted-foreground">{f.help}</p>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+// Inline cycle-settings card was migrated to /settings (Spec §3 — Settings is
+// the single source of standing config). Engine fields it edited remain
+// editable in Settings → Cycle group.
 
 function VariableSpendWidget() {
   const { data: vs } = useGetVariableSpend(undefined, { query: { queryKey: getGetVariableSpendQueryKey() } });

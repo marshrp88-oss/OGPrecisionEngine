@@ -15,13 +15,16 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { IntegrityChip } from "@/components/integrity-chip";
+import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { useScenariosEnabled } from "@/hooks/use-scenarios-enabled";
 
-const navItems = [
-  { href: "/", label: "Cycle Dashboard", icon: LayoutDashboard },
-  { href: "/bills", label: "Bills Engine", icon: Receipt },
+const ALL_NAV_ITEMS = [
+  { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/bills", label: "Bills", icon: Receipt },
   { href: "/one-time", label: "One-Time Expenses", icon: ClipboardList },
   { href: "/commissions", label: "Commissions", icon: LineChart },
-  { href: "/sandbox", label: "Decision Sandbox", icon: TestTube },
+  { href: "/scenarios", label: "Scenarios", icon: TestTube },
   { href: "/wealth", label: "Wealth", icon: Landmark },
   { href: "/debt", label: "Debt Strategy", icon: LandPlot },
   { href: "/retirement", label: "Retirement", icon: PiggyBank },
@@ -33,10 +36,12 @@ function NavList({
   location,
   onSelect,
   variant,
+  navItems,
 }: {
   location: string;
   onSelect?: () => void;
   variant: "desktop" | "mobile";
+  navItems: typeof ALL_NAV_ITEMS;
 }) {
   return (
     <ul className={cn("space-y-1", variant === "desktop" ? "px-2" : "px-1")}>
@@ -48,7 +53,7 @@ function NavList({
               href={item.href}
               onClick={onSelect}
               className={cn(
-                "flex items-center gap-3 rounded-md font-medium transition-colors",
+                "reserve-animate flex items-center gap-3 rounded-md font-medium",
                 variant === "mobile"
                   ? "px-3 py-3 text-base min-h-[44px]"
                   : "px-3 py-2 text-sm",
@@ -71,6 +76,11 @@ function NavList({
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const scenariosEnabled = useScenariosEnabled();
+
+  const navItems = scenariosEnabled
+    ? ALL_NAV_ITEMS
+    : ALL_NAV_ITEMS.filter((i) => i.href !== "/scenarios");
 
   // Close the mobile drawer whenever route changes (covers programmatic + link clicks)
   useEffect(() => {
@@ -81,20 +91,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <div className="flex h-[100dvh] w-full bg-background overflow-hidden text-foreground">
       {/* Desktop Sidebar — unchanged behavior at md+ */}
       <div className="w-64 border-r border-border bg-card hidden md:flex flex-col h-full shrink-0">
-        <div className="p-6 border-b border-border">
-          <h1 className="text-xl font-bold tracking-tight">RESERVE</h1>
-          <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-mono">
-            Precision Financial Engine
-          </p>
+        <div className="p-6 border-b border-border space-y-3">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">RESERVE</h1>
+            <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-mono">
+              Precision Financial Engine
+            </p>
+          </div>
+          {/* Spec §3E — typed integrity rollup chip in header. */}
+          <IntegrityChip />
         </div>
         <nav className="flex-1 overflow-y-auto py-4">
-          <NavList location={location} variant="desktop" />
+          <NavList location={location} variant="desktop" navItems={navItems} />
         </nav>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
-        {/* Mobile Header with hamburger */}
+        {/* Mobile Header with hamburger + IntegrityChip */}
         <header
           className="h-14 border-b border-border flex items-center gap-2 px-3 md:hidden bg-card shrink-0"
           style={{ paddingTop: "env(safe-area-inset-top)" }}
@@ -114,27 +128,37 @@ export function Layout({ children }: { children: React.ReactNode }) {
               side="left"
               className="w-[78vw] max-w-xs p-0 flex flex-col bg-card"
             >
-              <SheetHeader className="p-4 border-b border-border text-left">
+              <SheetHeader className="p-4 border-b border-border text-left space-y-2">
                 <SheetTitle className="text-lg font-bold tracking-tight">RESERVE</SheetTitle>
-                <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-mono">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider font-mono">
                   Precision Financial Engine
                 </p>
+                <IntegrityChip />
               </SheetHeader>
               <nav className="flex-1 overflow-y-auto py-3">
-                <NavList location={location} variant="mobile" onSelect={() => setMobileOpen(false)} />
+                <NavList
+                  location={location}
+                  variant="mobile"
+                  navItems={navItems}
+                  onSelect={() => setMobileOpen(false)}
+                />
               </nav>
             </SheetContent>
           </Sheet>
 
-          <h1 className="font-bold tracking-tight text-base">RESERVE</h1>
+          <h1 className="font-bold tracking-tight text-base flex-1 truncate">RESERVE</h1>
+          <IntegrityChip />
         </header>
 
         <main
           className="flex-1 overflow-y-auto bg-background p-4 md:p-8"
-          style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+          style={{ paddingBottom: "max(5rem, calc(4.5rem + env(safe-area-inset-bottom)))" }}
         >
           {children}
         </main>
+
+        {/* Spec §3G — mobile bottom tabs (fixed, never on desktop). */}
+        <MobileBottomNav />
       </div>
     </div>
   );
