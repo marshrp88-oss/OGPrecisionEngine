@@ -10,23 +10,72 @@ import {
   useGetOneTimeExpenses,
   getGetOneTimeExpensesQueryKey,
   useUpdateOneTimeExpense,
+  useCreateOneTimeExpense,
 } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+// Local mirror of GetDashboardCycleResponse — kept in sync with
+// lib/api-zod GetDashboardCycleResponse / api-server dashboard.ts. Inlined
+// rather than imported because finance-advisor does not currently depend on
+// @workspace/api-zod and we don't want to widen the dep graph for a typing.
+interface CycleData {
+  checkingBalance: number;
+  lastBalanceUpdate?: Date | string | null;
+  nextPayday?: Date | string | null;
+  daysSinceUpdate?: number | null;
+  isStale: boolean;
+  daysUntilPayday?: number | null;
+  billsDueBeforePayday: number;
+  pendingHoldsReserve: number;
+  minimumCushion: number;
+  oneTimeDueBeforePayday: number;
+  totalRequiredHold: number;
+  safeToSpend: number;
+  dailyRateFromUpdate: number;
+  dailyRateRealTime: number;
+  daysOfCoverage?: number | null;
+  variableSpendUntilPayday: number;
+  remainingDiscretionary: number;
+  status: "GREEN" | "YELLOW" | "RED";
+  paydayRisk: boolean;
+  forwardReserve: number;
+  alertThreshold: number;
+}
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { AlertTriangle, RefreshCw, FlaskConical, Plus, ChevronRight } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  AlertTriangle,
+  RefreshCw,
+  Plus,
+  ArrowUpCircle,
+  CalendarPlus,
+  MessageSquare,
+  ChevronDown,
+} from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IntegrityStatusBanner } from "@/components/integrity-status-banner";
+import { useLocation } from "wouter";
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -77,15 +126,41 @@ interface IntegritySummary {
   checks: { name: string; status: "pass" | "warn" | "fail"; detail: string }[];
 }
 
-function paydayCountdownLabel(days: number | null | undefined, paydayIso: string | null | undefined): string {
-  if (days === null || days === undefined) return "Payday unknown";
-  if (days === 0) return "Today is payday";
-  if (days === 1) return `1 day until payday${paydayIso ? ` (${formatDate(paydayIso)})` : ""}`;
-  return `${days} days until payday${paydayIso ? ` (${formatDate(paydayIso)})` : ""}`;
+// ---------------------------------------------------------------------------
+// Status helpers — Spec §4.2 colored border + semantic STS color
+// ---------------------------------------------------------------------------
+
+type CycleStatus = "GREEN" | "YELLOW" | "RED";
+
+function asCycleStatus(s: string | undefined | null): CycleStatus {
+  if (s === "YELLOW" || s === "RED") return s;
+  return "GREEN";
 }
 
+function statusBorderClass(s: CycleStatus): string {
+  return s === "GREEN"
+    ? "border-l-success"
+    : s === "YELLOW"
+      ? "border-l-warning"
+      : "border-l-destructive";
+}
+
+function statusTextClass(s: CycleStatus): string {
+  return s === "GREEN"
+    ? "text-foreground"
+    : s === "YELLOW"
+      ? "text-warning"
+      : "text-destructive";
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
 export default function Dashboard() {
-  const { data: cycle, isLoading, error } = useGetDashboardCycle({ query: { queryKey: getGetDashboardCycleQueryKey() } });
+  const { data: cycle, isLoading, error } = useGetDashboardCycle({
+    query: { queryKey: getGetDashboardCycleQueryKey() },
+  });
   const { data: bills } = useGetBills({ query: { queryKey: getGetBillsQueryKey() } });
 
   const { data: discretionary } = useQuery<DiscretionaryResp>({
@@ -109,7 +184,7 @@ export default function Dashboard() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 max-w-6xl mx-auto">
         <Skeleton className="h-32 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -126,24 +201,18 @@ export default function Dashboard() {
     );
   }
 
-  const isStale = cycle.isStale;
+  const status = asCycleStatus(cycle.status);
   const billsInCycle = (bills ?? []).filter((b) => b.countsThisCycle);
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       <IntegrityStatusBanner />
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Cycle Dashboard</h1>
-          <p className="text-muted-foreground mt-1 text-sm font-mono">
-            {paydayCountdownLabel(cycle.daysUntilPayday, cycle.nextPayday)}
-          </p>
-        </div>
-        <UpdateBalanceDialog />
-      </div>
 
-      {isStale && (
-        <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive-foreground">
+      {cycle.isStale && (
+        <Alert
+          variant="destructive"
+          className="bg-destructive/10 border-destructive/20 text-destructive-foreground"
+        >
           <AlertTriangle className="h-5 w-5" />
           <AlertTitle className="text-lg font-bold">Stale Data Warning</AlertTitle>
           <AlertDescription className="font-mono text-sm mt-1">
@@ -165,264 +234,808 @@ export default function Dashboard() {
       {integrity && integrity.overall !== "pass" && (
         <Alert
           variant={integrity.overall === "fail" ? "destructive" : "default"}
-          className={integrity.overall === "warn" ? "bg-amber-50 dark:bg-amber-950/30 border-amber-500/30" : ""}
+          className={
+            integrity.overall === "warn"
+              ? "bg-amber-50 dark:bg-amber-950/30 border-amber-500/30"
+              : ""
+          }
           data-testid="banner-integrity"
         >
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>
             Session Integrity: {integrity.overall.toUpperCase()}
-            {integrity.failCount > 0 && ` (${integrity.failCount} failure${integrity.failCount === 1 ? "" : "s"})`}
-            {integrity.warnCount > 0 && ` (${integrity.warnCount} warning${integrity.warnCount === 1 ? "" : "s"})`}
+            {integrity.failCount > 0 &&
+              ` (${integrity.failCount} failure${integrity.failCount === 1 ? "" : "s"})`}
+            {integrity.warnCount > 0 &&
+              ` (${integrity.warnCount} warning${integrity.warnCount === 1 ? "" : "s"})`}
           </AlertTitle>
           <AlertDescription className="text-sm mt-1">
             <ul className="space-y-0.5 mt-1 font-mono text-xs">
-              {integrity.checks.filter((c) => c.status !== "pass").map((c, idx) => (
-                <li key={idx}>• {c.name}: {c.detail}</li>
-              ))}
+              {integrity.checks
+                .filter((c) => c.status !== "pass")
+                .map((c, idx) => (
+                  <li key={idx}>
+                    • {c.name}: {c.detail}
+                  </li>
+                ))}
             </ul>
           </AlertDescription>
         </Alert>
       )}
 
-      {/* Big status banner — playbook traffic light */}
-      <div
-        className={`rounded-xl border-2 px-6 py-4 flex items-center justify-between gap-4 ${
-          cycle.status === "GREEN"
-            ? "border-success/40 bg-success/10"
-            : cycle.status === "YELLOW"
-              ? "border-warning/40 bg-warning/10"
-              : "border-destructive/40 bg-destructive/10"
-        }`}
-        data-testid="banner-cycle-status"
-      >
-        <div className="flex items-center gap-4">
-          <div
-            className={`h-3 w-3 rounded-full ${
-              cycle.status === "GREEN" ? "bg-success" : cycle.status === "YELLOW" ? "bg-warning" : "bg-destructive"
-            } animate-pulse`}
-          />
-          <div>
-            <p className="text-xs uppercase tracking-widest text-muted-foreground font-medium">Cycle Status</p>
-            <p className="text-2xl font-bold tracking-tight">
-              {cycle.status === "GREEN"
-                ? "GREEN — Spend safely"
-                : cycle.status === "YELLOW"
-                  ? "YELLOW — Tighten variable spend"
-                  : "RED — Hold all discretionary spend"}
-            </p>
-          </div>
-        </div>
-        <div className="text-right font-mono">
-          <p className="text-xs uppercase tracking-widest text-muted-foreground">Safe to Spend</p>
-          <p className="text-3xl font-bold tracking-tighter">{formatCurrency(cycle.safeToSpend)}</p>
-        </div>
+      {/* ZONE 1 — SITUATION */}
+      <SituationBlock cycle={cycle} discretionary={discretionary} status={status} />
+
+      {discretionary?.discipline && (
+        <DisciplineStrip d={discretionary.discipline} />
+      )}
+
+      <ActionRow />
+
+      {/* ZONE 2 — SUPPORTING CONTEXT */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <BillsCycleColumn
+          rows={billsInCycle.map((b) => ({
+            id: b.id,
+            name: b.name,
+            dueDay: b.dueDay,
+            amount: b.amount,
+          }))}
+          totalHold={cycle.billsDueBeforePayday}
+        />
+        <OneTimeColumn />
+        <VariableSpendColumn />
       </div>
 
-      {/* Top hero: Safe to Spend + Discretionary side-by-side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="border-2 shadow-xl overflow-hidden relative">
-          <div className={`absolute top-0 left-0 w-2 h-full ${cycle.status === "GREEN" ? "bg-success" : cycle.status === "YELLOW" ? "bg-warning" : "bg-destructive"}`} />
-          <CardContent className="p-6 md:p-8 pl-8 md:pl-10">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">Safe to Spend</p>
-            <h2 className="text-5xl md:text-6xl font-bold tracking-tighter font-mono">{formatCurrency(cycle.safeToSpend)}</h2>
-            <div className="flex items-center gap-3 mt-3">
-              <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${cycle.status === "GREEN" ? "bg-success/20 text-success border-success/30" : cycle.status === "YELLOW" ? "bg-warning/20 text-warning border-warning/30" : "bg-destructive/20 text-destructive border-destructive/30"}`}>{cycle.status}</span>
-              <span className="text-xs text-muted-foreground font-mono">Daily rate {formatCurrency(cycle.dailyRateRealTime)}/day</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 shadow-xl overflow-hidden">
-          <CardContent className="p-6 md:p-8">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">Discretionary This Month</p>
-            <h2 className="text-5xl md:text-6xl font-bold tracking-tighter font-mono" data-testid="text-discretionary-month">
-              {discretionary ? formatCurrency(discretionary.discretionaryThisMonth) : "—"}
-            </h2>
-            {discretionary && (
-              <>
-                <p className="text-xs text-muted-foreground font-mono mt-3">
-                  Through {formatDate(discretionary.monthEnd)} — after bills, one-times, gas+food cap, and CC payoff
-                </p>
-                <div className="grid grid-cols-2 gap-2 mt-3 text-xs font-mono">
-                  <div className="rounded border border-border/40 px-2 py-1">
-                    <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Variable cap left</div>
-                    <div className="font-bold">{formatCurrency(discretionary.variableRemainingThisMonth)} <span className="text-muted-foreground font-normal">of {formatCurrency(discretionary.variableCap)}</span></div>
-                  </div>
-                  <div className="rounded border border-border/40 px-2 py-1">
-                    <div className="text-[10px] uppercase text-muted-foreground tracking-wider">CC balance owed</div>
-                    <div className="font-bold">{formatCurrency(discretionary.quicksilverBalanceOwed)}</div>
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Stat strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Checking</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold font-mono">{formatCurrency(cycle.checkingBalance)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Updated {cycle.daysSinceUpdate} {cycle.daysSinceUpdate === 1 ? "day" : "days"} ago</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Required Hold</CardTitle></CardHeader>
-          <CardContent>
-            <div className={`text-2xl font-bold font-mono ${cycle.totalRequiredHold === 0 ? "text-muted-foreground" : ""}`}>{formatCurrency(cycle.totalRequiredHold)}</div>
-            <p className="text-xs text-muted-foreground mt-1">{billsInCycle.length} bill{billsInCycle.length === 1 ? "" : "s"} in cycle</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Forward Reserve</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold font-mono">{formatCurrency(cycle.forwardReserve)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Next-month 1st-7th + 7d variable</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {discretionary?.discipline && <DisciplineCard d={discretionary.discipline} />}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader><CardTitle className="text-sm font-medium uppercase tracking-wider">Bills In Current Cycle</CardTitle></CardHeader>
-          <CardContent>
-            {billsInCycle.length === 0 ? (
-              <p className="text-sm text-muted-foreground font-mono">None. All Include=TRUE bills due before the next payday have cleared.</p>
-            ) : (
-              <div className="overflow-x-auto -mx-2 sm:mx-0">
-                <table className="w-full min-w-[320px] text-sm font-mono">
-                  <thead>
-                    <tr className="border-b text-muted-foreground text-xs uppercase">
-                      <th className="text-left py-2 px-2 sm:px-0">Bill</th>
-                      <th className="text-right py-2">Day</th>
-                      <th className="text-right py-2 px-2 sm:px-0">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {billsInCycle.map((b) => (
-                      <tr key={b.id} className="border-b border-border/40">
-                        <td className="py-2 px-2 sm:px-0 truncate max-w-[120px]">{b.name}</td>
-                        <td className="text-right py-2">{b.dueDay}</td>
-                        <td className="text-right py-2 px-2 sm:px-0 font-bold">{formatCurrency(b.amount)}</td>
-                      </tr>
-                    ))}
-                    <tr className="font-bold">
-                      <td colSpan={2} className="py-2 px-2 sm:px-0 text-right">Total</td>
-                      <td className="text-right py-2 px-2 sm:px-0">{formatCurrency(cycle.billsDueBeforePayday)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <OneTimeInlineWidget />
-
-        <VariableSpendWidget />
-      </div>
-
-      <Accordion type="multiple" className="w-full space-y-3">
+      {/* ZONE 3 — MATH DRILL-DOWN (single accordion) */}
+      <Accordion type="single" collapsible className="w-full">
         <AccordionItem value="math" className="border rounded-xl px-4 bg-card">
-          <AccordionTrigger className="hover:no-underline font-mono text-sm py-4">
-            <span className="flex items-center gap-2"><FlaskConical className="h-4 w-4" />Safe to Spend — math breakdown</span>
+          <AccordionTrigger
+            className="hover:no-underline font-mono text-sm py-4"
+            data-testid="trigger-engine-math"
+          >
+            <span className="flex items-center gap-2">
+              <ChevronDown className="h-4 w-4" />
+              Show engine math
+            </span>
           </AccordionTrigger>
-          <AccordionContent className="pt-2 pb-6 space-y-3 font-mono text-sm">
-            <Row label="Checking Balance" value={cycle.checkingBalance} />
-            <Row label="− Bills Due Before Payday" value={cycle.billsDueBeforePayday} negative />
-            <Row label="− Pending Holds" value={cycle.pendingHoldsReserve} negative />
-            <Row label="− Minimum Cushion" value={cycle.minimumCushion} negative />
-            <Row label="− One-Time Costs in Cycle" value={cycle.oneTimeDueBeforePayday} negative />
-            <Row label="= Safe to Spend" value={cycle.safeToSpend} bold />
-            <p className="text-xs text-muted-foreground pt-2 border-t border-border/30 mt-2">
-              Forward Reserve ({formatCurrency(cycle.forwardReserve)}) is excluded from Safe to Spend per spec — it is reserved for next-cycle bills.
-            </p>
+          <AccordionContent className="pt-2 pb-6">
+            <Tabs defaultValue="sts" className="w-full">
+              <TabsList className="w-full justify-start overflow-x-auto">
+                <TabsTrigger value="sts" data-testid="tab-math-sts">
+                  Safe to Spend
+                </TabsTrigger>
+                <TabsTrigger
+                  value="discretionary"
+                  data-testid="tab-math-discretionary"
+                  disabled={!discretionary}
+                >
+                  Discretionary
+                </TabsTrigger>
+                <TabsTrigger
+                  value="reserves"
+                  data-testid="tab-math-reserves"
+                  disabled={!discretionary}
+                >
+                  Reserves
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="sts" className="space-y-3 font-mono text-sm pt-4">
+                <Row label="Checking Balance" value={cycle.checkingBalance} />
+                <Row
+                  label="− Bills Due Before Payday"
+                  value={cycle.billsDueBeforePayday}
+                  negative
+                />
+                <Row
+                  label="− Pending Holds"
+                  value={cycle.pendingHoldsReserve}
+                  negative
+                />
+                <Row label="− Minimum Cushion" value={cycle.minimumCushion} negative />
+                <Row
+                  label="− One-Time Costs in Cycle"
+                  value={cycle.oneTimeDueBeforePayday}
+                  negative
+                />
+                <Row label="= Safe to Spend" value={cycle.safeToSpend} bold />
+                <p className="text-xs text-muted-foreground pt-2 border-t border-border/30 mt-2">
+                  Forward Reserve ({formatCurrency(cycle.forwardReserve)}) is excluded from Safe to Spend per spec — it is reserved for next-cycle bills.
+                </p>
+              </TabsContent>
+
+              {discretionary && (
+                <TabsContent
+                  value="discretionary"
+                  className="space-y-3 font-mono text-sm pt-4"
+                >
+                  <p className="text-xs text-muted-foreground italic pb-1">
+                    Horizon: today through {formatDate(discretionary.monthEnd)}. End-of-month deployable surplus from current checking after every known obligation between today and the first paycheck of next month — including the Forward Reserve held back per Playbook §2.1.
+                  </p>
+                  <Row label="Checking Balance" value={discretionary.checking} />
+                  <Row
+                    label="− Bills Remaining This Month (Include=TRUE, due today→month end)"
+                    value={discretionary.billsRemainingThisMonth}
+                    negative
+                  />
+                  <Row
+                    label={`− Prorated Variable Remaining (${discretionary.daysRemainingInMonth} days × ${formatCurrency(discretionary.variableCap / 30.4)}/day)`}
+                    value={discretionary.proratedVariableRemainingThisMonth}
+                    negative
+                  />
+                  <Row
+                    label="− One-Time Expenses dated through month end"
+                    value={discretionary.oneTimeDatedThisMonth}
+                    negative
+                  />
+                  <Row
+                    label="− QuickSilver Balance Owed (CC payoff not yet posted)"
+                    value={discretionary.quicksilverBalanceOwed}
+                    negative
+                  />
+                  <Row
+                    label="− Forward Reserve (next-month days 1-7 + 7d variable, §2.1)"
+                    value={discretionary.forwardReserve}
+                    negative
+                  />
+                  <Row
+                    label="= Discretionary This Month"
+                    value={discretionary.discretionaryThisMonth}
+                    bold
+                  />
+                  <p className="text-[10px] text-muted-foreground italic pt-2">
+                    Engine-sourced via discretionaryThisMonth(). Distinct from Safe to Spend (current cycle, no Forward Reserve).
+                  </p>
+                </TabsContent>
+              )}
+
+              {discretionary && (
+                <TabsContent
+                  value="reserves"
+                  className="space-y-3 font-mono text-sm pt-4"
+                >
+                  <p className="text-xs text-muted-foreground italic pb-1">
+                    Inflows already in checking + future-cash credits, vs. every reservation between today and end of month.
+                  </p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-1">
+                    Inflows
+                  </p>
+                  <Row label="Checking Balance" value={discretionary.checking} />
+                  <Row
+                    label={`Remaining Paychecks This Month (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
+                    value={discretionary.remainingPaychecksThisMonth}
+                  />
+                  <Row
+                    label="Confirmed Commission (not yet received)"
+                    value={discretionary.confirmedCommissionUnreceived}
+                  />
+                  <Row
+                    label="= Total Inflows Available"
+                    value={discretionary.totalInflowsAvailable}
+                    bold
+                  />
+
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">
+                    Reservations
+                  </p>
+                  <Row
+                    label="Bills remaining this month"
+                    value={discretionary.billsRemainingThisMonth}
+                  />
+                  <Row
+                    label="One-time expenses dated through month end"
+                    value={discretionary.oneTimeDatedThisMonth}
+                  />
+                  <Row
+                    label="Variable cap remaining (cap minus already-spent)"
+                    value={discretionary.variableRemainingThisMonth}
+                  />
+                  <Row
+                    label="QuickSilver balance owed"
+                    value={discretionary.quicksilverBalanceOwed}
+                  />
+                  <Row label="Minimum cushion" value={discretionary.minimumCushion} />
+                  <Row
+                    label="= Total Reservations Required"
+                    value={discretionary.totalReservationsRequired}
+                    bold
+                  />
+
+                  {discretionary.oneTimeUndatedAdvisory > 0 && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 pt-2 border-t border-border/30 mt-2">
+                      Advisory: {formatCurrency(discretionary.oneTimeUndatedAdvisory)} of one-time expenses are unpaid without a due date — set due dates so they're reserved.
+                    </p>
+                  )}
+
+                  {discretionary.billsRemainingDetail.length > 0 && (
+                    <div className="pt-3 border-t border-border/30 mt-2">
+                      <p className="text-xs text-muted-foreground mb-1">
+                        Remaining bills this month:
+                      </p>
+                      <ul className="text-xs space-y-0.5">
+                        {discretionary.billsRemainingDetail.map((b) => (
+                          <li key={b.id} className="flex justify-between">
+                            <span>
+                              {b.name} (day {b.dueDay})
+                            </span>
+                            <span>{formatCurrency(b.amount)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </TabsContent>
+              )}
+            </Tabs>
           </AccordionContent>
         </AccordionItem>
-
-        {/* Monthly Savings math breakdown removed — Discretionary is the
-            canonical month-level headline. Engine fn retained for tests. */}
-
-        {discretionary && (
-          <AccordionItem value="discretionary" className="border rounded-xl px-4 bg-card">
-            <AccordionTrigger className="hover:no-underline font-mono text-sm py-4">
-              <span className="flex items-center gap-2"><FlaskConical className="h-4 w-4" />Discretionary This Month — math breakdown</span>
-            </AccordionTrigger>
-            <AccordionContent className="pt-2 pb-6 space-y-3 font-mono text-sm">
-              <p className="text-xs text-muted-foreground italic pb-1">
-                Horizon: today through {formatDate(discretionary.monthEnd)}. End-of-month deployable surplus from current checking after every known obligation between today and the first paycheck of next month — including the Forward Reserve held back per Playbook §2.1.
-              </p>
-              <Row label="Checking Balance" value={discretionary.checking} />
-              <Row label="− Bills Remaining This Month (Include=TRUE, due today→month end)" value={discretionary.billsRemainingThisMonth} negative />
-              <Row label={`− Prorated Variable Remaining (${discretionary.daysRemainingInMonth} days × ${formatCurrency(discretionary.variableCap / 30.4)}/day)`} value={discretionary.proratedVariableRemainingThisMonth} negative />
-              <Row label="− One-Time Expenses dated through month end" value={discretionary.oneTimeDatedThisMonth} negative />
-              <Row label="− QuickSilver Balance Owed (CC payoff not yet posted)" value={discretionary.quicksilverBalanceOwed} negative />
-              <Row label="− Forward Reserve (next-month days 1-7 + 7d variable, §2.1)" value={discretionary.forwardReserve} negative />
-              <Row label="= Discretionary This Month" value={discretionary.discretionaryThisMonth} bold />
-
-              <p className="text-[10px] text-muted-foreground italic pt-2">
-                Engine-sourced via discretionaryThisMonth(). Distinct from Safe to Spend (current cycle, no Forward Reserve) and Monthly Savings Estimate (full-month income ledger, paycheck boundary).
-              </p>
-
-              <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">Context (informational)</p>
-              <Row label={`Remaining Paychecks This Month (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`} value={discretionary.remainingPaychecksThisMonth} />
-              <Row label="Confirmed Commission (not yet received)" value={discretionary.confirmedCommissionUnreceived} />
-              <Row label="Total Inflows Available (checking + paychecks + commission)" value={discretionary.totalInflowsAvailable} />
-              <Row label="Variable Cap Remaining (cap minus already-spent)" value={discretionary.variableRemainingThisMonth} />
-              <Row label="Minimum Cushion" value={discretionary.minimumCushion} />
-
-              <div className="pt-3 border-t border-border/30 space-y-2 mt-2">
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">Context</p>
-                <Row label="Variable spent this month (logged gas + food)" value={discretionary.variableSpentThisMonth} />
-                <Row label="Of which charged on QuickSilver this month" value={discretionary.quicksilverAccruedThisMonth} />
-                <Row label="Confirmed commission already received this month" value={discretionary.confirmedCommissionAlready} />
-                <Row label="Cycle Safe-to-Spend (paycheck horizon, for reference)" value={discretionary.safeToSpend} />
-                {discretionary.oneTimeUndatedAdvisory > 0 && (
-                  <p className="text-xs text-amber-700 dark:text-amber-400 pt-2">
-                    Advisory: {formatCurrency(discretionary.oneTimeUndatedAdvisory)} of one-time expenses are unpaid without a due date — set due dates so they're reserved.
-                  </p>
-                )}
-                {discretionary.billsRemainingDetail.length > 0 && (
-                  <div className="pt-2">
-                    <p className="text-xs text-muted-foreground mb-1">Remaining bills this month:</p>
-                    <ul className="text-xs space-y-0.5">
-                      {discretionary.billsRemainingDetail.map((b) => (
-                        <li key={b.id} className="flex justify-between">
-                          <span>{b.name} (day {b.dueDay})</span>
-                          <span>{formatCurrency(b.amount)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        )}
       </Accordion>
     </div>
   );
 }
 
-function Row({ label, value, negative, bold }: { label: string; value: number; negative?: boolean; bold?: boolean }) {
+// ---------------------------------------------------------------------------
+// Zone 1 — Situation Block (Spec §4.2)
+// ---------------------------------------------------------------------------
+
+function SituationBlock({
+  cycle,
+  discretionary,
+  status,
+}: {
+  cycle: CycleData;
+  discretionary: DiscretionaryResp | undefined;
+  status: CycleStatus;
+}) {
+  const paydayLabel = paydayRelativeLabel(cycle.daysUntilPayday, cycle.nextPayday);
+
   return (
-    <div className={`flex justify-between py-1 ${bold ? "border-t-2 border-border pt-2 font-bold" : "border-b border-border/40"} ${negative ? "text-destructive" : ""}`}>
-      <span className={negative ? "" : "text-muted-foreground"}>{label}</span>
-      <span>{formatCurrency(value)}</span>
+    <section
+      className={cn(
+        "rounded-xl bg-card overflow-hidden border border-border",
+        "border-l-4",
+        statusBorderClass(status),
+        status !== "GREEN" && "reserve-status-pulse-once",
+      )}
+      data-testid="situation-block"
+      data-status={status}
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x divide-border">
+        {/* LEFT — Safe to Spend */}
+        <div className="p-6 md:p-8">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
+            Safe to Spend
+          </p>
+          <h2
+            className={cn(
+              "text-5xl md:text-6xl font-bold tracking-tighter font-mono reserve-animate",
+              statusTextClass(status),
+            )}
+            data-testid="text-safe-to-spend"
+          >
+            {formatCurrency(cycle.safeToSpend)}
+          </h2>
+          <p className="text-xs text-muted-foreground font-mono mt-3">
+            {formatCurrency(cycle.dailyRateRealTime)}/day · {paydayLabel}
+          </p>
+        </div>
+
+        {/* RIGHT — Discretionary This Month */}
+        <div className="p-6 md:p-8">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
+            Discretionary This Month
+          </p>
+          <h3
+            className="text-3xl md:text-4xl font-bold tracking-tighter font-mono"
+            data-testid="text-discretionary-month"
+          >
+            {discretionary ? formatCurrency(discretionary.discretionaryThisMonth) : "—"}
+          </h3>
+          {discretionary && (
+            <div className="mt-3 space-y-1 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Variable remaining</span>
+                <span>
+                  {formatCurrency(discretionary.variableRemainingThisMonth)}{" "}
+                  <span className="text-muted-foreground">
+                    of {formatCurrency(discretionary.variableCap)}
+                  </span>
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">CC balance owed</span>
+                <span>{formatCurrency(discretionary.quicksilverBalanceOwed)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 4-up stat strip — single line on desktop, wraps on mobile */}
+      <div
+        className="border-t border-border px-6 md:px-8 py-3 text-xs font-mono text-muted-foreground flex flex-wrap gap-x-6 gap-y-1"
+        data-testid="stat-strip"
+      >
+        <StripItem label="Checking" value={formatCurrency(cycle.checkingBalance)} />
+        <StripItem
+          label="Required Hold"
+          value={formatCurrency(cycle.totalRequiredHold)}
+        />
+        <StripItem label="Forward Reserve" value={formatCurrency(cycle.forwardReserve)} />
+        <StripItem
+          label="Variable Cap"
+          value={formatCurrency(discretionary?.variableCap ?? 0)}
+        />
+      </div>
+    </section>
+  );
+}
+
+function StripItem({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span className="text-muted-foreground/70">{label}</span>
+      <span className="text-foreground font-medium">{value}</span>
+    </span>
+  );
+}
+
+function paydayRelativeLabel(
+  days: number | null | undefined,
+  payday: string | Date | null | undefined,
+): string {
+  const datePart = payday ? formatDate(payday) : "—";
+  if (days === null || days === undefined) return `payday ${datePart}`;
+  if (days === 0) return `payday today (${datePart})`;
+  if (days === 1) return `1 day to ${datePart}`;
+  return `${days} days to ${datePart}`;
+}
+
+// ---------------------------------------------------------------------------
+// Zone 1 — Discipline Strip (Spec §4.3) — single line, three metrics
+// ---------------------------------------------------------------------------
+
+function DisciplineStrip({
+  d,
+}: {
+  d: NonNullable<DiscretionaryResp["discipline"]>;
+}) {
+  return (
+    <div
+      className="rounded-lg border border-border bg-card px-4 md:px-6 py-3 flex flex-wrap items-center gap-x-8 gap-y-3"
+      data-testid="discipline-strip"
+    >
+      <DisciplineMetric
+        label="Fixed / Income"
+        value={`${Math.round(d.fixedRatio * 100)}%`}
+        status={d.fixedRatioStatus}
+        badge={
+          d.fixedRatioStatus === "red"
+            ? "TIGHTEN"
+            : d.fixedRatioStatus === "amber"
+              ? "MONITOR"
+              : "ON TRACK"
+        }
+        testid="discipline-fixed-ratio"
+      />
+      <DisciplineMetric
+        label="Variable Pace"
+        value={`${Math.round(d.variableBurnPace * 100)}%`}
+        status={d.variableBurnPaceStatus}
+        badge={
+          d.variableBurnPaceStatus === "red"
+            ? "OVER PACE"
+            : d.variableBurnPaceStatus === "amber"
+              ? "MONITOR"
+              : "ON PACE"
+        }
+        testid="discipline-burn-pace"
+      />
+      <DisciplineMetric
+        label="Savings Rate"
+        value={`${Math.round(d.savingsRate * 100)}%`}
+        status={d.savingsRateStatus}
+        badge={
+          d.savingsRateStatus === "red"
+            ? "BELOW TARGET"
+            : d.savingsRateStatus === "amber"
+              ? "MONITOR"
+              : "ON TARGET"
+        }
+        testid="discipline-savings-rate"
+      />
+      <span className="ml-auto text-[11px] text-muted-foreground font-mono">
+        day {d.dayOfMonth}/{d.daysInMonth}
+      </span>
     </div>
   );
 }
 
-// Inline cycle-settings card was migrated to /settings (Spec §3 — Settings is
-// the single source of standing config). Engine fields it edited remain
-// editable in Settings → Cycle group.
+function DisciplineMetric({
+  label,
+  value,
+  status,
+  badge,
+  testid,
+}: {
+  label: string;
+  value: string;
+  status: "green" | "amber" | "red";
+  badge: string;
+  testid: string;
+}) {
+  const color =
+    status === "red"
+      ? "text-destructive"
+      : status === "amber"
+        ? "text-warning"
+        : "text-success";
+  const badgeBg =
+    status === "red"
+      ? "bg-destructive/15 text-destructive border-destructive/30"
+      : status === "amber"
+        ? "bg-warning/15 text-warning border-warning/30"
+        : "bg-success/15 text-success border-success/30";
+  return (
+    <span className="inline-flex items-baseline gap-2" data-testid={testid}>
+      <span className="text-xs text-muted-foreground uppercase tracking-wider">
+        {label}
+      </span>
+      <span className={cn("font-mono text-sm font-semibold reserve-animate", color)}>
+        {value}
+      </span>
+      <span
+        className={cn(
+          "text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border reserve-animate",
+          badgeBg,
+        )}
+      >
+        {badge}
+      </span>
+    </span>
+  );
+}
 
-function VariableSpendWidget() {
-  const { data: vs } = useGetVariableSpend(undefined, { query: { queryKey: getGetVariableSpendQueryKey() } });
+// ---------------------------------------------------------------------------
+// Zone 1 — Action Row (Spec §4.4) — 4 ghost buttons
+// ---------------------------------------------------------------------------
+
+function ActionRow() {
+  const [, navigate] = useLocation();
+  return (
+    <div
+      className="grid grid-cols-2 md:grid-cols-4 gap-2"
+      data-testid="action-row"
+    >
+      <UpdateBalanceDialog />
+      <LogSpendDialog />
+      <OneTimeQuickAddDialog />
+      <Button
+        variant="outline"
+        className="justify-start font-medium"
+        onClick={() => navigate("/advisor")}
+        data-testid="button-ask-advisor"
+      >
+        <MessageSquare className="mr-2 h-4 w-4" />
+        Ask Advisor
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Zone 2 columns
+// ---------------------------------------------------------------------------
+
+function BillsCycleColumn({
+  rows,
+  totalHold,
+}: {
+  rows: { id: number; name: string; dueDay: number; amount: number }[];
+  totalHold: number;
+}) {
+  return (
+    <section data-testid="bills-cycle-column" className="space-y-3">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        Bills in Cycle
+      </h3>
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground font-mono">
+          — No bills in current cycle.
+        </p>
+      ) : (
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="text-muted-foreground uppercase tracking-wide">
+              <th className="text-left py-1 font-normal">Bill</th>
+              <th className="text-right py-1 font-normal">Day</th>
+              <th className="text-right py-1 font-normal">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((b) => (
+              <tr key={b.id} className="text-foreground">
+                <td className="py-1 truncate max-w-[140px]">{b.name}</td>
+                <td className="py-1 text-right text-muted-foreground">{b.dueDay}</td>
+                <td className="py-1 text-right">{formatCurrency(b.amount)}</td>
+              </tr>
+            ))}
+            <tr className="border-t border-border/60">
+              <td colSpan={2} className="pt-2 text-sm font-semibold">
+                Total hold
+              </td>
+              <td className="pt-2 text-right text-sm font-semibold">
+                {formatCurrency(totalHold)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function OneTimeColumn() {
+  const { data: oneTimes } = useGetOneTimeExpenses({
+    query: { queryKey: getGetOneTimeExpensesQueryKey() },
+  });
+  const updateOte = useUpdateOneTimeExpense();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  const unpaid = (oneTimes ?? []).filter((o) => !o.paid);
+  const datedThisMonth = unpaid.filter((o) => {
+    if (!o.dueDate) return false;
+    const d = new Date(o.dueDate as unknown as string);
+    return d >= today && d <= monthEnd;
+  });
+  const undated = unpaid.filter((o) => !o.dueDate);
+  const totalThisMonth = datedThisMonth.reduce((s, o) => s + o.amount, 0);
+  const items = [...datedThisMonth, ...undated].slice(0, 6);
+
+  const togglePaid = (id: number, paid: boolean) => {
+    updateOte.mutate(
+      { id, data: { paid: !paid } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetOneTimeExpensesQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          toast({ title: paid ? "Marked unpaid" : "Marked paid" });
+        },
+      },
+    );
+  };
+
+  return (
+    <section data-testid="one-time-column" className="space-y-3">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        One-Time This Month
+      </h3>
+      {items.length === 0 ? (
+        <p className="text-xs text-muted-foreground font-mono">— All clear</p>
+      ) : (
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="text-muted-foreground uppercase tracking-wide">
+              <th className="text-left py-1 font-normal">Item</th>
+              <th className="text-right py-1 font-normal">Due</th>
+              <th className="text-right py-1 font-normal">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((o) => (
+              <tr key={o.id}>
+                <td className="py-1 truncate max-w-[140px]">
+                  <label className="inline-flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={o.paid}
+                      onChange={() => togglePaid(o.id, o.paid)}
+                      className="h-3.5 w-3.5"
+                      data-testid={`check-onetime-${o.id}`}
+                    />
+                    <span className="truncate">{o.description}</span>
+                  </label>
+                </td>
+                <td className="py-1 text-right text-muted-foreground">
+                  {o.dueDate ? formatDate(o.dueDate as unknown as string) : "—"}
+                </td>
+                <td className="py-1 text-right">{formatCurrency(o.amount)}</td>
+              </tr>
+            ))}
+            {datedThisMonth.length > 0 && (
+              <tr className="border-t border-border/60">
+                <td colSpan={2} className="pt-2 text-sm font-semibold">
+                  Total dated
+                </td>
+                <td className="pt-2 text-right text-sm font-semibold">
+                  {formatCurrency(totalThisMonth)}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function VariableSpendColumn() {
+  const { data: vs } = useGetVariableSpend(undefined, {
+    query: { queryKey: getGetVariableSpendQueryKey() },
+  });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+  const monthEntries = (vs ?? []).filter(
+    (v) => new Date(v.weekOf as unknown as string) >= monthStart,
+  );
+  const monthTotal = monthEntries.reduce((s, v) => s + v.amount, 0);
+  const quicksilverTotal = monthEntries
+    .filter((v) => v.quicksilver)
+    .reduce((s, v) => s + v.amount, 0);
+  const recent = (vs ?? []).slice(0, 6);
+
+  return (
+    <section data-testid="variable-spend-column" className="space-y-3">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        Variable Spend Log
+      </h3>
+      {recent.length === 0 ? (
+        <p className="text-xs text-muted-foreground font-mono">— No entries yet</p>
+      ) : (
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="text-muted-foreground uppercase tracking-wide">
+              <th className="text-left py-1 font-normal">Date</th>
+              <th className="text-left py-1 font-normal">Category</th>
+              <th className="text-right py-1 font-normal">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recent.map((v) => (
+              <tr key={v.id} data-testid={`row-variable-${v.id}`}>
+                <td className="py-1 text-muted-foreground">
+                  {formatDate(v.weekOf as unknown as string)}
+                </td>
+                <td className="py-1 capitalize">
+                  <span className="inline-flex items-center gap-1.5">
+                    {v.category ?? ""}
+                    {v.quicksilver && (
+                      <span className="text-[10px] font-mono uppercase tracking-wider px-1 py-0 rounded bg-warning/15 text-warning border border-warning/30">
+                        QS
+                      </span>
+                    )}
+                  </span>
+                </td>
+                <td className="py-1 text-right">{formatCurrency(v.amount)}</td>
+              </tr>
+            ))}
+            <tr className="border-t border-border/60">
+              <td colSpan={2} className="pt-2 text-sm font-semibold">
+                Logged MTD
+              </td>
+              <td className="pt-2 text-right text-sm font-semibold">
+                {formatCurrency(monthTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={2} className="text-xs text-muted-foreground">
+                QS Blind Spot
+              </td>
+              <td className="text-right text-xs text-muted-foreground">
+                {formatCurrency(quicksilverTotal)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Action Row dialogs
+// ---------------------------------------------------------------------------
+
+function UpdateBalanceDialog() {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const createBalance = useCreateBalance();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const handleSave = () => {
+    const parsed = parseFloat(amount);
+    if (isNaN(parsed)) return;
+    createBalance.mutate(
+      {
+        data: {
+          accountType: "checking",
+          amount: parsed,
+          asOfDate: new Date().toISOString(),
+          source: "manual",
+        },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-integrity"] });
+          setOpen(false);
+          setAmount("");
+          toast({ title: "Balance updated" });
+        },
+        onError: () =>
+          toast({ title: "Failed to update balance", variant: "destructive" }),
+      },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          className="justify-start font-medium"
+          data-testid="button-update-balance"
+        >
+          <ArrowUpCircle className="mr-2 h-4 w-4" />
+          Update Balance
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Update Checking Balance</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 py-4">
+          <div className="grid gap-2">
+            <Label htmlFor="amount">Current Balance</Label>
+            <Input
+              id="amount"
+              type="number"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              className="text-2xl font-mono"
+              autoFocus
+              data-testid="input-balance-amount"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={createBalance.isPending || !amount}
+            data-testid="button-save-balance"
+          >
+            <RefreshCw
+              className={cn(
+                "mr-2 h-4 w-4",
+                createBalance.isPending && "animate-spin",
+              )}
+            />
+            Save Balance
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LogSpendDialog() {
   const createMut = useCreateVariableSpendEntry();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -435,305 +1048,277 @@ function VariableSpendWidget() {
     notes: "",
   });
 
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-
-  const monthEntries = (vs ?? []).filter((v) => new Date(v.weekOf as unknown as string) >= monthStart);
-  const monthTotal = monthEntries.reduce((s, v) => s + v.amount, 0);
-  const quicksilverTotal = monthEntries.filter((v) => v.quicksilver).reduce((s, v) => s + v.amount, 0);
-  const recent = (vs ?? []).slice(0, 6);
-
   const handleSave = () => {
     const amt = parseFloat(form.amount);
-    if (isNaN(amt) || amt <= 0) { toast({ title: "Amount required", variant: "destructive" }); return; }
-    createMut.mutate({
-      data: {
-        weekOf: form.weekOf,
-        amount: amt,
-        category: form.category || null,
-        quicksilver: form.quicksilver,
-        notes: form.notes.trim() || null,
+    if (isNaN(amt) || amt <= 0) {
+      toast({ title: "Amount required", variant: "destructive" });
+      return;
+    }
+    createMut.mutate(
+      {
+        data: {
+          weekOf: form.weekOf,
+          amount: amt,
+          category: form.category || null,
+          quicksilver: form.quicksilver,
+          notes: form.notes.trim() || null,
+        },
       },
-    }, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
-        queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-        setOpen(false);
-        setForm((f) => ({ ...f, amount: "", notes: "" }));
-        toast({ title: "Variable entry logged" });
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          setOpen(false);
+          setForm((f) => ({ ...f, amount: "", notes: "" }));
+          toast({ title: "Variable entry logged" });
+        },
       },
-    });
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-2 flex-row items-center justify-between">
-        <CardTitle className="text-sm font-medium uppercase tracking-wider">Variable Spend Log</CardTitle>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm" variant="outline" data-testid="button-add-variable"><Plus className="h-3 w-3 mr-1" />Log</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader><DialogTitle>Log Variable Spend</DialogTitle></DialogHeader>
-            <div className="grid gap-3 py-2">
-              <div><Label>Date</Label><Input type="date" value={form.weekOf} onChange={(e) => setForm({ ...form, weekOf: e.target.value })} /></div>
-              <div className="grid grid-cols-2 gap-2">
-                <div><Label>Amount</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} data-testid="input-variable-amount" /></div>
-                <div><Label>Category</Label>
-                  <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-                    <option value="groceries">Groceries</option>
-                    <option value="dining">Dining</option>
-                    <option value="fuel">Fuel</option>
-                    <option value="household">Household</option>
-                    <option value="entertainment">Entertainment</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex items-center justify-between rounded border p-3">
-                <div><Label>Charged on QuickSilver</Label><p className="text-xs text-muted-foreground">Accrues into Monthly Savings statement reserve.</p></div>
-                <Switch checked={form.quicksilver} onCheckedChange={(v) => setForm({ ...form, quicksilver: v })} />
-              </div>
-              <div><Label>Notes</Label><Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={handleSave} disabled={createMut.isPending} data-testid="button-save-variable">Save</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <div className="rounded border p-2">
-            <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Logged this month</div>
-            <div className="text-xl font-bold font-mono">{formatCurrency(monthTotal)}</div>
-          </div>
-          <div className="rounded border p-2">
-            <div className="text-[10px] uppercase text-muted-foreground tracking-wider">QuickSilver blind spot</div>
-            <div className="text-xl font-bold font-mono">{formatCurrency(quicksilverTotal)}</div>
-          </div>
-        </div>
-        {recent.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No entries yet. Log spend to track variable burn rate.</p>
-        ) : (
-          <ul className="space-y-1 text-sm font-mono">
-            {recent.map((v) => (
-              <li key={v.id} className="flex items-center justify-between py-1 border-b border-border/40" data-testid={`row-variable-${v.id}`}>
-                <span className="flex items-center gap-2 min-w-0">
-                  <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">{formatDate(v.weekOf as unknown as string)}</span>
-                  <span className="text-xs capitalize">{v.category ?? ""}</span>
-                  {v.quicksilver && <Badge variant="secondary" className="text-[10px] px-1 py-0">QS</Badge>}
-                </span>
-                <span>{formatCurrency(v.amount)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="text-[10px] text-muted-foreground mt-2 italic">QuickSilver accrual is your statement reserve — it's already deducted from Monthly Savings even before the bill posts.</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function OneTimeInlineWidget() {
-  const { data: oneTimes } = useGetOneTimeExpenses({ query: { queryKey: getGetOneTimeExpensesQueryKey() } });
-  const updateOte = useUpdateOneTimeExpense();
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-
-  const unpaid = (oneTimes ?? []).filter((o) => !o.paid);
-  const datedThisMonth = unpaid.filter((o) => {
-    if (!o.dueDate) return false;
-    const d = new Date(o.dueDate as unknown as string);
-    return d >= today && d <= monthEnd;
-  });
-  const undated = unpaid.filter((o) => !o.dueDate);
-  const totalThisMonth = datedThisMonth.reduce((s, o) => s + o.amount, 0);
-  const totalUndated = undated.reduce((s, o) => s + o.amount, 0);
-
-  const togglePaid = (id: number, paid: boolean) => {
-    updateOte.mutate({ id, data: { paid: !paid } }, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetOneTimeExpensesQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-        queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-        toast({ title: paid ? "Marked unpaid" : "Marked paid" });
-      },
-    });
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-2 flex-row items-center justify-between">
-        <CardTitle className="text-sm font-medium uppercase tracking-wider">One-Time This Month</CardTitle>
-        <a href="one-time" className="text-xs text-muted-foreground hover:text-foreground">All →</a>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-2 mb-3 text-sm font-mono">
-          <div className="rounded border p-2">
-            <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Dated this month</div>
-            <div className="text-lg font-bold">{formatCurrency(totalThisMonth)}</div>
-          </div>
-          <div className="rounded border p-2">
-            <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Undated unpaid</div>
-            <div className={`text-lg font-bold ${totalUndated > 0 ? "text-warning" : ""}`}>{formatCurrency(totalUndated)}</div>
-          </div>
-        </div>
-        {unpaid.length === 0 ? (
-          <p className="text-sm text-muted-foreground font-mono">All clear — no unpaid one-times.</p>
-        ) : (
-          <ul className="space-y-1 text-sm font-mono">
-            {[...datedThisMonth, ...undated].slice(0, 6).map((o) => (
-              <li key={o.id} className="flex items-center justify-between py-1 border-b border-border/40">
-                <span className="flex items-center gap-2 min-w-0">
-                  <input
-                    type="checkbox"
-                    checked={o.paid}
-                    onChange={() => togglePaid(o.id, o.paid)}
-                    data-testid={`check-onetime-${o.id}`}
-                    className="h-3.5 w-3.5"
-                  />
-                  <span className="truncate text-xs">{o.description}</span>
-                  {!o.dueDate && <Badge variant="secondary" className="text-[10px] px-1 py-0">undated</Badge>}
-                </span>
-                <span className="flex items-center gap-2 flex-shrink-0">
-                  {o.dueDate && <span className="text-xs text-muted-foreground">{formatDate(o.dueDate as unknown as string)}</span>}
-                  <span>{formatCurrency(o.amount)}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {totalUndated > 0 && (
-          <p className="text-[10px] text-warning mt-2 italic">
-            Undated unpaid items aren't reserved in Safe-to-Spend. Set due dates to include them.
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function UpdateBalanceDialog() {
-  const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState("");
-  const createBalance = useCreateBalance();
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  const handleSave = () => {
-    const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount)) return;
-
-    createBalance.mutate({
-      data: { accountType: "checking", amount: parsedAmount, asOfDate: new Date().toISOString(), source: "manual" },
-    }, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-        queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-        queryClient.invalidateQueries({ queryKey: ["dashboard-integrity"] });
-        setOpen(false);
-        setAmount("");
-        toast({ title: "Balance updated" });
-      },
-      onError: () => toast({ title: "Failed to update balance", variant: "destructive" }),
-    });
+    );
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="lg" className="w-full md:w-auto font-bold tracking-wide" data-testid="button-update-balance">
-          <RefreshCw className="mr-2 h-4 w-4" />UPDATE BALANCE
+        <Button
+          variant="outline"
+          className="justify-start font-medium"
+          data-testid="button-log-spend"
+        >
+          <Plus className="mr-2 h-4 w-4" />
+          Log Spend
         </Button>
       </DialogTrigger>
       <DialogContent>
-        <DialogHeader><DialogTitle>Update Checking Balance</DialogTitle></DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid gap-2">
-            <Label htmlFor="amount">Current Balance</Label>
-            <Input id="amount" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className="text-2xl font-mono" autoFocus data-testid="input-balance-amount" />
+        <DialogHeader>
+          <DialogTitle>Log Variable Spend</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-3 py-2">
+          <div>
+            <Label>Date</Label>
+            <Input
+              type="date"
+              value={form.weekOf}
+              onChange={(e) => setForm({ ...form, weekOf: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>Amount</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                data-testid="input-variable-amount"
+              />
+            </div>
+            <div>
+              <Label>Category</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+              >
+                <option value="groceries">Groceries</option>
+                <option value="dining">Dining</option>
+                <option value="fuel">Fuel</option>
+                <option value="household">Household</option>
+                <option value="entertainment">Entertainment</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded border p-3">
+            <div>
+              <Label>Charged on QuickSilver</Label>
+              <p className="text-xs text-muted-foreground">
+                Accrues into Monthly Savings statement reserve.
+              </p>
+            </div>
+            <Switch
+              checked={form.quicksilver}
+              onCheckedChange={(v) => setForm({ ...form, quicksilver: v })}
+            />
+          </div>
+          <div>
+            <Label>Notes</Label>
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={createBalance.isPending || !amount} data-testid="button-save-balance">Save Balance</Button>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={createMut.isPending}
+            data-testid="button-save-variable"
+          >
+            Save
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-interface DisciplineProps {
-  d: NonNullable<DiscretionaryResp["discipline"]>;
-}
+function OneTimeQuickAddDialog() {
+  const createMut = useCreateOneTimeExpense();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    description: "",
+    amount: "",
+    dueDate: "",
+    notes: "",
+  });
 
-function DisciplineCard({ d }: DisciplineProps) {
-  const colorOf = (s: "green" | "amber" | "red") =>
-    s === "red"
-      ? "text-red-500"
-      : s === "amber"
-      ? "text-amber-500"
-      : "text-emerald-500";
-  const dotOf = (s: "green" | "amber" | "red") =>
-    s === "red" ? "bg-red-500" : s === "amber" ? "bg-amber-500" : "bg-emerald-500";
-
-  const fixedPct = Math.round(d.fixedRatio * 100);
-  const pacePct = Math.round(d.variableBurnPace * 100);
-  const savePct = Math.round(d.savingsRate * 100);
+  const handleSave = () => {
+    const amt = parseFloat(form.amount);
+    if (!form.description.trim() || isNaN(amt) || amt <= 0) {
+      toast({
+        title: "Description and amount required",
+        variant: "destructive",
+      });
+      return;
+    }
+    createMut.mutate(
+      {
+        data: {
+          description: form.description.trim(),
+          amount: amt,
+          dueDate: form.dueDate || null,
+          paid: false,
+          notes: form.notes.trim() || null,
+        },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({
+            queryKey: getGetOneTimeExpensesQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: getGetDashboardCycleQueryKey(),
+          });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          setOpen(false);
+          setForm({ description: "", amount: "", dueDate: "", notes: "" });
+          toast({ title: "One-time expense added" });
+        },
+        onError: () =>
+          toast({
+            title: "Failed to add one-time expense",
+            variant: "destructive",
+          }),
+      },
+    );
+  };
 
   return (
-    <Card data-testid="discipline-card">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          Playbook Discipline · day {d.dayOfMonth}/{d.daysInMonth}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div data-testid="discipline-fixed-ratio">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
-              <span className={`h-2 w-2 rounded-full ${dotOf(d.fixedRatioStatus)}`} />
-              Fixed-to-Income
-            </div>
-            <div className={`mt-1 text-3xl font-bold font-mono ${colorOf(d.fixedRatioStatus)}`}>
-              {fixedPct}%
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              ${d.fixedMonthlyTotal.toLocaleString()}/mo fixed · target ≤ 50%
-            </p>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          className="justify-start font-medium"
+          data-testid="button-add-one-time"
+        >
+          <CalendarPlus className="mr-2 h-4 w-4" />
+          One-Time
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add One-Time Expense</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-3 py-2">
+          <div>
+            <Label>Description</Label>
+            <Input
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="e.g. Dentist co-pay"
+              data-testid="input-one-time-description"
+              autoFocus
+            />
           </div>
-          <div data-testid="discipline-burn-pace">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
-              <span className={`h-2 w-2 rounded-full ${dotOf(d.variableBurnPaceStatus)}`} />
-              Variable Burn Pace
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>Amount</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                data-testid="input-one-time-amount"
+              />
             </div>
-            <div className={`mt-1 text-3xl font-bold font-mono ${colorOf(d.variableBurnPaceStatus)}`}>
-              {pacePct}%
+            <div>
+              <Label>Due date</Label>
+              <Input
+                type="date"
+                value={form.dueDate}
+                onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                data-testid="input-one-time-due-date"
+              />
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              vs ${d.expectedVariableByNow.toLocaleString()} expected by now · ≤ 110% on pace
-            </p>
           </div>
-          <div data-testid="discipline-savings-rate">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
-              <span className={`h-2 w-2 rounded-full ${dotOf(d.savingsRateStatus)}`} />
-              Savings Rate (Budgeted)
-            </div>
-            <div className={`mt-1 text-3xl font-bold font-mono ${colorOf(d.savingsRateStatus)}`}>
-              {savePct}%
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              of net income after fixed + variable cap · target ≥ 20%
-            </p>
+          <p className="text-xs text-muted-foreground">
+            Undated items aren't reserved in Safe-to-Spend. Set a due date to include them.
+          </p>
+          <div>
+            <Label>Notes</Label>
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            />
           </div>
         </div>
-      </CardContent>
-    </Card>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={createMut.isPending}
+            data-testid="button-save-one-time"
+          >
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared math row (used by Zone 3 tabs)
+// ---------------------------------------------------------------------------
+
+function Row({
+  label,
+  value,
+  negative,
+  bold,
+}: {
+  label: string;
+  value: number;
+  negative?: boolean;
+  bold?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex justify-between py-1",
+        bold ? "border-t-2 border-border pt-2 font-bold" : "border-b border-border/40",
+        negative ? "text-destructive" : "",
+      )}
+    >
+      <span className={negative ? "" : "text-muted-foreground"}>{label}</span>
+      <span>{formatCurrency(value)}</span>
+    </div>
   );
 }

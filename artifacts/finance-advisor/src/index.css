@@ -209,6 +209,17 @@
       opacity var(--reserve-motion-fast) var(--reserve-easing);
   }
 
+  /* Spec §4.2 — Situation Block status border pulses ONCE on load when
+     status is YELLOW or RED. No infinite pulse, no scale — opacity only. */
+  @keyframes reserve-status-pulse {
+    0%   { opacity: 0.35; }
+    50%  { opacity: 1; }
+    100% { opacity: 1; }
+  }
+  .reserve-status-pulse-once {
+    animation: reserve-status-pulse 600ms var(--reserve-easing) 1;
+  }
+
   /* Reserve safe-area helpers for mobile bottom nav. */
   .reserve-bottom-pad {
     padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
