@@ -45,6 +45,7 @@ import {
   CycleStatus,
   // Monthly savings
   monthlySavingsEstimate,
+  discretionaryThisMonth,
   // Match gap
   matchGapAnalysis,
   // Session integrity
@@ -545,6 +546,90 @@ describe("monthlySavingsEstimate — Source: Dashboard!B62 / FIX_PLAN §B3", () 
       bills,
     );
     expect(withCom).toBeGreaterThan(baseOnly);
+  });
+});
+
+describe("discretionaryThisMonth — Source: Playbook §2.1 / Cycle Dashboard headline", () => {
+  it("Apr 24 worked example: $2,333.94 checking → ~$634.60", () => {
+    // Per task spec, with VARIABLE_SPEND_CAP=600, MONTH_LENGTH_DAYS=30.4:
+    //   prorated_variable_apr_24_thru_30 = 7 * (600/30.4) = $138.158
+    //   forward_reserve(realBills) = $1,561.16 (car loan day=1 in 1-7 window)
+    //   result = max(0, 2333.94 - 0 - 138.158 - 0 - 0 - 1561.16) = $634.62
+    const bills = makeRealBills();
+    const result = discretionaryThisMonth(
+      2333.94,
+      0,
+      0,
+      0,
+      bills,
+      d(2026, 4, 24),
+    );
+    closeTo(result, 634.60, 0.05);
+  });
+
+  it("first day of month: full 30 days of variable + reserve", () => {
+    // April has 30 days. Today=Apr 1 → days_remaining = 30
+    //   prorated_variable = 30 * (600/30.4) = $592.105
+    //   forward_reserve(realBills) = $1,561.16
+    //   result = max(0, 5000 - 0 - 592.105 - 0 - 0 - 1561.16) = $2,846.74
+    const bills = makeRealBills();
+    const result = discretionaryThisMonth(
+      5000.0,
+      0,
+      0,
+      0,
+      bills,
+      d(2026, 4, 1),
+    );
+    closeTo(result, 2846.74, 0.05);
+  });
+
+  it("last day of month: only 1 day of variable left + reserve", () => {
+    // April 30 → days_remaining = 1
+    //   prorated_variable = 1 * (600/30.4) = $19.736
+    //   forward_reserve(realBills) = $1,561.16
+    //   result = max(0, 3000 - 0 - 19.736 - 0 - 0 - 1561.16) = $1,419.10
+    const bills = makeRealBills();
+    const result = discretionaryThisMonth(
+      3000.0,
+      0,
+      0,
+      0,
+      bills,
+      d(2026, 4, 30),
+    );
+    closeTo(result, 1419.10, 0.05);
+  });
+
+  it("with unpaid one-time expenses subtracted", () => {
+    // Apr 15 → days_remaining = 16. prorated_variable = 16*(600/30.4) = $315.789
+    //   reserve = $1,561.16. one-time = $250 + $400 = $650
+    //   result = max(0, 4000 - 200 - 315.789 - 650 - 50 - 1561.16) = $1,223.05
+    const bills = makeRealBills();
+    const result = discretionaryThisMonth(
+      4000.0,
+      200.0,        // unpaid bills remaining
+      650.0,        // one-time expenses remaining
+      50.0,         // QuickSilver accrual not yet posted
+      bills,
+      d(2026, 4, 15),
+    );
+    closeTo(result, 1223.05, 0.05);
+  });
+
+  it("clamps to zero when outflows exceed checking", () => {
+    // Apr 24 → days_remaining = 7. prorated_variable = $138.158
+    //   reserve = $1,561.16. With small checking, forced negative → clamp.
+    const bills = makeRealBills();
+    const result = discretionaryThisMonth(
+      500.0,        // small checking
+      300.0,        // unpaid bills remaining
+      0,
+      0,
+      bills,
+      d(2026, 4, 24),
+    );
+    expect(result).toBe(0.0);
   });
 });
 

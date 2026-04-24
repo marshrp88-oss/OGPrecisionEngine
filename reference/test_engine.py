@@ -56,6 +56,7 @@ from marshall_finance_engine import (
     CycleStatus,
     # Monthly savings
     monthly_savings_estimate,
+    discretionary_this_month,
     # Match gap
     match_gap_analysis,
     # Session integrity
@@ -753,6 +754,94 @@ class TestMonthlySavingsEstimate:
             bills_for_reserve=bills,
         )
         assert result > result_base_only
+
+
+class TestDiscretionaryThisMonth:
+    """Source: Playbook §2.1 (Forward Reserve Rule) / Cycle Dashboard headline."""
+
+    def test_apr_24_worked_example(self, real_bills):
+        """
+        Worked example from defect ticket:
+          checking=$2,333.94, today=Apr 24 2026
+          unpaid_bills=$0, one_time=$0, qs=$0
+          variable_cap=$600, month_length=30.4 → daily=19.7368...
+          days_remaining_apr_24_thru_30 = 7
+          prorated_variable_remaining = 7 * 19.7368 = $138.158
+          forward_reserve(real_bills with car loan day=1) = $1,561.16
+          discretionary = max(0, 2333.94 - 0 - 138.158 - 0 - 0 - 1561.16)
+                        = max(0, 634.62) ≈ $634.60
+        """
+        result = discretionary_this_month(
+            checking_balance=2333.94,
+            unpaid_fixed_bills_remaining_this_month=0.0,
+            unpaid_one_time_expenses_remaining_this_month=0.0,
+            quicksilver_accrual_not_yet_posted=0.0,
+            bills_for_reserve=real_bills,
+            today=date(2026, 4, 24),
+        )
+        assert result == approx(634.60, abs=0.05)
+
+    def test_first_day_of_month(self, real_bills):
+        """
+        Today=Apr 1 → days_remaining_in_month = 30 (April has 30 days).
+          prorated_variable = 30 * (600/30.4) = $592.105
+          reserve = $1,561.16
+          discretionary = max(0, 5000 - 0 - 592.105 - 0 - 0 - 1561.16) = $2,846.74
+        """
+        result = discretionary_this_month(
+            checking_balance=5000.0,
+            unpaid_fixed_bills_remaining_this_month=0.0,
+            unpaid_one_time_expenses_remaining_this_month=0.0,
+            quicksilver_accrual_not_yet_posted=0.0,
+            bills_for_reserve=real_bills,
+            today=date(2026, 4, 1),
+        )
+        assert result == approx(2846.74, abs=0.05)
+
+    def test_last_day_of_month(self, real_bills):
+        """
+        Today=Apr 30 → days_remaining = 1 (today is last day, inclusive).
+          prorated_variable = 1 * (600/30.4) = $19.736
+          reserve = $1,561.16
+          discretionary = max(0, 3000 - 0 - 19.736 - 0 - 0 - 1561.16) = $1,419.10
+        """
+        result = discretionary_this_month(
+            checking_balance=3000.0,
+            unpaid_fixed_bills_remaining_this_month=0.0,
+            unpaid_one_time_expenses_remaining_this_month=0.0,
+            quicksilver_accrual_not_yet_posted=0.0,
+            bills_for_reserve=real_bills,
+            today=date(2026, 4, 30),
+        )
+        assert result == approx(1419.10, abs=0.05)
+
+    def test_with_unpaid_one_time_expenses(self, real_bills):
+        """
+        Apr 15 → days_remaining = 16. prorated_variable = 16*(600/30.4) = $315.789
+          reserve = $1,561.16. unpaid_bills=$200, one_time=$650, qs=$50
+          discretionary = max(0, 4000 - 200 - 315.789 - 650 - 50 - 1561.16) = $1,223.05
+        """
+        result = discretionary_this_month(
+            checking_balance=4000.0,
+            unpaid_fixed_bills_remaining_this_month=200.0,
+            unpaid_one_time_expenses_remaining_this_month=650.0,
+            quicksilver_accrual_not_yet_posted=50.0,
+            bills_for_reserve=real_bills,
+            today=date(2026, 4, 15),
+        )
+        assert result == approx(1223.05, abs=0.05)
+
+    def test_clamps_to_zero_on_deficit(self, real_bills):
+        """MAX(0, ...) — deficit collapses to zero, never negative."""
+        result = discretionary_this_month(
+            checking_balance=500.0,           # small checking
+            unpaid_fixed_bills_remaining_this_month=300.0,
+            unpaid_one_time_expenses_remaining_this_month=0.0,
+            quicksilver_accrual_not_yet_posted=0.0,
+            bills_for_reserve=real_bills,
+            today=date(2026, 4, 24),
+        )
+        assert result == 0.0
 
 
 # ---------------------------------------------------------------------------

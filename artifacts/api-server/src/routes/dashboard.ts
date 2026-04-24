@@ -14,6 +14,7 @@ import {
   Bill as EngineBill,
   OneTimeExpense as EngineOneTime,
   monthlySavingsEstimate,
+  discretionaryThisMonth as engineDiscretionaryThisMonth,
   nextNominalPayday,
 } from "@workspace/finance";
 
@@ -131,7 +132,12 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     .reduce((s, v) => s + parseFloat(v.amount), 0);
   const variableRemainingThisMonth = Math.max(0, variableCap - variableSpentThisMonth);
 
-  // ---- Aggregate (data shaping; no finance formulas) ----
+  // ---- Aggregate ----
+  // Inflow / outflow rollups are kept for the breakdown UI so the user can see
+  // every component, but the headline number must come from the engine to
+  // satisfy Playbook §2.1 (Forward Reserve Rule). The engine function and the
+  // raw inflow/outflow ledger answer different questions — see the engine doc
+  // comment on discretionaryThisMonth().
   const inflows = checking + remainingPaychecksThisMonth + confirmedCommissionUnreceived;
   const outflows =
     billsRemainingThisMonth +
@@ -139,9 +145,11 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     variableRemainingThisMonth +
     quicksilverBalanceOwed +
     minimumCushion;
-  const discretionaryThisMonth = Math.max(0, inflows - outflows);
 
   // Cycle parity (Safe-to-Spend frame) — engine via computeCycleState.
+  // We also need cycle.forwardReserve as an input to the discretionary engine
+  // function — but discretionaryThisMonth recomputes its own forward reserve
+  // from billsForReserve so it's self-consistent.
   const cycle = await computeCycleState();
 
   const round = (n: number) => Math.round(n * 100) / 100;
@@ -173,6 +181,29 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     monthLengthDays,
   );
   const savingsRate = baseNetIncome > 0 ? engineSavings / (baseNetIncome + confirmedCommissionTotal) : 0;
+
+  // Discretionary This Month — engine-sourced per Playbook §2.1.
+  // Subtracts forward reserve. Distinct from monthlySavingsEstimate (income
+  // ledger) and from safeToSpend (paycheck-bounded). billsForReserve uses
+  // monthBillsForEngine so the same bill set drives forward_reserve as the
+  // workbook expects (Dashboard B33 = SUMIFS over Bills sheet, Include=TRUE).
+  const discretionaryHeadline = engineDiscretionaryThisMonth(
+    checking,
+    billsRemainingThisMonth,
+    oneTimeDatedThisMonth,
+    quicksilverBalanceOwed,
+    monthBillsForEngine,
+    today,
+    variableCap,
+    monthLengthDays,
+  );
+
+  // Match the engine's prorated_variable_remaining for the breakdown row so
+  // the displayed math reconciles to the headline.
+  const lastDay = monthEnd.getDate();
+  const daysRemainingInMonth = Math.max(0, lastDay - today.getDate() + 1);
+  const proratedVariableRemainingForBreakdown =
+    daysRemainingInMonth * (variableCap / monthLengthDays);
 
   const dayOfMonth = today.getDate();
   const daysInMonth = monthEnd.getDate();
@@ -208,9 +239,15 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   };
 
   res.json({
-    // Headline
-    discretionaryThisMonth: round(discretionaryThisMonth),
+    // Headline — engine-sourced per Playbook §2.1 (Forward Reserve Rule).
+    discretionaryThisMonth: round(discretionaryHeadline),
     monthEnd: monthEnd.toISOString().split("T")[0],
+
+    // Forward Reserve subtracted from the headline per §2.1. Surfaced so the
+    // UI breakdown can show the full chain of subtractions.
+    forwardReserve: round(cycle.forwardReserve),
+    proratedVariableRemainingThisMonth: round(proratedVariableRemainingForBreakdown),
+    daysRemainingInMonth,
 
     // Inflows
     checking: round(checking),

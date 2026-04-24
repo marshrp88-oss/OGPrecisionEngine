@@ -772,6 +772,60 @@ def monthly_savings_estimate(
     return max(0.0, result)
 
 
+def discretionary_this_month(
+    checking_balance: float,
+    unpaid_fixed_bills_remaining_this_month: float,
+    unpaid_one_time_expenses_remaining_this_month: float,
+    quicksilver_accrual_not_yet_posted: float,
+    bills_for_reserve: list[Bill],
+    today: date,
+    variable_cap: float = VARIABLE_SPEND_CAP,
+    month_length_days: float = MONTH_LENGTH_DAYS,
+) -> float:
+    """
+    Discretionary This Month — end-of-month deployable surplus from current
+    checking, after funding every known outflow between today and the first
+    paycheck of the following month.
+
+    Answers: "How much cash can I save, invest, or spend on non-obligated
+              purchases this month after every known obligation is funded?"
+
+    Distinct from safe_to_spend (current-cycle spending authority — no
+    forward reserve, paycheck-bounded) and from monthly_savings_estimate
+    (full-month income/outflow ledger, paycheck-boundary). Discretionary is
+    checking-only and explicitly subtracts forward_reserve per Playbook §2.1.
+
+    Formula:
+      MAX(0,
+        checking
+        - unpaid_fixed_bills_remaining_this_month
+        - prorated_variable_remaining_this_month
+        - unpaid_one_time_expenses_remaining_this_month
+        - quicksilver_accrual_not_yet_posted
+        - forward_reserve(bills_for_reserve)
+      )
+
+      prorated_variable = days_remaining_in_month * (variable_cap / month_length_days)
+        where days_remaining_in_month = (last_day_of_month - today.day + 1),
+        inclusive of today and inclusive of the last day.
+
+    Source: Playbook §2.1 (Forward Reserve Rule) / Cycle Dashboard headline.
+    """
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    days_remaining = max(0, last_day - today.day + 1)
+    prorated_variable_remaining = days_remaining * (variable_cap / month_length_days)
+    fwd_reserve = forward_reserve(bills_for_reserve, variable_cap, month_length_days)
+    result = (
+        checking_balance
+        - unpaid_fixed_bills_remaining_this_month
+        - prorated_variable_remaining
+        - unpaid_one_time_expenses_remaining_this_month
+        - quicksilver_accrual_not_yet_posted
+        - fwd_reserve
+    )
+    return max(0.0, result)
+
+
 # ---------------------------------------------------------------------------
 # 8. 401(K) MATCH GAP  (FIX_PLAN §A2 — corrected formula)
 # ---------------------------------------------------------------------------

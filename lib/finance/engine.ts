@@ -679,6 +679,62 @@ export function monthlySavingsEstimate(
   return Math.max(0.0, result);
 }
 
+/**
+ * Discretionary This Month — end-of-month deployable surplus from current
+ * checking, after funding every known outflow between today and the first
+ * paycheck of the following month.
+ *
+ * Answers: "How much cash can I save, invest, or spend on non-obligated
+ *           purchases this month after every known obligation is funded?"
+ *
+ * Distinct from safeToSpend (current-cycle spending authority — no forward
+ * reserve, paycheck-bounded) and from monthlySavingsEstimate (full-month
+ * income/outflow ledger, paycheck-boundary). Discretionary is checking-only
+ * and explicitly subtracts forwardReserve per Playbook §2.1.
+ *
+ * Formula:
+ *   MAX(0,
+ *     checking
+ *     - unpaid_fixed_bills_remaining_this_month
+ *     - prorated_variable_remaining_this_month
+ *     - unpaid_one_time_expenses_remaining_this_month
+ *     - quicksilver_accrual_not_yet_posted
+ *     - forward_reserve(billsForReserve)
+ *   )
+ *
+ *   prorated_variable = days_remaining_in_month * (variable_cap / month_length_days)
+ *     where days_remaining_in_month = (lastDayOfMonth - today + 1), inclusive
+ *     of today and inclusive of the last day.
+ *
+ * Source: Playbook §2.1 (Forward Reserve Rule) / Cycle Dashboard headline.
+ */
+export function discretionaryThisMonth(
+  checkingBalance: number,
+  unpaidFixedBillsRemainingThisMonth: number,
+  unpaidOneTimeExpensesRemainingThisMonth: number,
+  quicksilverAccrualNotYetPosted: number,
+  billsForReserve: Bill[],
+  today: Date,
+  variableCap: number = VARIABLE_SPEND_CAP,
+  monthLengthDays: number = MONTH_LENGTH_DAYS,
+): number {
+  const year = today.getUTCFullYear();
+  const monthIdx = today.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, monthIdx + 1, 0)).getUTCDate();
+  const todayDay = today.getUTCDate();
+  const daysRemaining = Math.max(0, lastDay - todayDay + 1);
+  const proratedVariableRemaining = daysRemaining * (variableCap / monthLengthDays);
+  const fwdReserve = forwardReserve(billsForReserve, variableCap, monthLengthDays);
+  const result =
+    checkingBalance -
+    unpaidFixedBillsRemainingThisMonth -
+    proratedVariableRemaining -
+    unpaidOneTimeExpensesRemainingThisMonth -
+    quicksilverAccrualNotYetPosted -
+    fwdReserve;
+  return Math.max(0.0, result);
+}
+
 // ---------------------------------------------------------------------------
 // 8. 401(K) MATCH GAP  (FIX_PLAN §A2 — corrected formula)
 // ---------------------------------------------------------------------------

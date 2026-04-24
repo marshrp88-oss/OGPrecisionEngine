@@ -38,6 +38,9 @@ const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 interface DiscretionaryResp {
   discretionaryThisMonth: number;
   monthEnd: string;
+  forwardReserve: number;
+  proratedVariableRemainingThisMonth: number;
+  daysRemainingInMonth: number;
   checking: number;
   remainingPaychecksThisMonth: number;
   paychecksRemainingCount: number;
@@ -389,18 +392,26 @@ export default function Dashboard() {
             </AccordionTrigger>
             <AccordionContent className="pt-2 pb-6 space-y-3 font-mono text-sm">
               <p className="text-xs text-muted-foreground italic pb-1">
-                Horizon: today through {formatDate(discretionary.monthEnd)}. Mirrors the workbook B62 model, reframed as remaining spending capability.
+                Horizon: today through {formatDate(discretionary.monthEnd)}. End-of-month deployable surplus from current checking after every known obligation between today and the first paycheck of next month — including the Forward Reserve held back per Playbook §2.1.
               </p>
               <Row label="Checking Balance" value={discretionary.checking} />
-              <Row label={`+ Remaining Paychecks This Month (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`} value={discretionary.remainingPaychecksThisMonth} />
-              <Row label="+ Confirmed Commission (not yet received)" value={discretionary.confirmedCommissionUnreceived} />
-              <Row label="= Total Inflows Available" value={discretionary.totalInflowsAvailable} bold />
-              <Row label="− Bills Remaining This Month (Include=TRUE)" value={discretionary.billsRemainingThisMonth} negative />
+              <Row label="− Bills Remaining This Month (Include=TRUE, due today→month end)" value={discretionary.billsRemainingThisMonth} negative />
+              <Row label={`− Prorated Variable Remaining (${discretionary.daysRemainingInMonth} days × ${formatCurrency(discretionary.variableCap / 30.4)}/day)`} value={discretionary.proratedVariableRemainingThisMonth} negative />
               <Row label="− One-Time Expenses dated through month end" value={discretionary.oneTimeDatedThisMonth} negative />
-              <Row label="− Variable Cap Remaining (gas + food reserve)" value={discretionary.variableRemainingThisMonth} negative />
-              <Row label="− QuickSilver Balance Owed (CC payoff)" value={discretionary.quicksilverBalanceOwed} negative />
-              <Row label="− Minimum Cushion" value={discretionary.minimumCushion} negative />
+              <Row label="− QuickSilver Balance Owed (CC payoff not yet posted)" value={discretionary.quicksilverBalanceOwed} negative />
+              <Row label="− Forward Reserve (next-month days 1-7 + 7d variable, §2.1)" value={discretionary.forwardReserve} negative />
               <Row label="= Discretionary This Month" value={discretionary.discretionaryThisMonth} bold />
+
+              <p className="text-[10px] text-muted-foreground italic pt-2">
+                Engine-sourced via discretionaryThisMonth(). Distinct from Safe to Spend (current cycle, no Forward Reserve) and Monthly Savings Estimate (full-month income ledger, paycheck boundary).
+              </p>
+
+              <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">Context (informational)</p>
+              <Row label={`Remaining Paychecks This Month (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`} value={discretionary.remainingPaychecksThisMonth} />
+              <Row label="Confirmed Commission (not yet received)" value={discretionary.confirmedCommissionUnreceived} />
+              <Row label="Total Inflows Available (checking + paychecks + commission)" value={discretionary.totalInflowsAvailable} />
+              <Row label="Variable Cap Remaining (cap minus already-spent)" value={discretionary.variableRemainingThisMonth} />
+              <Row label="Minimum Cushion" value={discretionary.minimumCushion} />
 
               <div className="pt-3 border-t border-border/30 space-y-2 mt-2">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider">Context</p>

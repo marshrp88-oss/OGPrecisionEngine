@@ -52,7 +52,7 @@ pnpm workspace monorepo. "Reserve" is a precision personal finance advisor for M
 1. **Paycheck Boundary** — All cycle calcs use next payday boundary, never calendar month-end
 2. **Commission-as-Zero** — Baseline assumes $0 commission unless status="confirmed"
 3. **Column H AND-Gate** — Bill counts if: include=TRUE, amount>0, due >= today, due < next payday
-4. **Forward Reserve Exclusion** — Forward reserve is in monthly savings but NOT in Safe to Spend
+4. **Forward Reserve Exclusion (§2.1)** — Forward reserve is in monthly savings AND in Discretionary This Month, but NOT in Safe to Spend. Three engine functions answer three different questions: `safeToSpend()` (current cycle, no reserve, paycheck-bounded), `discretionaryThisMonth()` (end-of-month deployable surplus from checking, subtracts reserve), `monthlySavingsEstimate()` (full-month income/outflow ledger, paycheck boundary, subtracts reserve).
 5. **One-Time Cost Gating** — Reserved only when amount + due date between today and next payday
 6. **Stale Data Failure** — >3 days since balance update blocks reliable cycle analysis
 7. **Variable Spend Proration** — cap ÷ 30.4 × days remaining
