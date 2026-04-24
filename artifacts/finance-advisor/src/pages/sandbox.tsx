@@ -11,21 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCurrency, formatPercent } from "@/lib/utils";
-
-function computeMonthlyPayment(principal: number, annualRate: number, months: number): number {
-  if (months <= 0 || principal <= 0) return 0;
-  if (annualRate <= 0) return principal / months;
-  const r = annualRate / 12;
-  return (principal * r * Math.pow(1 + r, months)) / (Math.pow(1 + r, months) - 1);
-}
-
-function computePayoffMonths(balance: number, rate: number, payment: number): number | null {
-  if (payment <= 0 || balance <= 0) return null;
-  if (rate <= 0) return Math.ceil(balance / payment);
-  const monthlyRate = rate / 12;
-  if (payment <= balance * monthlyRate) return null;
-  return Math.ceil(-Math.log(1 - (balance * monthlyRate) / payment) / Math.log(1 + monthlyRate));
-}
+import {
+  pmt,
+  droughtSurvivalRunway,
+  incomeReplacementFloor,
+  incomeGrowthScenario,
+} from "@/lib/finance-adapter";
 
 export default function Sandbox() {
   const { data: cycle } = useGetDashboardCycle({ query: { queryKey: getGetDashboardCycleQueryKey() } });
@@ -81,8 +72,8 @@ function VehicleScenario({ targetPayment }: { targetPayment: number }) {
   const monthsN = parseInt(months) || 60;
   const insuranceN = parseFloat(insurance) || 0;
 
-  const principal = stickerN - downN;
-  const payment = computeMonthlyPayment(principal, rateN, monthsN);
+  const principal = Math.max(0, stickerN - downN);
+  const payment = principal > 0 && monthsN > 0 ? pmt(rateN, monthsN, principal) : 0;
   const totalCost = payment * monthsN + downN;
   const totalInterest = totalCost - stickerN;
   const newMonthlyBurn = payment + insuranceN;
@@ -136,10 +127,14 @@ function DroughtSurvivalScenario({ checkingBalance }: { checkingBalance: number 
 
   const checkingN = parseFloat(checking) || 0;
   const hysaN = parseFloat(hysa) || 0;
-  const burnN = parseFloat(monthlyBurn) || 1;
+  const burnN = parseFloat(monthlyBurn) || 0;
 
-  const totalLiquid = checkingN + hysaN;
-  const runwayMonths = burnN > 0 ? totalLiquid / burnN : 0;
+  // Engine: drought survival assumes monthly burn = fixed bills + variable cap
+  // and zero base-net-monthly income. We treat the user-entered burn as the
+  // total burn (already inclusive of variable spend), and pass baseNet=0.
+  const result = droughtSurvivalRunway(checkingN, hysaN, burnN, 0, 0);
+  const totalLiquid = result.totalLiquid;
+  const runwayMonths = result.indefinite ? 0 : result.runway_months ?? 0;
   const months = Math.floor(runwayMonths);
   const days = Math.round((runwayMonths - months) * 30);
 
@@ -188,7 +183,7 @@ function IncomeFloorScenario() {
   const taxN = parseFloat(taxRate) / 100 || 0;
 
   const requiredNet = targetN + fixedN + varN;
-  const requiredGross = taxN < 1 ? requiredNet / (1 - taxN) * 12 : 0;
+  const [requiredGross] = taxN < 1 ? incomeReplacementFloor(targetN, fixedN, varN, taxN) : [0, 0];
 
   return (
     <Card>
@@ -228,10 +223,13 @@ function IncomeChangeScenario({ currentBase }: { currentBase: number }) {
   const newN = parseFloat(newSalary) || 0;
   const taxN = parseFloat(taxRate) / 100 || 0;
 
+  // Engine takes federal+state tax rates separately; we pass the combined
+  // effective rate as `fed` and 0 as `state` (sum is the same).
   const currentMonthlyNet = (currentN / 12) * (1 - taxN);
-  const newMonthlyNet = (newN / 12) * (1 - taxN);
-  const monthlyIncrease = newMonthlyNet - currentMonthlyNet;
-  const annualIncrease = (newN - currentN) * (1 - taxN);
+  const result = incomeGrowthScenario(currentN, newN, taxN, 0, currentMonthlyNet, 0);
+  const monthlyIncrease = result.monthly_net_increase;
+  const newMonthlyNet = result.new_monthly_net;
+  const annualIncrease = monthlyIncrease * 12;
 
   return (
     <Card>

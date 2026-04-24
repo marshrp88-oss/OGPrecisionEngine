@@ -16,12 +16,11 @@ import { AlertTriangle, Save, Info } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency, formatPercent } from "@/lib/utils";
+import { fv, matchGapAnalysis, retirementProjection } from "@/lib/finance-adapter";
 
-function computeFV(pv: number, pmt: number, rate: number, years: number): number {
-  if (rate === 0) return pv + pmt * years * 12;
-  const monthlyRate = rate / 12;
-  const months = years * 12;
-  return pv * Math.pow(1 + monthlyRate, months) + pmt * ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate);
+/** Future value with monthly compounding via the shared engine `fv`. */
+function fvMonthly(pv: number, monthlyPayment: number, annualRate: number, years: number): number {
+  return fv(annualRate / 12, years * 12, monthlyPayment, pv);
 }
 
 export default function Retirement() {
@@ -87,33 +86,39 @@ export default function Retirement() {
 
   const yearsToRetirement = Math.max(0, targetAge - currentAge);
 
-  // 401(k) match math (per Phase 1 Correction Plan A2)
-  const effEmployeePct = Math.min(contribRate, ceiling);
-  const matchPctOfGross = effEmployeePct * matchMultiplier;
-  const maxMatchPctOfGross = ceiling * matchMultiplier;
-  const annualCaptured = grossSalary * matchPctOfGross;
-  const annualAvailable = grossSalary * maxMatchPctOfGross;
-  const annualGap = annualAvailable - annualCaptured;
-  const monthlyGap = annualGap / 12;
-  const matchGapActive = annualGap > 0.01;
+  // 401(k) match math via shared engine — single source of truth.
+  const matchGap = matchGapAnalysis(grossSalary, contribRate, matchMultiplier, ceiling);
+  const matchPctOfGross = matchGap.employerMatchPct;
+  const maxMatchPctOfGross = matchGap.maxPossibleMatchPct;
+  const annualCaptured = matchGap.annualCaptured;
+  const annualAvailable = matchGap.annualAvailable;
+  const annualGap = matchGap.annualGap;
+  const monthlyGap = matchGap.monthlyGap;
+  const matchGapActive = !matchGap.atCeiling && annualGap > 0.01;
 
   // FV columns: Current / At Match Cap (=ceiling) / Aggressive (12%)
   const monthlyContribAt = (employeePct: number) => {
-    const empPct = employeePct;
-    const matched = Math.min(empPct, ceiling) * matchMultiplier;
-    return ((grossSalary * empPct) + (grossSalary * matched)) / 12;
+    const matched = Math.min(employeePct, ceiling) * matchMultiplier;
+    return ((grossSalary * employeePct) + (grossSalary * matched)) / 12;
   };
 
-  const fvCurrent = computeFV(currentBalance, monthlyContribAt(contribRate), returnRate, yearsToRetirement);
-  const fvAtMatchCap = computeFV(currentBalance, monthlyContribAt(ceiling), returnRate, yearsToRetirement);
-  const fvAggressive = computeFV(currentBalance, monthlyContribAt(0.12), returnRate, yearsToRetirement);
+  const fvCurrent = fvMonthly(currentBalance, monthlyContribAt(contribRate), returnRate, yearsToRetirement);
+  const fvAtMatchCap = fvMonthly(currentBalance, monthlyContribAt(ceiling), returnRate, yearsToRetirement);
+  const fvAggressive = fvMonthly(currentBalance, monthlyContribAt(0.12), returnRate, yearsToRetirement);
 
-  const TARGET = 1_000_000;
-  const fvOfPv = currentBalance * Math.pow(1 + returnRate / 12, yearsToRetirement * 12);
-  const pmt_needed =
-    TARGET > fvOfPv
-      ? ((TARGET - fvOfPv) * (returnRate / 12)) / (Math.pow(1 + returnRate / 12, yearsToRetirement * 12) - 1)
-      : 0;
+  // $1M Target — use the engine's `retirementProjection.million_monthly_needed`
+  // so the same canonical PMT formula (and rounding) is used everywhere.
+  const projection = retirementProjection(
+    grossSalary,
+    contribRate,
+    currentBalance,
+    currentAge,
+    targetAge,
+    returnRate,
+    matchMultiplier,
+    ceiling,
+  );
+  const pmt_needed = projection.million_monthly_needed;
   const requiredSalaryPct = grossSalary > 0 ? (pmt_needed * 12) / grossSalary : 0;
 
   // Estimated take-home reduction from bumping contribution to ceiling

@@ -230,6 +230,16 @@ export async function buildAdvisorContext(): Promise<{
   lines.push(`- Month length: ${monthLength} days`);
   lines.push(`- Commission tax rate: ${pct(taxRate)}`);
   lines.push(`- MRR target: ${fmt(mrrTarget)}, NRR target: ${fmt(nrrTarget)}`);
+  if (matchGapForIntegrity && !matchGapForIntegrity.atCeiling) {
+    lines.push("");
+    lines.push("401(K) MATCH GAP (engine-computed):");
+    lines.push(
+      `- Annual gap: ${fmt(matchGapForIntegrity.annualGap)}/yr (${fmt(matchGapForIntegrity.monthlyGap)}/mo) of free employer match left on the table.`,
+    );
+    lines.push(
+      `- Capturing ${fmt(matchGapForIntegrity.annualCaptured)}/yr of a possible ${fmt(matchGapForIntegrity.annualAvailable)}/yr.`,
+    );
+  }
   lines.push("=== END LIVE DATA SNAPSHOT ===");
 
   // Integrity checks — delegate to @workspace/finance sessionIntegrityCheck
@@ -340,6 +350,7 @@ HARD RULES:
 7. When the playbook v7.3 body and the v7.4 ADDENDUM (or LIVE DATA SNAPSHOT) disagree, the v7.4 ADDENDUM and the snapshot win. The playbook body is canonical methodology, but the live state is canonical fact.
 8. Drought flag (3-month commission view): currently ${droughtFlag ? "ACTIVE" : "not active"}. When ACTIVE, push every recommendation toward base-net survivability and call out any analysis that assumes commission.
 9. Forward Reserve (${fmt(cycle.forwardReserve)}) is excluded from Safe to Spend by design — it factors into Monthly Savings only. Do not "spend" the forward reserve in any cycle-frame answer.
+10. All calculations must come from the shared engine functions in \`/lib/finance/engine.ts\` (package \`@workspace/finance\`) and the LIVE DATA SNAPSHOT above. Do not compute alternative versions of cycle math, match gap, FV/PMT, runway, or income-floor numbers. If a number you need is not in the snapshot, say so and stop — do not guess.
 
 OUT OF SCOPE — refuse politely:
 - Tax filing or filing-status advice (refer to CPA).

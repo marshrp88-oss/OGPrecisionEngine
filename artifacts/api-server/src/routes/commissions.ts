@@ -16,6 +16,17 @@ import {
   computeTakeHome,
   computePayoutDate,
 } from "../lib/financeEngine";
+import {
+  COMMISSION_PAYOUT_DAY,
+  COMMISSION_TAX_RATE,
+  DROUGHT_THRESHOLD,
+  MRR_TARGET,
+  NRR_TARGET,
+  commissionPayoutDate as engineCommissionPayoutDate,
+  commissionTakeHome,
+  droughtFlag as engineDroughtFlag,
+  type CommissionRow,
+} from "@workspace/finance";
 
 const router: IRouter = Router();
 
@@ -157,8 +168,15 @@ router.delete("/commissions/:id", async (req, res): Promise<void> => {
 
 router.get("/commissions/summary", async (_req, res): Promise<void> => {
   const rows = await db.select().from(commissions).orderBy(desc(commissions.salesMonth));
-
   const now = new Date();
+
+  const [mrrTargetRow] = await db.select().from(assumptions).where(eq(assumptions.key, "mrr_target"));
+  const [nrrTargetRow] = await db.select().from(assumptions).where(eq(assumptions.key, "nrr_target"));
+  const [taxRateRow] = await db.select().from(assumptions).where(eq(assumptions.key, "commission_tax_rate"));
+  const mrrTarget = mrrTargetRow ? parseFloat(mrrTargetRow.value) : MRR_TARGET;
+  const nrrTarget = nrrTargetRow ? parseFloat(nrrTargetRow.value) : NRR_TARGET;
+  const taxRate = taxRateRow ? parseFloat(taxRateRow.value) : COMMISSION_TAX_RATE;
+
   const ytdStart = `${now.getFullYear()}-01-01`;
   const ytdRows = rows.filter((r) => r.salesMonth >= ytdStart);
   const ytdTakeHome = ytdRows.reduce((sum, r) => sum + parseFloat(r.takeHome), 0);
@@ -168,12 +186,24 @@ router.get("/commissions/summary", async (_req, res): Promise<void> => {
     ? last3.reduce((sum, r) => sum + parseFloat(r.takeHome), 0) / last3.length
     : 0;
 
-  const droughtThreshold = 50;
-  const droughtMonths = rows.filter((r) => parseFloat(r.takeHome) < droughtThreshold).length;
-  const droughtFlag = droughtMonths > 0;
+  // Engine-canonical drought analysis: recompute take-home from MRR/NRR achieved
+  // so the threshold is applied to engine-derived values, not stored ones.
+  const engineRows: CommissionRow[] = rows.map((r) => ({
+    salesMonth: new Date(`${r.salesMonth}T00:00:00.000Z`),
+    mrrAchieved: parseFloat(r.mrrAchieved),
+    nrrAchieved: parseFloat(r.nrrAchieved),
+  }));
+  const droughtFlag = engineDroughtFlag(engineRows, DROUGHT_THRESHOLD, mrrTarget, nrrTarget, taxRate);
+  const droughtMonths = engineRows.filter(
+    (r) => commissionTakeHome(r.mrrAchieved, r.nrrAchieved, mrrTarget, nrrTarget, taxRate) < DROUGHT_THRESHOLD,
+  ).length;
 
-  // Current month confirmed commission
-  const payoutDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-22`;
+  // Current month confirmed commission — payout date for sales in PRIOR month
+  // (commissionPayoutDate adds one month).
+  const priorMonthUtc = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
+  const payoutDateStr = engineCommissionPayoutDate(priorMonthUtc, COMMISSION_PAYOUT_DAY)
+    .toISOString()
+    .slice(0, 10);
   const confirmed = rows.find((r) => r.payoutDate === payoutDateStr && r.status === "confirmed");
   const currentMonthConfirmed = confirmed ? parseFloat(confirmed.takeHome) : 0;
 

@@ -13,6 +13,13 @@ import {
 } from "@workspace/api-zod";
 import { enumerateBills, type EnrichedBill } from "../lib/cycleBillEngine";
 import { deriveNextPayday } from "../lib/financeEngine";
+import {
+  BASE_NET_INCOME,
+  MONTH_LENGTH_DAYS,
+  VARIABLE_SPEND_CAP,
+  Bill as EngineBill,
+  forwardReserve as engineForwardReserve,
+} from "@workspace/finance";
 
 const router: IRouter = Router();
 
@@ -75,8 +82,9 @@ router.get("/bills/summary", async (_req, res): Promise<void> => {
     const r = allAssumps.find((a) => a.key === k);
     return r ? parseFloat(r.value) : dflt;
   };
-  const baseNetIncome = A("base_net_income", 3220);
-  const variableCap = A("variable_spend_cap", 600);
+  const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
+  const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
+  const monthLengthDays = A("month_length_days", MONTH_LENGTH_DAYS);
 
   // Confirmed commission expected this calendar month (paid OR scheduled)
   const allCommissions = await db.select().from(commissions);
@@ -143,6 +151,12 @@ router.get("/bills/summary", async (_req, res): Promise<void> => {
     }));
 
   // ----- Income vs obligations -----
+  // Forward Reserve via engine `forwardReserve` so the page reads the same
+  // figure the dashboard does.
+  const includedAsEngineBills: EngineBill[] = includedBills.map(
+    (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category, b.autopay),
+  );
+  const fwdReserve = engineForwardReserve(includedAsEngineBills, variableCap, monthLengthDays);
   const fixedBills = monthlyIncluded;
   const residualAfterFixed = totalMonthIncome - fixedBills;
   const residualAfterVariable = residualAfterFixed - variableCap;
@@ -191,6 +205,7 @@ router.get("/bills/summary", async (_req, res): Promise<void> => {
       residualAfterFixed: Math.round(residualAfterFixed * 100) / 100,
       residualAfterAll: Math.round(residualAfterVariable * 100) / 100,
       residualPct: Math.round(residualPct * 10) / 10,
+      forwardReserve: Math.round(fwdReserve * 100) / 100,
     },
   });
 });

@@ -3,10 +3,19 @@ import {
   GetDashboardCycleResponse,
   GetMonthlySavingsResponse,
 } from "@workspace/api-zod";
-import { computeCycleState, computeMonthlySavings } from "../lib/financeEngine";
+import { computeCycleState, computeMonthlySavings, deriveNextPayday } from "../lib/financeEngine";
 import { billsThisMonth } from "../lib/cycleBillEngine";
 import { db, oneTimeExpenses, variableSpend, bills, assumptions, commissions, balances } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
+import {
+  BASE_NET_INCOME,
+  MONTH_LENGTH_DAYS,
+  VARIABLE_SPEND_CAP,
+  Bill as EngineBill,
+  OneTimeExpense as EngineOneTime,
+  monthlySavingsEstimate,
+  nextNominalPayday,
+} from "@workspace/finance";
 
 const router: IRouter = Router();
 
@@ -26,29 +35,17 @@ router.get("/dashboard/monthly-savings", async (_req, res): Promise<void> => {
   res.json(GetMonthlySavingsResponse.parse(savings));
 });
 
-// Discretionary THIS MONTH — mirrors the established Estimated Monthly
-// Savings model (B62) but reframed as remaining spending capability through
-// the end of the calendar month. Marshall budgets monthly, not paycheck-to-
-// paycheck, so this — not the cycle figure — is the headline metric.
-//
-// Formula:
-//   Discretionary = MAX(0,
-//       Checking
-//     + Base paychecks remaining this month
-//     + Confirmed commission this month not yet received
-//     − Include=TRUE bills due remainder of month
-//     − Unpaid one-time expenses dated through month end (or undated, if elected)
-//     − Variable cap remaining this month (gas + food reserve)
-//     − QuickSilver balance owed (manual; paid mid-next-month)
-//     − Minimum cushion
-//   )
+// Discretionary THIS MONTH — month-frame view of remaining spend capability.
+// All monetary math delegates to @workspace/finance helpers; this route only
+// loads DB rows, projects future paychecks via engine `nextNominalPayday`,
+// and uses engine `monthlySavingsEstimate` for the cycle-frame parity number.
 router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
   const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
-  // === Inputs ===
+  // ---- Inputs ----
   const [latestChecking] = await db
     .select()
     .from(balances)
@@ -62,37 +59,45 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     const r = allAssumps.find((a) => a.key === k);
     return r ? parseFloat(r.value) : dflt;
   };
-  const baseNetIncome = A("base_net_income", 3220);
-  const variableCap = A("variable_spend_cap", 600);
+  const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
+  const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
+  const monthLengthDays = A("month_length_days", MONTH_LENGTH_DAYS);
   const minimumCushion = A("minimum_cushion", 0);
   const quicksilverBalanceOwed = A("quicksilver_balance_owed", 0);
 
-  // Paychecks remaining this month: paid 7th and 22nd. Each paycheck = base/2.
-  // Strict `>` so a payday already deposited (and reflected in checking) is
-  // not double-counted.
+  // Paychecks remaining this month: walk engine `nextNominalPayday` until end-of-month.
   const paydayDays = [7, 22];
+  const monthEndUtc = new Date(Date.UTC(monthEnd.getFullYear(), monthEnd.getMonth(), monthEnd.getDate()));
+  const cursorStart = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate() + 1));
   let paychecksRemaining = 0;
-  for (const d of paydayDays) {
-    if (d > today.getDate() && d <= monthEnd.getDate()) paychecksRemaining += 1;
+  let cursor = new Date(cursorStart);
+  while (cursor.getTime() <= monthEndUtc.getTime()) {
+    const nominal = nextNominalPayday(cursor, paydayDays);
+    if (nominal.getTime() > monthEndUtc.getTime()) break;
+    // Count using nominal day; effectivePayday only matters for cash-availability,
+    // not for "did this month's paycheck land in checking yet".
+    paychecksRemaining += 1;
+    cursor = new Date(Date.UTC(nominal.getUTCFullYear(), nominal.getUTCMonth(), nominal.getUTCDate() + 1));
   }
   const remainingPaychecksThisMonth = Math.round((baseNetIncome / 2) * paychecksRemaining * 100) / 100;
 
-  // Confirmed commission for THIS month not yet received (payout date in
-  // future or unset within this month).
+  // Confirmed commission for THIS month, split into already-received vs pending.
   const allCommissions = await db.select().from(commissions);
   let confirmedCommissionUnreceived = 0;
   let confirmedCommissionAlready = 0;
+  let confirmedCommissionTotal = 0;
   for (const c of allCommissions) {
     if (!c.payoutDate) continue;
     const pd = new Date(c.payoutDate);
     if (pd.getFullYear() !== today.getFullYear() || pd.getMonth() !== today.getMonth()) continue;
     if (c.status !== "paid" && c.status !== "confirmed") continue;
     const amount = parseFloat(c.takeHome);
+    confirmedCommissionTotal += amount;
     if (pd <= today) confirmedCommissionAlready += amount;
     else confirmedCommissionUnreceived += amount;
   }
 
-  // Bills remaining this month (Include=TRUE, due day >= today.date)
+  // Bills remaining this month (Include=TRUE, due day in [today, month end]).
   const allBills = await db.select().from(bills);
   let billsRemainingThisMonth = 0;
   const billsRemainingDetail: { id: number; name: string; amount: number; dueDay: number }[] = [];
@@ -106,7 +111,7 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     }
   }
 
-  // Unpaid one-time expenses: dated through month-end + undated (advisory)
+  // Unpaid one-time expenses: dated through month-end + undated (advisory).
   const oteRows = await db.select().from(oneTimeExpenses).where(eq(oneTimeExpenses.paid, false));
   let oneTimeDatedThisMonth = 0;
   let oneTimeUndated = 0;
@@ -117,7 +122,7 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     if (dd >= today && dd <= monthEnd) oneTimeDatedThisMonth += amt;
   }
 
-  // Variable spent this month (logged) and remaining (cap minus spent)
+  // Variable spent this month and remaining (cap − spent).
   const allVs = await db.select().from(variableSpend);
   const monthVs = allVs.filter((v) => new Date(v.weekOf) >= monthStart && new Date(v.weekOf) <= today);
   const variableSpentThisMonth = monthVs.reduce((s, v) => s + parseFloat(v.amount), 0);
@@ -126,7 +131,7 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     .reduce((s, v) => s + parseFloat(v.amount), 0);
   const variableRemainingThisMonth = Math.max(0, variableCap - variableSpentThisMonth);
 
-  // === Compute ===
+  // ---- Aggregate (data shaping; no finance formulas) ----
   const inflows = checking + remainingPaychecksThisMonth + confirmedCommissionUnreceived;
   const outflows =
     billsRemainingThisMonth +
@@ -136,27 +141,44 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     minimumCushion;
   const discretionaryThisMonth = Math.max(0, inflows - outflows);
 
-  // Cycle parity for the legacy cycle-aware view (cycle = Safe to Spend frame)
+  // Cycle parity (Safe-to-Spend frame) — engine via computeCycleState.
   const cycle = await computeCycleState();
 
   const round = (n: number) => Math.round(n * 100) / 100;
 
-  // === Discipline metrics (playbook spirit, surfaced as a single object) ===
-  // Fixed obligations = ALL include=TRUE bills active this month (not just remaining)
-  const monthBills = await billsThisMonth(today);
-  const fixedMonthlyTotal = monthBills.reduce((s, b) => s + b.amount, 0);
+  // ---- Discipline metrics — engine-sourced where possible ----
+  const monthBillRows = await billsThisMonth(today);
+  const monthBillsForEngine: EngineBill[] = monthBillRows.map(
+    (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category),
+  );
+  const fixedMonthlyTotal = monthBillsForEngine.reduce((s, b) => s + b.amount, 0);
   const fixedRatio = baseNetIncome > 0 ? fixedMonthlyTotal / baseNetIncome : 0;
+
+  // Savings rate uses engine `monthlySavingsEstimate` (B62) divided by income —
+  // this is the structural savings floor, not an ad-hoc subtraction.
+  const oteForEngine: EngineOneTime[] = oteRows.map(
+    (o) => new EngineOneTime(o.description, parseFloat(o.amount), o.dueDate ? new Date(o.dueDate) : null, false),
+  );
+  const nextPayday = deriveNextPayday(today);
+  const engineSavings = monthlySavingsEstimate(
+    baseNetIncome,
+    confirmedCommissionTotal,
+    monthBillsForEngine,
+    nextPayday,
+    today,
+    oteForEngine,
+    quicksilverBalanceOwed,
+    monthBillsForEngine,
+    variableCap,
+    monthLengthDays,
+  );
+  const savingsRate = baseNetIncome > 0 ? engineSavings / (baseNetIncome + confirmedCommissionTotal) : 0;
+
   const dayOfMonth = today.getDate();
   const daysInMonth = monthEnd.getDate();
   const expectedVarByNow = (variableCap * dayOfMonth) / daysInMonth;
   const variableBurnPace =
     expectedVarByNow > 0 ? variableSpentThisMonth / expectedVarByNow : 0;
-  // Savings rate uses cap (not actual) — the budgeted floor: what's structurally available.
-  const savingsRate =
-    baseNetIncome > 0
-      ? Math.max(0, baseNetIncome - fixedMonthlyTotal - variableCap) /
-        baseNetIncome
-      : 0;
   const statusFor = (
     val: number,
     warnAt: number,
