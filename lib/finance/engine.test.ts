@@ -19,6 +19,8 @@ import {
   daysSinceUpdate,
   isStale,
   paydayRiskFlag,
+  nextNominalPayday,
+  billNextDueDate,
   // Financial math
   pmt,
   fvAnnual,
@@ -27,10 +29,13 @@ import {
   nrrPayoutGross,
   commissionTakeHome,
   droughtFlag,
+  confirmedCommissionThisMonth,
   // Bills
   billsInCurrentCycle,
   forwardReserve,
   oneTimeExpensesDueInCycle,
+  knownOneTimeAll,
+  requiredHold,
   // Cycle outputs
   safeToSpend,
   dailyRateStatic,
@@ -44,9 +49,12 @@ import {
   matchGapAnalysis,
   // Session integrity
   sessionIntegrityCheck,
+  // Forward projection
+  forwardProjection,
   // Scenario
   incomeReplacementFloor,
   droughtSurvivalRunway,
+  decisionSandboxCompare,
   // Tax
   taxReservePerPaycheck,
   // Income growth
@@ -67,6 +75,7 @@ import {
   Bill,
   OneTimeExpense,
   CommissionRow,
+  PurchaseOption,
   // Date helper
   d,
 } from "./engine";
@@ -834,4 +843,332 @@ describe("Variable Spend Helpers — Source: Playbook §2.2 / Dashboard!B33,B58"
 // directly — keeps the import surface honest).
 describe("daysSinceUpdate (smoke)", () => {
   it("3 days", () => expect(daysSinceUpdate(d(2026, 4, 18), d(2026, 4, 21))).toBe(3));
+});
+
+// ===========================================================================
+// GROUP 16 — DIRECT COVERAGE FOR HELPERS (Task #3)
+//
+// These functions are exercised indirectly by the rest of the suite, but the
+// Python reference test_engine.py hits them directly. Each expected value below
+// was cross-checked against marshall_finance_engine.py via a one-off Python
+// run (see commit message / task notes).
+// ===========================================================================
+
+// ---------- nextNominalPayday — Source: BUILD_SPEC §4.1 ----------
+describe("nextNominalPayday — Source: BUILD_SPEC §4.1", () => {
+  it("before first payday → returns 7th of same month", () => {
+    expect(nextNominalPayday(d(2026, 4, 1)).getTime()).toBe(d(2026, 4, 7).getTime());
+  });
+
+  it("on the 7th → returns the 7th itself (>= today)", () => {
+    expect(nextNominalPayday(d(2026, 4, 7)).getTime()).toBe(d(2026, 4, 7).getTime());
+  });
+
+  it("between paydays → returns the 22nd", () => {
+    expect(nextNominalPayday(d(2026, 4, 8)).getTime()).toBe(d(2026, 4, 22).getTime());
+  });
+
+  it("on the 22nd → returns the 22nd itself", () => {
+    expect(nextNominalPayday(d(2026, 4, 22)).getTime()).toBe(d(2026, 4, 22).getTime());
+  });
+
+  it("after both paydays → rolls to next month's 7th", () => {
+    expect(nextNominalPayday(d(2026, 4, 23)).getTime()).toBe(d(2026, 5, 7).getTime());
+  });
+
+  it("year boundary: late December → next January's 7th", () => {
+    expect(nextNominalPayday(d(2026, 12, 23)).getTime()).toBe(d(2027, 1, 7).getTime());
+  });
+
+  it("custom pay days [15] after the 15th → next month's 15th", () => {
+    expect(nextNominalPayday(d(2026, 4, 16), [15]).getTime()).toBe(d(2026, 5, 15).getTime());
+  });
+
+  it("clamps to last day of short month (Feb 30 → Feb 28 in 2026)", () => {
+    expect(nextNominalPayday(d(2026, 2, 1), [30]).getTime()).toBe(d(2026, 2, 28).getTime());
+  });
+});
+
+// ---------- billNextDueDate — Source: Bills!D2:D13 / Playbook §1.1 ----------
+describe("billNextDueDate — Source: Bills!D2:D13 / Playbook §1.1", () => {
+  it("due day later this month → returns this month's date", () => {
+    const r = billNextDueDate(d(2026, 4, 5), 10, true);
+    expect(r).not.toBeNull();
+    expect(r!.getTime()).toBe(d(2026, 4, 10).getTime());
+  });
+
+  it("due day == today → returns today (>= today is inclusive)", () => {
+    const r = billNextDueDate(d(2026, 4, 10), 10, true);
+    expect(r!.getTime()).toBe(d(2026, 4, 10).getTime());
+  });
+
+  it("due day already passed this month → rolls to next month", () => {
+    const r = billNextDueDate(d(2026, 4, 11), 10, true);
+    expect(r!.getTime()).toBe(d(2026, 5, 10).getTime());
+  });
+
+  it("include=false → null", () => {
+    expect(billNextDueDate(d(2026, 4, 5), 10, false)).toBeNull();
+  });
+
+  it("dueDay null/undefined → null", () => {
+    expect(billNextDueDate(d(2026, 4, 5), null, true)).toBeNull();
+    expect(billNextDueDate(d(2026, 4, 5), undefined, true)).toBeNull();
+  });
+
+  it("clamps day 31 to Feb 28 in non-leap year (2026)", () => {
+    const r = billNextDueDate(d(2026, 2, 25), 31, true);
+    expect(r!.getTime()).toBe(d(2026, 2, 28).getTime());
+  });
+
+  it("day 31 in March → returns March 31 (no clamp needed)", () => {
+    const r = billNextDueDate(d(2026, 3, 1), 31, true);
+    expect(r!.getTime()).toBe(d(2026, 3, 31).getTime());
+  });
+
+  it("rolls across year boundary (Dec → Jan)", () => {
+    const r = billNextDueDate(d(2025, 12, 25), 10, true);
+    expect(r!.getTime()).toBe(d(2026, 1, 10).getTime());
+  });
+});
+
+// ---------- requiredHold — Source: Dashboard!B16 ----------
+describe("requiredHold — Source: Dashboard!B16", () => {
+  it("only bills_due_total → just bills", () => {
+    closeTo(requiredHold(500.0), 500.0);
+  });
+
+  it("sums every component (positional defaults left implicit)", () => {
+    // 500 + 50 + 100 + 200 + 25 + 10 + 75 = 960
+    closeTo(requiredHold(500, 50, 100, 200, 25, 10, 75), 960);
+  });
+
+  it("all-zero inputs → 0", () => {
+    expect(requiredHold(0)).toBe(0);
+  });
+
+  it("forward reserve is NOT part of required hold (regression guard)", () => {
+    // The function signature has no fwd reserve parameter — so passing the
+    // canonical components should never include B33. We assert the sum is
+    // exactly the components, no surprises.
+    const billsDue = 800;
+    const oneTime = 250;
+    const result = requiredHold(billsDue, 0, 0, 0, 0, 0, oneTime);
+    closeTo(result, 1050);
+  });
+});
+
+// ---------- knownOneTimeAll — Source: Dashboard!B59 ----------
+describe("knownOneTimeAll — Source: Dashboard!B59", () => {
+  it("includes dateless and excludes paid", () => {
+    const exps = [
+      new OneTimeExpense("With date", 100.0, d(2026, 5, 1), false),
+      new OneTimeExpense("Dateless", 250.0, null, false),
+      new OneTimeExpense("Paid", 500.0, d(2026, 6, 1), true),
+      new OneTimeExpense("Future", 75.5, d(2026, 4, 15), false),
+    ];
+    closeTo(knownOneTimeAll(exps), 425.5);
+  });
+
+  it("empty list → 0", () => {
+    expect(knownOneTimeAll([])).toBe(0);
+  });
+
+  it("all paid → 0", () => {
+    const exps = [new OneTimeExpense("X", 999.0, null, true)];
+    expect(knownOneTimeAll(exps)).toBe(0);
+  });
+});
+
+// ---------- confirmedCommissionThisMonth — Source: Dashboard!B55 ----------
+describe("confirmedCommissionThisMonth — Source: Dashboard!B55", () => {
+  const rows = [
+    new CommissionRow(d(2025, 12, 1), 890.0, 0.0), // payout Jan 22 2026
+    new CommissionRow(d(2026, 1, 1), 700.0, 0.0), // payout Feb 22 2026
+  ];
+
+  it("today == payout day, sales row exists → returns take-home", () => {
+    // Dec 2025 sales 890 MRR → cross-checked vs Python: $874.35
+    closeTo(confirmedCommissionThisMonth(rows, d(2026, 1, 22)), 874.35);
+  });
+
+  it("payout day in same month but today is BEFORE the 22nd → 0", () => {
+    expect(confirmedCommissionThisMonth(rows, d(2026, 1, 21))).toBe(0.0);
+  });
+
+  it("different month: matches by payout date being this month and <= today", () => {
+    // Feb 22 → Jan 2026 sales row's payout (700 MRR → $804.57)
+    closeTo(confirmedCommissionThisMonth(rows, d(2026, 2, 22)), 804.57);
+  });
+
+  it("no row payable this month → 0 (commission-as-zero rule)", () => {
+    expect(confirmedCommissionThisMonth(rows, d(2026, 3, 22))).toBe(0.0);
+  });
+
+  it("empty list → 0", () => {
+    expect(confirmedCommissionThisMonth([], d(2026, 1, 22))).toBe(0.0);
+  });
+});
+
+// ---------- forwardProjection — Source: BUILD_SPEC §5.2 / FIX_PLAN §B3 ----------
+describe("forwardProjection — Source: BUILD_SPEC §5.2 / FIX_PLAN §B3", () => {
+  function bills(): Bill[] {
+    return makeRealBills();
+  }
+
+  it("default 2 cycles starting from next payday, includes confirmed commission", () => {
+    const commissions = [new CommissionRow(d(2026, 3, 1), 700.0, 0.0)]; // payout Apr 22
+    const result = forwardProjection({
+      currentChecking: 2000.0,
+      currentMonthlySavings: 142.17,
+      bills: bills(),
+      today: d(2026, 4, 21),
+      nextPaydayNominal: d(2026, 4, 22),
+      commissions,
+    });
+
+    expect(result.length).toBe(2);
+
+    // Cycle 1: payday Apr 22, includes the Mar→Apr commission payout
+    const c1 = result[0]!;
+    expect(c1.cycleLabel).toBe("Cycle 1: payday 2026-04-22");
+    expect(c1.paydayDate.getTime()).toBe(d(2026, 4, 22).getTime());
+    closeTo(c1.baseIncome, 1610.0);
+    closeTo(c1.expectedCommission, 804.57);
+    closeTo(c1.totalIncome, 2414.57);
+    closeTo(c1.fixedBills, 916.975);
+    closeTo(c1.variableEstimate, 300.0);
+    closeTo(c1.forwardReserveOut, 1561.16, 0.02);
+    closeTo(c1.estimatedSavings, 1197.6, 0.02);
+    closeTo(c1.projectedChecking, 3197.6, 0.02);
+
+    // Cycle 2: payday May 7, no commission (only Apr 22 row matches)
+    const c2 = result[1]!;
+    expect(c2.cycleLabel).toBe("Cycle 2: payday 2026-05-07");
+    expect(c2.paydayDate.getTime()).toBe(d(2026, 5, 7).getTime());
+    closeTo(c2.expectedCommission, 0.0);
+    closeTo(c2.totalIncome, 1610.0);
+    closeTo(c2.estimatedSavings, 393.025);
+    closeTo(c2.projectedChecking, 3590.62, 0.02);
+  });
+
+  it("payday-sequence advances 7 → 22 → next-month-7", () => {
+    const result = forwardProjection({
+      currentChecking: 1000.0,
+      currentMonthlySavings: 0.0,
+      bills: bills(),
+      today: d(2026, 4, 1),
+      nextPaydayNominal: d(2026, 4, 7),
+      commissions: [],
+      cycles: 3,
+    });
+    expect(result.length).toBe(3);
+    expect(result[0]!.paydayDate.getTime()).toBe(d(2026, 4, 7).getTime());
+    expect(result[1]!.paydayDate.getTime()).toBe(d(2026, 4, 22).getTime());
+    expect(result[2]!.paydayDate.getTime()).toBe(d(2026, 5, 7).getTime());
+    // Each cycle has identical income/expense → projected checking grows linearly
+    const delta = result[1]!.projectedChecking - result[0]!.projectedChecking;
+    closeTo(result[2]!.projectedChecking - result[1]!.projectedChecking, delta, 0.001);
+  });
+
+  it("estimated savings floored at zero when bills+variable exceed income", () => {
+    const heavy = [new Bill("Big Rent", 5000.0, 4, true)];
+    const result = forwardProjection({
+      currentChecking: 0.0,
+      currentMonthlySavings: 0.0,
+      bills: heavy,
+      today: d(2026, 4, 21),
+      nextPaydayNominal: d(2026, 4, 22),
+      commissions: [],
+      cycles: 1,
+    });
+    expect(result[0]!.estimatedSavings).toBe(0.0);
+    // projected_checking can still go negative — that's the warning signal
+    expect(result[0]!.projectedChecking).toBeLessThan(0.0);
+  });
+
+  it("commission only applied when payout date matches the cycle's payday month", () => {
+    // Sales row for Mar pays out Apr 22. If we start from May 7, no commission.
+    const commissions = [new CommissionRow(d(2026, 3, 1), 700.0, 0.0)];
+    const result = forwardProjection({
+      currentChecking: 0.0,
+      currentMonthlySavings: 0.0,
+      bills: [],
+      today: d(2026, 5, 1),
+      nextPaydayNominal: d(2026, 5, 7),
+      commissions,
+      cycles: 2,
+    });
+    expect(result[0]!.expectedCommission).toBe(0.0);
+    expect(result[1]!.expectedCommission).toBe(0.0);
+  });
+});
+
+// ---------- decisionSandboxCompare — Source: Decision Sandbox!B21:E30 ----------
+describe("decisionSandboxCompare — Source: Decision Sandbox!B21:E30", () => {
+  it("financed loan: monthly payment, daily lifestyle, opportunity cost", () => {
+    const opts = [
+      new PurchaseOption("Camry Loan", 20000.0, 1500.0, 0.0474, 60, 141.95, 0.0),
+    ];
+    const [r] = decisionSandboxCompare(opts, 145.0, 1833.95, 600.0, 3220.0, 15000.0);
+    expect(r!.name).toBe("Camry Loan");
+    closeTo(r!.monthlyPayment, 346.92, 0.02);
+    closeTo(r!.totalMonthlyCost, 488.87, 0.02);
+    closeTo(r!.dailyLifestyleCost, 16.08, 0.02);
+    closeTo(r!.newDailySafeSpend, 128.92, 0.02);
+    closeTo(r!.annualCost, 5866.42, 0.05);
+    // (PMT*60 - financed) interest + opp cost on $1500 over 120mo @ 7%/12
+    closeTo(r!.totalInterestWithOpportunityCost, 3829.6, 1.0);
+    closeTo(r!.hysaAfterDown, 13500.0);
+    closeTo(r!.hysaRunwayMonths, 27.6, 0.05);
+    expect(r!.affordability).toBe("Yes");
+    closeTo(r!.incomeCoveragePct, 0.1518, 0.001);
+  });
+
+  it("cash buy (no rate, no term) uses one_time_cost as annual_cost; runway is Infinity", () => {
+    const opts = [new PurchaseOption("Cash Buy", 12000.0, 12000.0, 0.0, 0, 0.0, 12000.0)];
+    const [r] = decisionSandboxCompare(opts, 145.0, 1833.95, 600.0, 3220.0, 15000.0);
+    expect(r!.monthlyPayment).toBe(0.0);
+    expect(r!.totalMonthlyCost).toBe(0.0);
+    closeTo(r!.annualCost, 12000.0);
+    expect(r!.hysaRunwayMonths).toBe(Number.POSITIVE_INFINITY);
+    closeTo(r!.hysaAfterDown, 3000.0);
+    // Opportunity cost only — no actual interest (term_months=0)
+    closeTo(r!.totalInterestWithOpportunityCost, 12115.94, 1.0);
+    expect(r!.affordability).toBe("Yes");
+    closeTo(r!.incomeCoveragePct, 0.3106, 0.001);
+  });
+
+  it("affordability tiers: Yes / Tight / No", () => {
+    // residual = base - (fixed + total_monthly); thresholds: > variableCap = Yes,
+    // > 0 = Tight, else No.
+    const yesOpt = new PurchaseOption("Y", 1000.0, 0.0, 0.05, 60, 50.0, 0.0); // tiny monthly
+    const tightOpt = new PurchaseOption("T", 50000.0, 0.0, 0.05, 60, 0.0, 0.0); // residual ≈ $442
+    const noOpt = new PurchaseOption("N", 100000.0, 0.0, 0.05, 60, 0.0, 0.0); // residual < 0
+    const results = decisionSandboxCompare(
+      [yesOpt, tightOpt, noOpt],
+      145.0,
+      1833.95, // monthlyFixedBills
+      600.0, // variableCap
+      3220.0, // baseNetMonthly
+      15000.0,
+    );
+    expect(results[0]!.affordability).toBe("Yes");
+    expect(results[1]!.affordability).toBe("Tight");
+    expect(results[2]!.affordability).toBe("No");
+  });
+
+  it("zero base income → income_coverage_pct is 0 (guards divide-by-zero)", () => {
+    const opts = [new PurchaseOption("Zero APR", 10000.0, 0.0, 0.0, 12, 0.0, 0.0)];
+    const [r] = decisionSandboxCompare(opts, 50.0, 1000.0, 600.0, 0.0, 5000.0);
+    expect(r!.incomeCoveragePct).toBe(0.0);
+    // Zero rate w/ term → monthly_payment branch is the (rate>0 && term>0) guard,
+    // so monthly_payment=0 and actual_interest = 0*12 - 10000 = -10000 (no opp cost).
+    expect(r!.monthlyPayment).toBe(0.0);
+    closeTo(r!.totalInterestWithOpportunityCost, -10000.0);
+  });
+
+  it("empty options list → empty results", () => {
+    expect(decisionSandboxCompare([], 145.0, 1833.95, 600.0, 3220.0, 15000.0)).toEqual([]);
+  });
 });
