@@ -26,6 +26,7 @@ import {
   dailyRateRealtime,
   daysOfCoverage,
   forwardReserve as engineForwardReserve,
+  discretionaryThisMonth as engineDiscretionaryThisMonth,
   oneTimeExpensesDueInCycle,
   monthlySavingsEstimate,
   matchGapAnalysis,
@@ -280,9 +281,11 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
   }
 
   // Build engine-typed bills/one-times for monthlySavingsEstimate.
-  // currentCycleEngineBills is needed by forwardReserve / monthlySavingsEstimate
-  // to suppress double-counting of bills already in the cycle Required Hold
-  // (Defect 1 / Playbook §2.1).
+  // Per Playbook §2.1 B62, fullMonthFixed (current-month instances) and
+  // forwardReserve (next-month days 1-7 instances) are SEPARATE cash events
+  // — both subtracted with no dedup. The Defect-1 cycle-bill exclusion is
+  // intentionally NOT used here, otherwise B62 would overstate savings by
+  // omitting the May 1-7 reservation.
   const enriched = await enumerateBills(today);
   const includedEngineBills = enriched
     .filter((b) => b.countsThisMonth)
@@ -292,12 +295,6 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     );
   const allActiveEngineBills = enriched
     .filter((b) => b.isActivePeriod)
-    .map(
-      (b) =>
-        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
-    );
-  const currentCycleEngineBills = enriched
-    .filter((b) => b.countsThisCycle)
     .map(
       (b) =>
         new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
@@ -319,9 +316,11 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     .filter((o) => !o.paid)
     .reduce((s, o) => s + o.amount, 0);
 
-  // QuickSilver: manual `quicksilver_balance_owed` is the canonical reserve
-  // line. We expose `quicksilverAccrual` (logged QS spend this month) for
-  // context only; subtracting it would double-count against the variable cap.
+  // QuickSilver accrual = sum of QS-tagged variable_spend log entries this
+  // month. Per Playbook §2.1 B60, this is subtracted from Monthly Savings
+  // Estimate as already-spent credit-card liability that must be paid from
+  // checking — distinct from B58 (forward variable budget through payday).
+  // The two are separate buckets and intentionally non-overlapping.
   const vsEntries = await db.select().from(variableSpend);
   let quicksilverAccrual = 0;
   for (const vs of vsEntries) {
@@ -341,23 +340,62 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     allActiveEngineBills,
     variableSpendCap,
     monthLengthDays,
-    currentCycleEngineBills,
   );
 
-  // Engine's monthlySavingsEstimate handles the floor-at-zero formula.
-  const estimatedMonthlySavings = monthlySavingsEstimate(
-    baseNetIncome,
-    confirmedCommission,
+  // PLACEHOLDER (per user direction 2026-04-24): Monthly Savings Estimate is
+  // expressed as Discretionary minus a fixed $100 buffer. Rationale: Monthly
+  // Savings must always be ≤ Discretionary (both end at the same payday
+  // boundary), and the $100 offset keeps it conservative. The full Playbook
+  // §2.1 B62 formula is preserved in `monthlySavingsEstimate()` for tests
+  // and tooling, but we don't wire it to the dashboard headline until the
+  // income/instance accounting is reconciled.
+  const [latestChecking] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+  const checking = latestChecking
+    ? parseFloat(latestChecking.amount as unknown as string)
+    : 0;
+
+  // Bills remaining in the current calendar month (Include=TRUE, due day in
+  // [today, month_end]).
+  const monthEndDay = new Date(
+    today.getUTCFullYear(),
+    today.getUTCMonth() + 1,
+    0,
+  ).getUTCDate();
+  const todayDay = today.getUTCDate();
+  const billsRemainingThisMonth = includedEngineBills
+    .filter((b) => b.dueDay >= todayDay && b.dueDay <= monthEndDay)
+    .reduce((s, b) => s + b.amount, 0);
+
+  // Unpaid one-time expenses dated through month-end.
+  const monthEndDate = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), monthEndDay),
+  );
+  const oneTimeDatedThisMonth = engineOneTimes
+    .filter(
+      (o) =>
+        !o.paid &&
+        o.dueDate !== null &&
+        o.dueDate.getTime() >= today.getTime() &&
+        o.dueDate.getTime() <= monthEndDate.getTime(),
+    )
+    .reduce((s, o) => s + o.amount, 0);
+
+  const discretionary = engineDiscretionaryThisMonth(
+    checking,
+    billsRemainingThisMonth,
+    oneTimeDatedThisMonth,
+    quicksilverBalanceOwed,
     includedEngineBills,
-    nextPaydayNominal,
     today,
-    engineOneTimes,
-    quicksilverBalanceOwed, // treated as quicksilverAccrual line item
-    allActiveEngineBills,
     variableSpendCap,
     monthLengthDays,
-    currentCycleEngineBills,
   );
+  const estimatedMonthlySavings = Math.max(0, discretionary - 100);
 
   const totalMonthIncome = baseNetIncome + confirmedCommission;
 

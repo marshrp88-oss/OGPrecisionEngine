@@ -3,8 +3,8 @@ import {
   GetDashboardCycleResponse,
   GetMonthlySavingsResponse,
 } from "@workspace/api-zod";
-import { computeCycleState, computeMonthlySavings, deriveNextPayday } from "../lib/financeEngine";
-import { billsThisMonth, billsInCycle } from "../lib/cycleBillEngine";
+import { computeCycleState, computeMonthlySavings } from "../lib/financeEngine";
+import { billsThisMonth } from "../lib/cycleBillEngine";
 import { db, oneTimeExpenses, variableSpend, bills, assumptions, commissions, balances } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import {
@@ -12,8 +12,6 @@ import {
   MONTH_LENGTH_DAYS,
   VARIABLE_SPEND_CAP,
   Bill as EngineBill,
-  OneTimeExpense as EngineOneTime,
-  monthlySavingsEstimate,
   discretionaryThisMonth as engineDiscretionaryThisMonth,
   nextNominalPayday,
 } from "@workspace/finance";
@@ -159,44 +157,13 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const monthBillsForEngine: EngineBill[] = monthBillRows.map(
     (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category),
   );
-  // Current-cycle bills (countsThisCycle) — used to suppress double-counting
-  // of bills already in the cycle Required Hold inside Forward Reserve.
-  // Defect 1 / Playbook §2.1.
-  const cycleBillRows = await billsInCycle(today);
-  const cycleBillsForEngine: EngineBill[] = cycleBillRows.map(
-    (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category),
-  );
   const fixedMonthlyTotal = monthBillsForEngine.reduce((s, b) => s + b.amount, 0);
   const fixedRatio = baseNetIncome > 0 ? fixedMonthlyTotal / baseNetIncome : 0;
 
-  // Savings rate uses engine `monthlySavingsEstimate` (B62) divided by income —
-  // this is the structural savings floor, not an ad-hoc subtraction.
-  const oteForEngine: EngineOneTime[] = oteRows.map(
-    (o) => new EngineOneTime(o.description, parseFloat(o.amount), o.dueDate ? new Date(o.dueDate) : null, false),
-  );
-  const nextPayday = deriveNextPayday(today);
-  const engineSavings = monthlySavingsEstimate(
-    baseNetIncome,
-    confirmedCommissionTotal,
-    monthBillsForEngine,
-    nextPayday,
-    today,
-    oteForEngine,
-    quicksilverBalanceOwed,
-    monthBillsForEngine,
-    variableCap,
-    monthLengthDays,
-    cycleBillsForEngine,
-  );
-  const savingsRate = baseNetIncome > 0 ? engineSavings / (baseNetIncome + confirmedCommissionTotal) : 0;
-
   // Discretionary This Month — engine-sourced per Playbook §2.1.
-  // Subtracts the FULL Forward Reserve (no current-cycle exclusion). The
-  // discretionary formula does NOT subtract Required Hold separately, so
-  // every May 1-7 obligation must be reserved out of today's cash via
-  // Forward Reserve. The Defect-1 double-count protection is only used by
-  // monthlySavingsEstimate above (which subtracts both full_month_fixed and
-  // forward_reserve and would otherwise count the same bill twice).
+  // Subtracts the FULL Forward Reserve. The discretionary formula does NOT
+  // subtract Required Hold separately, so every May 1-7 obligation must be
+  // reserved out of today's cash via Forward Reserve.
   const discretionaryHeadline = engineDiscretionaryThisMonth(
     checking,
     billsRemainingThisMonth,
@@ -207,6 +174,14 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     variableCap,
     monthLengthDays,
   );
+
+  // PLACEHOLDER (per user direction 2026-04-24): Monthly Savings Estimate is
+  // expressed as Discretionary minus a fixed $100 buffer. Rationale: Monthly
+  // Savings must always be ≤ Discretionary (both end at the same payday
+  // boundary), and the $100 offset keeps it conservative while the income/
+  // instance accounting in the full B62 formula is reconciled.
+  const engineSavings = Math.max(0, discretionaryHeadline - 100);
+  const savingsRate = baseNetIncome > 0 ? engineSavings / (baseNetIncome + confirmedCommissionTotal) : 0;
 
   // Match the engine's prorated_variable_remaining for the breakdown row so
   // the displayed math reconciles to the headline.
