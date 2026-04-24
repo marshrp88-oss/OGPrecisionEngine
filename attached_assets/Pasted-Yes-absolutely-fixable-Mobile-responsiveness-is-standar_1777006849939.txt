@@ -1,0 +1,50 @@
+Yes, absolutely fixable. Mobile responsiveness is standard frontend work — this isn't an architectural problem, just a UX defect. Likely root cause: the sidebar navigation is fixed-position for desktop and not hidden or converted to a hamburger menu on narrow viewports, which also blocks the main content area.
+
+Append this to the prompt you're about to send:
+
+---
+
+**DEFECT 3 — Mobile responsiveness**
+
+The app is unusable on mobile. When opened on a phone, only the first tab renders, navigation between tabs is broken, and input fields cannot be interacted with. This is blocking the user from using the app on mobile, which is the primary access point when making real-time financial decisions (at stores, at the dealer, on the NFTA).
+
+Fix systematically across all six pages: Cycle Dashboard, Bills Engine, One-Time Expenses, Commissions, Decision Sandbox, Wealth, Debt Strategy, Retirement, AI Advisor, Settings.
+
+Requirements:
+
+1. **Navigation**: Convert the left sidebar to a collapsible hamburger menu at viewport widths below 768px. The menu should overlay the content when open, not push it sideways. Add a hamburger icon in the top-left of the header at mobile widths. All navigation items must be tappable with minimum 44px tap targets per Apple and Google accessibility guidelines.
+
+2. **Layout**: Every page must reflow to single-column on mobile. The Cycle Dashboard currently shows multi-card grids — these must stack vertically on narrow screens. No horizontal scrolling anywhere. No content cut off by the viewport edge.
+
+3. **Tables**: Bills Engine, Commissions, Wealth snapshots, and Decision Sandbox use tables. On mobile, either convert to card-per-row layout or enable horizontal scroll within the table container (not the whole page). Tables must not break the page layout.
+
+4. **Inputs**: All input fields, toggles, and buttons must be fully interactive on mobile. Current state shows inputs are non-responsive. Verify touch events fire correctly. Use `inputmode` attributes where appropriate (numeric for money, decimal for rates).
+
+5. **AI Advisor**: The chat interface must work on mobile. Input textarea should expand as the user types, not be fixed-height and cut off. Send button must be tappable with clear visual affordance. Message history must be scrollable independently of the page.
+
+6. **Modals and popovers**: If any modals exist (balance update, edit bill, etc.), they must fit within mobile viewport with no overflow. Use bottom-sheet pattern on mobile rather than centered modals.
+
+7. **Typography**: Body text minimum 16px on mobile to prevent iOS zoom-on-focus behavior in inputs. Headers may be smaller than desktop but must remain readable.
+
+8. **Safe areas**: Respect iOS notch and Android system UI. Content must not be hidden behind the status bar or home indicator.
+
+**Testing requirement:** Before marking complete, load the app on a viewport sized 375×667 (iPhone SE / small phone baseline) and verify every one of the following user flows works end-to-end:
+
+1. Open the app, navigate to every page via the hamburger menu
+2. Update the checking balance on the Dashboard
+3. Add a new bill on the Bills Engine
+4. Log a variable spend entry
+5. Add a one-time expense with a due date
+6. Open the AI Advisor, send a message, receive a response
+7. Run a Decision Sandbox comparison with two options
+8. View the Wealth page snapshot history
+
+If any of these flows breaks on mobile viewport, the fix is incomplete.
+
+Do not add a native mobile app wrapper or PWA manifest at this stage. Focus on making the responsive web app work correctly on mobile browsers.
+
+Report back with screenshots at 375px width of at least three pages to verify the fix.
+
+---
+
+Paste that after the Discretionary This Month section. Both defects get fixed in the same session.
