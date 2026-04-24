@@ -14,6 +14,12 @@ import {
 } from "@workspace/db";
 import { desc, asc } from "drizzle-orm";
 import { computeCycleState, computeMonthlySavings, effectivePayday, computeMrrPayout, computeNrrPayout, computeTakeHome } from "./financeEngine";
+import {
+  matchGapAnalysis,
+  sessionIntegrityCheck,
+  Bill as EngineBill,
+  d as utcDay,
+} from "@workspace/finance";
 
 function fmt(n: number): string {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -32,39 +38,32 @@ export interface IntegrityResult {
   overall: "PASS" | "DEGRADED";
 }
 
-async function runIntegrityChecks(ctx: {
-  baseNetIncome: number;
-  daysSinceUpdate: number | null;
-  daysUntilPayday: number | null;
-  hasIncludedBill: boolean;
-  forwardReserve: number;
-  taxRate: number;
-  variableCap: number;
+/**
+ * Map @workspace/finance sessionIntegrityCheck output into the API-stable
+ * shape consumed by the advisor system prompt.
+ */
+function mapEngineIntegrity(args: {
+  baseNetMonthly: number;
+  nextPaydayNominal: Date;
+  today: Date;
+  lastBalanceUpdate: Date;
+  bills: EngineBill[];
+  forwardReserveAmount: number;
+  commissionTaxRate: number;
+  variableSpendCap: number;
   monthlySavings: number;
-  matchGapNumber: boolean;
-  noNegativeBills: boolean;
-}): Promise<IntegrityResult> {
-  const results = [
-    { name: "Base net income set", pass: ctx.baseNetIncome > 0, detail: fmt(ctx.baseNetIncome) },
-    { name: "Next payday is in future", pass: ctx.daysUntilPayday !== null && ctx.daysUntilPayday >= 0, detail: `${ctx.daysUntilPayday ?? "?"} days` },
-    {
-      name: "Last balance update ≤ 3 days old",
-      pass: ctx.daysSinceUpdate !== null && ctx.daysSinceUpdate <= 3,
-      detail: `${ctx.daysSinceUpdate ?? "?"} days`,
-    },
-    { name: "At least one bill Include=TRUE", pass: ctx.hasIncludedBill, detail: ctx.hasIncludedBill ? "yes" : "no" },
-    { name: "Forward reserve computes non-negative", pass: ctx.forwardReserve >= 0, detail: fmt(ctx.forwardReserve) },
-    { name: "Commission tax rate set", pass: ctx.taxRate > 0 && ctx.taxRate < 1, detail: pct(ctx.taxRate) },
-    { name: "Variable spend cap set", pass: ctx.variableCap > 0, detail: fmt(ctx.variableCap) },
-    { name: "Monthly Savings is a valid number", pass: !isNaN(ctx.monthlySavings), detail: fmt(ctx.monthlySavings) },
-    { name: "401(k) match gap returns a number", pass: ctx.matchGapNumber, detail: ctx.matchGapNumber ? "ok" : "NaN" },
-    { name: "No bill has negative amount", pass: ctx.noNegativeBills, detail: ctx.noNegativeBills ? "ok" : "negative found" },
-  ];
-  const failureCount = results.filter((r) => !r.pass).length;
+  matchGapResult: ReturnType<typeof matchGapAnalysis> | null;
+}): IntegrityResult {
+  const report = sessionIntegrityCheck(args);
+  const results = report.checks.map((c) => ({
+    name: c.description,
+    pass: c.passed,
+    detail: c.detail,
+  }));
   return {
     results,
-    failureCount,
-    overall: failureCount === 0 ? "PASS" : "DEGRADED",
+    failureCount: report.failCount,
+    overall: report.overallPass ? "PASS" : "DEGRADED",
   };
 }
 
@@ -143,20 +142,19 @@ export async function buildAdvisorContext(): Promise<{
   const playbook = (await db.select().from(playbookVersions).orderBy(desc(playbookVersions.effectiveFrom)).limit(1))[0];
   const playbookContent = playbook?.content ?? "(No playbook loaded.)";
 
-  // 401(k) computation
+  // 401(k) computation — delegated to @workspace/finance matchGapAnalysis
+  // (FIX_PLAN §A2 corrected formula). For Marshall's defaults this yields
+  // annualGap = $1,080/yr, monthlyGap = $90/mo.
   let k401Block = "Not configured.";
+  let matchGapForIntegrity: ReturnType<typeof matchGapAnalysis> | null = null;
   if (ret) {
     const contribRate = parseFloat(ret.contributionRate);
     const multiplier = parseFloat(ret.employerMatchRate);
     const ceiling = parseFloat(ret.employerMatchCap);
     const grossSalary = parseFloat(ret.grossSalary);
-    const eff = Math.min(contribRate, ceiling);
-    const matchPct = eff * multiplier;
-    const maxMatchPct = ceiling * multiplier;
-    const annualCaptured = grossSalary * matchPct;
-    const annualAvailable = grossSalary * maxMatchPct;
-    const annualGap = annualAvailable - annualCaptured;
-    k401Block = `${fmt(parseFloat(k401Row?.amount ?? "0"))} (contributing ${pct(contribRate)} of gross, employer match: ${pct(multiplier, 0)} of employee × ceiling ${pct(ceiling)} — capturing ${fmt(annualCaptured)}/yr, leaving ${fmt(annualGap)}/yr on the table)`;
+    const mg = matchGapAnalysis(grossSalary, contribRate, multiplier, ceiling);
+    matchGapForIntegrity = mg;
+    k401Block = `${fmt(parseFloat(k401Row?.amount ?? "0"))} (contributing ${pct(contribRate)} of gross, employer match: ${pct(multiplier, 0)} of employee × ceiling ${pct(ceiling)} — capturing ${fmt(mg.annualCaptured)}/yr, leaving ${fmt(mg.annualGap)}/yr on the table = ${fmt(mg.monthlyGap)}/mo)`;
   }
 
   // Compose live data snapshot string
@@ -209,7 +207,7 @@ export async function buildAdvisorContext(): Promise<{
   lines.push("");
   lines.push("ONE-TIME EXPENSES (unpaid):");
   if (unpaidOneTime.length === 0) lines.push("- None");
-  else for (const o of unpaidOneTime) lines.push(`- ${o.name}: ${fmt(parseFloat(o.amount))} due ${o.dueDate ?? "NO DATE"}`);
+  else for (const o of unpaidOneTime) lines.push(`- ${o.description}: ${fmt(parseFloat(o.amount))} due ${o.dueDate ?? "NO DATE"}`);
   lines.push("");
   lines.push("VARIABLE SPEND LOG (last 4 entries):");
   if (last4WeeksVs.length === 0) lines.push("- No entries");
@@ -234,19 +232,67 @@ export async function buildAdvisorContext(): Promise<{
   lines.push(`- MRR target: ${fmt(mrrTarget)}, NRR target: ${fmt(nrrTarget)}`);
   lines.push("=== END LIVE DATA SNAPSHOT ===");
 
-  // Integrity checks
-  const integrity = await runIntegrityChecks({
-    baseNetIncome: baseNet,
-    daysSinceUpdate: cycle.daysSinceUpdate,
-    daysUntilPayday: cycle.daysUntilPayday,
-    hasIncludedBill: includedBills.length > 0,
-    forwardReserve: cycle.forwardReserve,
-    taxRate,
-    variableCap,
+  // Integrity checks — delegate to @workspace/finance sessionIntegrityCheck
+  // for the single source of truth, but preserve legacy semantics in the
+  // edge cases where the engine and the legacy api differed:
+  //   - Missing checking balance: legacy FAILED staleness; preserve by
+  //     forcing an ancient lastUpdate sentinel so the engine fails check #3.
+  //   - "Active bill" presence: legacy required Include=TRUE AND amount > 0;
+  //     pre-filter so the engine sees only positive-amount bills for #4.
+  //   - Payday check: engine uses strict effectivePayday > today; legacy
+  //     allowed payday-today to pass. The engine semantics are now canonical
+  //     per playbook v7.4 (a payday already arrived means cycle is at edge),
+  //     so we accept the engine behavior intentionally.
+  const todayUtc = utcDay(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate());
+  const STALE_SENTINEL = utcDay(1970, 1, 1);
+  const lastBalanceUtc = checkingRow
+    ? utcDay(
+        new Date(checkingRow.asOfDate).getUTCFullYear(),
+        new Date(checkingRow.asOfDate).getUTCMonth() + 1,
+        new Date(checkingRow.asOfDate).getUTCDate(),
+      )
+    : STALE_SENTINEL;
+  const nextNominalUtc = cycle.nextPaydayNominal ?? todayUtc;
+  const engineBills = allBills
+    .filter((b) => parseFloat(b.amount) > 0)
+    .map(
+      (b) =>
+        new EngineBill(
+          b.name,
+          parseFloat(b.amount),
+          b.dueDay,
+          b.includeInCycle,
+          b.category,
+          b.autopay,
+        ),
+    );
+  // Re-check #10 ("no negative bills") against the FULL bill set since the
+  // pre-filter above hides them from the engine.
+  const negativeBillsExist = allBills.some((b) => parseFloat(b.amount) < 0);
+  const integrity = mapEngineIntegrity({
+    baseNetMonthly: baseNet,
+    nextPaydayNominal: nextNominalUtc,
+    today: todayUtc,
+    lastBalanceUpdate: lastBalanceUtc,
+    bills: engineBills,
+    forwardReserveAmount: cycle.forwardReserve,
+    commissionTaxRate: taxRate,
+    variableSpendCap: variableCap,
     monthlySavings: savings.estimatedMonthlySavings,
-    matchGapNumber: !isNaN(savings.monthlyMatchGapCost),
-    noNegativeBills: allBills.every((b) => parseFloat(b.amount) >= 0),
+    matchGapResult: matchGapForIntegrity,
   });
+  if (negativeBillsExist) {
+    const idx10 = integrity.results.findIndex((r) => /negative/i.test(r.name));
+    if (idx10 >= 0) {
+      integrity.results[idx10] = {
+        ...integrity.results[idx10]!,
+        pass: false,
+        detail: "negative bill amount(s) found",
+      };
+      integrity.failureCount = integrity.results.filter((r) => !r.pass).length;
+      integrity.overall = integrity.failureCount === 0 ? "PASS" : "DEGRADED";
+    }
+  }
 
   const integrityLines: string[] = ["=== SESSION INTEGRITY CHECK ==="];
   integrity.results.forEach((r, i) => {

@@ -8,7 +8,42 @@ import {
   retirementPlan,
 } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
-import { enumerateBills, billsInCycle, billsThisMonth, forwardReserveFixed } from "./cycleBillEngine";
+import {
+  Bill as EngineBill,
+  CommissionRow as EngineCommissionRow,
+  OneTimeExpense as EngineOneTimeExpense,
+  PurchaseOption,
+  d as utcDay,
+  effectivePayday as engineEffectivePayday,
+  nextNominalPayday,
+  daysUntilPayday as engineDaysUntilPayday,
+  daysSinceUpdate as engineDaysSinceUpdate,
+  isStale,
+  paydayRiskFlag,
+  safeToSpend,
+  cycleStatus,
+  dailyRateStatic,
+  dailyRateRealtime,
+  daysOfCoverage,
+  forwardReserve as engineForwardReserve,
+  oneTimeExpensesDueInCycle,
+  monthlySavingsEstimate,
+  matchGapAnalysis,
+  mrrPayoutGross,
+  nrrPayoutGross,
+  commissionTakeHome,
+  commissionPayoutDate,
+  decisionSandboxCompare,
+  droughtSurvivalRunway,
+  incomeReplacementFloor,
+  incomeGrowthScenario,
+  pmt,
+} from "@workspace/finance";
+import {
+  enumerateBills,
+  forwardReserveFixed,
+  deriveNextNominalPayday,
+} from "./cycleBillEngine";
 
 export interface CycleState {
   checkingBalance: number;
@@ -58,54 +93,24 @@ async function getAssumption(key: string, fallback: number): Promise<number> {
   return parseFloat(row.value) || fallback;
 }
 
-function parseDate(d: string | null): Date | null {
-  if (!d) return null;
-  const parsed = new Date(d);
-  return isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function daysBetween(a: Date, b: Date): number {
-  return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function isWeekend(d: Date): boolean {
-  const day = d.getDay();
-  return day === 0 || day === 6;
+function utcStartOfDay(date: Date): Date {
+  return utcDay(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
 
 /**
- * Effective payday: weekend-adjusted. Saturday or Sunday paydays bump back to Friday.
+ * Re-export of engine's effectivePayday so other modules don't reach into
+ * @workspace/finance directly. Returns weekend-adjusted (Sat/Sun -> Fri).
  */
 export function effectivePayday(nominal: Date): Date {
-  const d = new Date(nominal);
-  d.setHours(0, 0, 0, 0);
-  const day = d.getDay();
-  if (day === 6) {
-    d.setDate(d.getDate() - 1);
-  } else if (day === 0) {
-    d.setDate(d.getDate() - 2);
-  }
-  return d;
+  return engineEffectivePayday(utcStartOfDay(nominal));
 }
 
 /**
- * Derive the next payday: earliest of {7th, 22nd} that falls on or after `today`,
- * weekend-adjusted. Today itself counts as the next payday if today is a payday —
- * matching workbook semantics where Column H uses `D < B4` (strict), so any bill
- * due on today is treated as covered by today's deposit.
+ * Derive next payday: earliest of {7th, 22nd} that falls on or after `today`,
+ * weekend-adjusted. Delegates to the reference engine.
  */
 export function deriveNextPayday(today: Date): Date {
-  const t = new Date(today);
-  t.setHours(0, 0, 0, 0);
-  const candidates: Date[] = [];
-  for (let m = 0; m <= 2; m++) {
-    candidates.push(new Date(t.getFullYear(), t.getMonth() + m, 7));
-    candidates.push(new Date(t.getFullYear(), t.getMonth() + m, 22));
-  }
-  for (const c of candidates.map(effectivePayday).sort((a, b) => a.getTime() - b.getTime())) {
-    if (c.getTime() >= t.getTime()) return c;
-  }
-  return effectivePayday(candidates[candidates.length - 1]);
+  return engineEffectivePayday(nextNominalPayday(utcStartOfDay(today)));
 }
 
 export async function computeCycleState(): Promise<CycleState> {
@@ -123,96 +128,95 @@ export async function computeCycleState(): Promise<CycleState> {
   const checkingBalance = latestChecking ? parseFloat(latestChecking.amount) : 0;
   const lastBalanceUpdate = latestChecking ? new Date(latestChecking.asOfDate) : null;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = utcStartOfDay(new Date());
 
   const daysSinceUpdate = lastBalanceUpdate
-    ? Math.max(0, Math.floor((today.getTime() - lastBalanceUpdate.getTime()) / (1000 * 60 * 60 * 24)))
+    ? engineDaysSinceUpdate(utcStartOfDay(lastBalanceUpdate), today)
     : null;
 
-  const isStale = daysSinceUpdate === null || daysSinceUpdate > 3;
+  const stale = daysSinceUpdate === null || isStale(utcStartOfDay(lastBalanceUpdate ?? today), today);
 
-  const nextPaydayStr = await db
-    .select()
-    .from(assumptions)
-    .where(eq(assumptions.key, "next_payday_date"))
-    .then(([r]) => r?.value ?? null);
+  const nextPaydayNominal = deriveNextNominalPayday(today);
+  const nextPayday = engineEffectivePayday(nextPaydayNominal);
 
-  // Auto-derive next payday: earliest 7th/22nd >= today (weekend-adjusted).
-  // We ignore the stored value because manually-stored values go stale.
-  // Mirrors workbook's Column H semantics: D < B4 (strict). Today as a payday
-  // means today's deposit covers any bill due today, and bills after today's
-  // payday belong to the NEXT cycle, not this one.
-  void nextPaydayStr;
-  const nextPayday = deriveNextPayday(today);
-  const nextPaydayNominal = nextPayday;
+  const daysUntilPayday = engineDaysUntilPayday(today, nextPaydayNominal);
+  const paydayRisk = paydayRiskFlag(nextPaydayNominal);
 
-  const daysUntilPayday = nextPayday ? Math.max(0, daysBetween(today, nextPayday)) : null;
-
-  const paydayRisk = nextPaydayNominal ? isWeekend(nextPaydayNominal) : false;
-
-  const cycleBills = await billsInCycle(today);
-  const billsDueBeforePayday = cycleBills.reduce((s, b) => s + b.amount, 0);
+  // Bills in current cycle hold (engine enforces strict < effective payday).
+  const enriched = await enumerateBills(today);
+  const billsDueBeforePayday = enriched
+    .filter((b) => b.countsThisCycle)
+    .reduce((s, b) => s + b.amount, 0);
 
   const pendingHoldsReserve = await getAssumption("pending_holds_reserve", 0);
   const minimumCushion = await getAssumption("minimum_cushion", 0);
 
+  // One-time expenses due in cycle (engine: <= effective payday, inclusive).
   const allOneTime = await db.select().from(oneTimeExpenses);
-  let oneTimeDueBeforePayday = 0;
-  for (const ote of allOneTime) {
-    if (ote.paid) continue;
-    if (!ote.dueDate) continue;
-    const amount = parseFloat(ote.amount);
-    if (amount <= 0) continue;
-    const dueDate = new Date(ote.dueDate);
-    if (nextPayday && dueDate >= today && dueDate <= nextPayday) {
-      oneTimeDueBeforePayday += amount;
-    }
-  }
+  const engineOneTimes = allOneTime.map(
+    (o) =>
+      new EngineOneTimeExpense(
+        o.description,
+        parseFloat(o.amount),
+        o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
+        o.paid,
+      ),
+  );
+  const oneTimeDueBeforePayday = oneTimeExpensesDueInCycle(
+    engineOneTimes,
+    today,
+    nextPaydayNominal,
+  );
 
-  // Forward reserve: bills due 1st-7th of next month + 7 days prorated variable
-  const fwdFixed = await forwardReserveFixed(today);
-  const perDayVariable = variableSpendCap / monthLengthDays;
-  const forwardReserve = fwdFixed + 7 * perDayVariable;
+  // Forward Reserve (1st-7th bills + 7d variable). Use engine.
+  const activeEngineBills = enriched
+    .filter((b) => b.isActivePeriod)
+    .map(
+      (b) =>
+        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
+    );
+  const forwardReserve = engineForwardReserve(activeEngineBills, variableSpendCap, monthLengthDays);
 
   // Required Hold per BUILD_SPEC §4.4: bills + pending + cushion + one-time only.
   // Forward Reserve is NOT subtracted from Safe to Spend.
   const totalRequiredHold =
     billsDueBeforePayday + pendingHoldsReserve + minimumCushion + oneTimeDueBeforePayday;
 
-  const safeToSpend = Math.max(0, checkingBalance - totalRequiredHold);
-
-  const lastUpdateDate = lastBalanceUpdate ? new Date(lastBalanceUpdate) : today;
-  lastUpdateDate.setHours(0, 0, 0, 0);
-
-  const daysFromUpdateToPayday =
-    nextPayday && lastUpdateDate < nextPayday
-      ? daysBetween(lastUpdateDate, nextPayday)
-      : 0;
-
   const variableSpendUntilPayday = await getAssumption("variable_spend_until_payday", 0);
 
-  const dailyRateFromUpdate =
-    daysFromUpdateToPayday > 0
-      ? Math.max(0, (safeToSpend - variableSpendUntilPayday) / daysFromUpdateToPayday)
-      : 0;
+  const sts = safeToSpend(checkingBalance, billsDueBeforePayday, {
+    pendingHolds: pendingHoldsReserve,
+    minimumCushion,
+    oneTimeDueTotal: oneTimeDueBeforePayday,
+    forwardReserveAmount: forwardReserve,
+    includeForwardReserveInSts: true,
+  });
 
-  const daysFromTodayToPayday =
-    nextPayday && today < nextPayday ? daysBetween(today, nextPayday) : 0;
+  const lastUpdateDate = lastBalanceUpdate ? utcStartOfDay(lastBalanceUpdate) : today;
 
-  const dailyRateRealTime =
-    daysFromTodayToPayday > 0
-      ? Math.max(0, (safeToSpend - variableSpendUntilPayday) / daysFromTodayToPayday)
-      : 0;
+  const dailyRateFromUpdate = dailyRateStatic(
+    sts,
+    variableSpendUntilPayday,
+    nextPaydayNominal,
+    lastUpdateDate,
+  );
 
-  const daysOfCoverage =
-    dailyRateFromUpdate > 0 ? safeToSpend / dailyRateFromUpdate : null;
+  const dailyRateRealTime = dailyRateRealtime(
+    sts,
+    variableSpendUntilPayday,
+    nextPaydayNominal,
+    today,
+  );
 
-  const remainingDiscretionary = Math.max(0, safeToSpend - variableSpendUntilPayday);
+  const coverage = daysOfCoverage(sts, dailyRateFromUpdate);
 
-  let status: "GREEN" | "YELLOW" | "RED" = "GREEN";
-  if (safeToSpend <= 0 && totalRequiredHold > checkingBalance) status = "RED";
-  else if (safeToSpend < alertThreshold) status = "YELLOW";
+  const remainingDiscretionary = Math.max(0, sts - variableSpendUntilPayday);
+
+  // Status: engine GREEN (>=threshold), YELLOW (0<sts<threshold), RED (sts<=0).
+  // The api shape distinguishes RED only when checking < hold. With
+  // sts = max(0, checking - hold), sts<=0 already implies checking<=hold,
+  // so engine status == api status.
+  const status = cycleStatus(sts, alertThreshold);
 
   return {
     checkingBalance,
@@ -220,17 +224,17 @@ export async function computeCycleState(): Promise<CycleState> {
     nextPayday,
     nextPaydayNominal,
     daysSinceUpdate,
-    isStale,
+    isStale: stale,
     daysUntilPayday,
     billsDueBeforePayday,
     pendingHoldsReserve,
     minimumCushion,
     oneTimeDueBeforePayday,
     totalRequiredHold,
-    safeToSpend,
+    safeToSpend: sts,
     dailyRateFromUpdate,
     dailyRateRealTime,
-    daysOfCoverage,
+    daysOfCoverage: coverage,
     variableSpendUntilPayday,
     remainingDiscretionary,
     status,
@@ -245,56 +249,59 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
   const variableSpendCap = await getAssumption("variable_spend_cap", 600);
   const baseNetIncome = await getAssumption("base_net_income", 3220);
 
-  const nextPaydayStr = await db
-    .select()
-    .from(assumptions)
-    .where(eq(assumptions.key, "next_payday_date"))
-    .then(([r]) => r?.value ?? null);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const storedNominal = parseDate(nextPaydayStr);
-  const derivedNextPayday = deriveNextPayday(today);
-  const nextPayday =
-    storedNominal && effectivePayday(storedNominal).getTime() >= today.getTime()
-      ? effectivePayday(storedNominal)
-      : derivedNextPayday;
+  const today = utcStartOfDay(new Date());
+  const nextPaydayNominal = deriveNextNominalPayday(today);
 
   // Confirmed commission this cycle (paid this month, on or before today)
   const allCommissions = await db.select().from(commissions);
   let confirmedCommission = 0;
   for (const c of allCommissions) {
     if (!c.payoutDate) continue;
-    const pd = new Date(c.payoutDate);
+    const pd = utcStartOfDay(new Date(c.payoutDate));
     if (
-      pd.getFullYear() === today.getFullYear() &&
-      pd.getMonth() === today.getMonth() &&
-      pd <= today &&
+      pd.getUTCFullYear() === today.getUTCFullYear() &&
+      pd.getUTCMonth() === today.getUTCMonth() &&
+      pd.getTime() <= today.getTime() &&
       (c.status === "paid" || c.status === "confirmed")
     ) {
       confirmedCommission += parseFloat(c.takeHome);
     }
   }
 
-  const totalMonthIncome = baseNetIncome + confirmedCommission;
+  // Build engine-typed bills/one-times for monthlySavingsEstimate
+  const enriched = await enumerateBills(today);
+  const includedEngineBills = enriched
+    .filter((b) => b.countsThisMonth)
+    .map(
+      (b) =>
+        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
+    );
+  const allActiveEngineBills = enriched
+    .filter((b) => b.isActivePeriod)
+    .map(
+      (b) =>
+        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
+    );
 
-  const monthBills = await billsThisMonth(today);
-  const fullMonthFixedBills = monthBills.reduce((s, b) => s + b.amount, 0);
+  const fullMonthFixedBills = includedEngineBills.reduce((s, b) => s + b.amount, 0);
 
-  const daysToPayday = nextPayday ? Math.max(0, daysBetween(today, nextPayday)) : 0;
-  const remainingVariableSpendProrated =
-    Math.max(0, Math.round(((daysToPayday) / monthLengthDays) * variableSpendCap * 100) / 100);
-
-  const allOneTime = await db.select().from(oneTimeExpenses).where(eq(oneTimeExpenses.paid, false));
-  let knownOneTimeCosts = 0;
-  for (const ote of allOneTime) {
-    knownOneTimeCosts += parseFloat(ote.amount);
-  }
+  const allOneTimeRows = await db.select().from(oneTimeExpenses);
+  const engineOneTimes = allOneTimeRows.map(
+    (o) =>
+      new EngineOneTimeExpense(
+        o.description,
+        parseFloat(o.amount),
+        o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
+        o.paid,
+      ),
+  );
+  const knownOneTimeCosts = engineOneTimes
+    .filter((o) => !o.paid)
+    .reduce((s, o) => s + o.amount, 0);
 
   // QuickSilver: manual `quicksilver_balance_owed` is the canonical reserve
-  // line — it represents the carryover CC balance Marshall pays mid-next-month.
-  // We expose `quicksilverAccrual` (logged QS spend this month) for context
-  // only; subtracting it here would double-count against the variable-cap
-  // reservation (which already covers gas+food regardless of payment method).
+  // line. We expose `quicksilverAccrual` (logged QS spend this month) for
+  // context only; subtracting it would double-count against the variable cap.
   const vsEntries = await db.select().from(variableSpend);
   let quicksilverAccrual = 0;
   for (const vs of vsEntries) {
@@ -302,42 +309,49 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
   }
   const quicksilverBalanceOwed = await getAssumption("quicksilver_balance_owed", 0);
 
-  const fwdFixed2 = await forwardReserveFixed(today);
-  const perDayVariable = variableSpendCap / monthLengthDays;
-  const forwardReserve = fwdFixed2 + 7 * perDayVariable;
-
-  const estimatedMonthlySavings = Math.max(
+  // Days-to-payday × cap / month-length, ROUND(_, 2). Engine handles internally
+  // when called via monthlySavingsEstimate.
+  const daysToPayday = engineDaysUntilPayday(today, nextPaydayNominal);
+  const remainingVariableSpendProrated = Math.max(
     0,
-    totalMonthIncome -
-      fullMonthFixedBills -
-      remainingVariableSpendProrated -
-      knownOneTimeCosts -
-      quicksilverBalanceOwed -
-      forwardReserve
+    Math.round(((daysToPayday) / monthLengthDays) * variableSpendCap * 100) / 100,
   );
 
-  // 401(k) match gap analysis using new schema semantics:
-  //   contribRate = employee contribution % of gross
-  //   matchMultiplier (stored in employerMatchRate field) = fraction of employee % matched
-  //   employeeContribCeiling (stored in employerMatchCap field) = ceiling for match
+  const forwardReserveAmount = engineForwardReserve(
+    allActiveEngineBills,
+    variableSpendCap,
+    monthLengthDays,
+  );
+
+  // Engine's monthlySavingsEstimate handles the floor-at-zero formula.
+  const estimatedMonthlySavings = monthlySavingsEstimate(
+    baseNetIncome,
+    confirmedCommission,
+    includedEngineBills,
+    nextPaydayNominal,
+    today,
+    engineOneTimes,
+    quicksilverBalanceOwed, // treated as quicksilverAccrual line item
+    allActiveEngineBills,
+    variableSpendCap,
+    monthLengthDays,
+  );
+
+  const totalMonthIncome = baseNetIncome + confirmedCommission;
+
+  // 401(k) match gap — delegate to engine (FIX_PLAN §A2 corrected formula).
   const [ret] = await db.select().from(retirementPlan).limit(1);
   let matchGapActive = false;
   let monthlyMatchGapCost = 0;
   if (ret) {
-    const contribRate = parseFloat(ret.contributionRate);
-    const matchMultiplier = parseFloat(ret.employerMatchRate);
-    const ceiling = parseFloat(ret.employerMatchCap);
-    const grossSalary = parseFloat(ret.grossSalary);
-
-    const effectiveEmployeePct = Math.min(contribRate, ceiling);
-    const employerMatchPctOfGross = effectiveEmployeePct * matchMultiplier;
-    const maxMatchPctOfGross = ceiling * matchMultiplier;
-    const annualMatchCaptured = grossSalary * employerMatchPctOfGross;
-    const annualMatchAvailable = grossSalary * maxMatchPctOfGross;
-    const annualMatchGap = annualMatchAvailable - annualMatchCaptured;
-
-    matchGapActive = annualMatchGap > 0.01;
-    monthlyMatchGapCost = Math.round((annualMatchGap / 12) * 100) / 100;
+    const mg = matchGapAnalysis(
+      parseFloat(ret.grossSalary),
+      parseFloat(ret.contributionRate),
+      parseFloat(ret.employerMatchRate),
+      parseFloat(ret.employerMatchCap),
+    );
+    matchGapActive = mg.annualGap > 0.01;
+    monthlyMatchGapCost = Math.round(mg.monthlyGap * 100) / 100;
   }
 
   const savingsAfterMatchBump = Math.max(0, estimatedMonthlySavings - monthlyMatchGapCost);
@@ -352,7 +366,7 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     knownOneTimeCosts,
     quicksilverAccrual,
     quicksilverBalanceOwed,
-    forwardReserve,
+    forwardReserve: forwardReserveAmount,
     estimatedMonthlySavings,
     matchGapActive,
     monthlyMatchGapCost,
@@ -361,42 +375,17 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
   };
 }
 
-/**
- * MRR commission payout — Odoo tier formula from workbook v7.2.
- * Tier breakpoints: $349.93, $489.93, target-$0.07 (=$699.93 when target=700).
- * Tier rates: 0.3705, 0.9634, 5.5212, 0.65 (above target).
- */
+// ---------------------------------------------------------------------------
+// Commission tier helpers — re-export engine versions but keep API compatible
+// (rounded to cents) since DB stores rounded values.
+// ---------------------------------------------------------------------------
+
 export function computeMrrPayout(mrrAchieved: number, mrrTarget = 700): number {
-  if (mrrAchieved <= 0) return 0;
-  const tier1Cap = 349.93;
-  const tier2Cap = 489.93;
-  const tier3Cap = mrrTarget - 0.07;
-
-  const t1 = Math.max(0, Math.min(mrrAchieved, tier1Cap)) * 0.3705;
-  const t2 = Math.max(0, Math.min(mrrAchieved, tier2Cap) - tier1Cap) * 0.9634;
-  const t3 = Math.max(0, Math.min(mrrAchieved, tier3Cap) - tier2Cap) * 5.5212;
-  const t4 = Math.max(0, mrrAchieved - tier3Cap) * 0.65;
-
-  return Math.round((t1 + t2 + t3 + t4) * 100) / 100;
+  return Math.round(mrrPayoutGross(mrrAchieved, mrrTarget) * 100) / 100;
 }
 
-/**
- * NRR commission payout — Odoo tier formula from workbook v7.2.
- * Tier breakpoints: $2,999.40, $4,199.40, target-$0.60 (=$5,999.40 when target=6000).
- * Tier rates: 0.0204, 0.0388, 0.2801, 0.042 (above target).
- */
 export function computeNrrPayout(nrrAchieved: number, nrrTarget = 6000): number {
-  if (nrrAchieved <= 0) return 0;
-  const tier1Cap = 2999.40;
-  const tier2Cap = 4199.40;
-  const tier3Cap = nrrTarget - 0.6;
-
-  const t1 = Math.max(0, Math.min(nrrAchieved, tier1Cap)) * 0.0204;
-  const t2 = Math.max(0, Math.min(nrrAchieved, tier2Cap) - tier1Cap) * 0.0388;
-  const t3 = Math.max(0, Math.min(nrrAchieved, tier3Cap) - tier2Cap) * 0.2801;
-  const t4 = Math.max(0, nrrAchieved - tier3Cap) * 0.042;
-
-  return Math.round((t1 + t2 + t3 + t4) * 100) / 100;
+  return Math.round(nrrPayoutGross(nrrAchieved, nrrTarget) * 100) / 100;
 }
 
 export function computeTakeHome(grossPayout: number, taxRate = 0.435): number {
@@ -404,15 +393,20 @@ export function computeTakeHome(grossPayout: number, taxRate = 0.435): number {
 }
 
 export function computePayoutDate(salesMonthStr: string, payoutDay = 22): string {
-  const salesDate = new Date(salesMonthStr);
-  const payoutMonth = salesDate.getMonth() + 1;
-  const payoutYear = salesDate.getFullYear() + (payoutMonth > 11 ? 1 : 0);
-  const actualMonth = payoutMonth > 11 ? 0 : payoutMonth;
-  const d = new Date(payoutYear, actualMonth, payoutDay);
-  return d.toISOString().split("T")[0];
+  // Use the engine's commissionPayoutDate which handles December rollover.
+  const sales = utcStartOfDay(new Date(salesMonthStr));
+  const pd = commissionPayoutDate(sales, payoutDay);
+  return pd.toISOString().split("T")[0]!;
 }
 
-export function computeScenarioOutputs(type: string, inputs: Record<string, unknown>): Record<string, unknown> {
+// ---------------------------------------------------------------------------
+// Scenario outputs — delegate to engine functions.
+// ---------------------------------------------------------------------------
+
+export function computeScenarioOutputs(
+  type: string,
+  inputs: Record<string, unknown>,
+): Record<string, unknown> {
   if (type === "vehicle") {
     const sticker = Number(inputs.sticker) || 0;
     const downPayment = Number(inputs.downPayment) || 0;
@@ -420,17 +414,15 @@ export function computeScenarioOutputs(type: string, inputs: Record<string, unkn
     const months = Number(inputs.months) || 60;
     const insurance = Number(inputs.insurance) || 0;
     const principal = sticker - downPayment;
-    const monthlyRate = rate / 12;
-    const payment =
-      principal > 0 && monthlyRate > 0
-        ? (principal * monthlyRate * Math.pow(1 + monthlyRate, months)) /
-          (Math.pow(1 + monthlyRate, months) - 1)
-        : 0;
-    const totalCost = payment * months + downPayment;
+    let monthly = 0;
+    if (principal > 0 && months > 0) {
+      monthly = rate > 0 ? pmt(rate, months, principal) : principal / months;
+    }
+    const totalCost = monthly * months + downPayment;
     const totalInterest = totalCost - sticker;
-    const newMonthlyBurn = payment + insurance;
+    const newMonthlyBurn = monthly + insurance;
     return {
-      monthlyPayment: Math.round(payment * 100) / 100,
+      monthlyPayment: Math.round(monthly * 100) / 100,
       totalCost: Math.round(totalCost * 100) / 100,
       totalInterest: Math.round(totalInterest * 100) / 100,
       newMonthlyBurn: Math.round(newMonthlyBurn * 100) / 100,
@@ -441,11 +433,14 @@ export function computeScenarioOutputs(type: string, inputs: Record<string, unkn
     const checking = Number(inputs.checking) || 0;
     const hysa = Number(inputs.hysa) || 0;
     const monthlyBurn = Number(inputs.monthlyBurn) || 0;
-    const totalLiquid = checking + hysa;
-    const runwayMonths = monthlyBurn > 0 ? totalLiquid / monthlyBurn : 0;
+    // Engine droughtSurvivalRunway expects bills + cap + base; we have the
+    // pre-computed burn. Compute runway directly using the engine's formula
+    // shape so callers get totalLiquid + months + label.
+    const r = droughtSurvivalRunway(checking, hysa, monthlyBurn, 0, 0);
+    const runwayMonths = r.indefinite ? 0 : (r.runway_months ?? 0);
     return {
-      totalLiquid,
-      runwayMonths: Math.round(runwayMonths * 10) / 10,
+      totalLiquid: r.totalLiquid,
+      runwayMonths,
       runwayLabel: `${Math.floor(runwayMonths)} months ${Math.round((runwayMonths % 1) * 30)} days`,
     };
   }
@@ -455,11 +450,16 @@ export function computeScenarioOutputs(type: string, inputs: Record<string, unkn
     const fixedMonthly = Number(inputs.fixedMonthly) || 0;
     const variableCap = Number(inputs.variableCap) || 0;
     const taxRate = Number(inputs.taxRate) || 0.22;
-    const requiredNet = targetSavings + fixedMonthly + variableCap;
-    const requiredGross = (requiredNet / (1 - taxRate)) * 12;
+    const [annualFloor] = incomeReplacementFloor(
+      targetSavings,
+      fixedMonthly,
+      variableCap,
+      taxRate,
+    );
+    const minMonthlyNet = targetSavings + fixedMonthly + variableCap;
     return {
-      requiredMonthlyNet: Math.round(requiredNet * 100) / 100,
-      requiredAnnualGross: Math.round(requiredGross * 100) / 100,
+      requiredMonthlyNet: Math.round(minMonthlyNet * 100) / 100,
+      requiredAnnualGross: Math.round(annualFloor * 100) / 100,
     };
   }
 
@@ -467,15 +467,50 @@ export function computeScenarioOutputs(type: string, inputs: Record<string, unkn
     const currentBase = Number(inputs.currentBase) || 0;
     const newBase = Number(inputs.newBase) || 0;
     const taxRate = Number(inputs.taxRate) || 0.22;
+    const r = incomeGrowthScenario(currentBase, newBase, taxRate, 0, 0, 0);
     const currentNet = (currentBase / 12) * (1 - taxRate);
     const newNet = (newBase / 12) * (1 - taxRate);
     return {
       currentMonthlyNet: Math.round(currentNet * 100) / 100,
       newMonthlyNet: Math.round(newNet * 100) / 100,
-      monthlyIncrease: Math.round((newNet - currentNet) * 100) / 100,
+      monthlyIncrease: Math.round(r.monthly_net_increase * 100) / 100,
       annualIncrease: Math.round((newBase - currentBase) * (1 - taxRate) * 100) / 100,
+    };
+  }
+
+  if (type === "purchase_compare") {
+    const opts = Array.isArray(inputs.options) ? (inputs.options as Array<Record<string, unknown>>) : [];
+    const purchaseOpts = opts.map(
+      (o) =>
+        new PurchaseOption(
+          String(o.name ?? ""),
+          Number(o.totalPrice ?? 0),
+          Number(o.downPayment ?? 0),
+          Number(o.annualRate ?? 0),
+          Number(o.termMonths ?? 60),
+          Number(o.monthlyAddons ?? 0),
+          Number(o.oneTimeCost ?? 0),
+        ),
+    );
+    return {
+      results: decisionSandboxCompare(
+        purchaseOpts,
+        Number(inputs.currentDailySafeSpend) || 0,
+        Number(inputs.monthlyFixedBills) || 0,
+        Number(inputs.variableCap) || 600,
+        Number(inputs.baseNetMonthly) || 3220,
+        Number(inputs.hysaBalance) || 0,
+      ),
     };
   }
 
   return {};
 }
+
+// Re-export engine commission helpers under their aliases so callers can switch
+// to the central versions piecemeal.
+export {
+  mrrPayoutGross as computeMrrPayoutRaw,
+  nrrPayoutGross as computeNrrPayoutRaw,
+  commissionTakeHome as commissionTakeHomeRaw,
+};
