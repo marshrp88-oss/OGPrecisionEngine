@@ -193,8 +193,17 @@ router.get("/commissions/summary", async (_req, res): Promise<void> => {
     mrrAchieved: parseFloat(r.mrrAchieved),
     nrrAchieved: parseFloat(r.nrrAchieved),
   }));
-  const droughtFlag = engineDroughtFlag(engineRows, DROUGHT_THRESHOLD, mrrTarget, nrrTarget, taxRate);
-  const droughtMonths = engineRows.filter(
+  // Defect 3: drought flag uses engine canonical implementation — most recent
+  // CONSECUTIVE_MONTHS commission months all below DROUGHT_THRESHOLD ($50
+  // take-home). The displayed `droughtMonths` count must use the SAME window
+  // (most recent N) so the UI text "(X of last N)" matches the flag logic.
+  const CONSECUTIVE_MONTHS = 2;
+  const droughtFlag = engineDroughtFlag(engineRows, DROUGHT_THRESHOLD, mrrTarget, nrrTarget, taxRate, CONSECUTIVE_MONTHS);
+  const recentN = engineRows
+    .slice()
+    .sort((a, b) => a.salesMonth.getTime() - b.salesMonth.getTime())
+    .slice(-CONSECUTIVE_MONTHS);
+  const droughtMonths = recentN.filter(
     (r) => commissionTakeHome(r.mrrAchieved, r.nrrAchieved, mrrTarget, nrrTarget, taxRate) < DROUGHT_THRESHOLD,
   ).length;
 

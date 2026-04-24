@@ -152,6 +152,15 @@ export async function billsRemainingThisMonth(today?: Date): Promise<EnrichedBil
 /**
  * Forward Reserve fixed component: bills due 1st-7th of next month.
  * Delegates to @workspace/finance forwardReserve (without the variable component).
+ *
+ * NOTE: This returns the FULL Forward Reserve including any 1-7 bills already
+ * in the current cycle's Required Hold. The reason: Forward Reserve represents
+ * the cash that must be held back from today's checking to cover the May 1-7
+ * obligations, regardless of whether those obligations also appear in the
+ * current cycle's Required Hold. The double-count protection (Defect 1 fix in
+ * the engine) is only used by `monthlySavingsEstimate`, which subtracts both
+ * full_month_fixed and forward_reserve and would otherwise count the same bill
+ * twice.
  */
 export async function forwardReserveFixed(today?: Date): Promise<number> {
   const all = await enumerateBills(today);

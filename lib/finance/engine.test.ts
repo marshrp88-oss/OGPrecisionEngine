@@ -331,6 +331,65 @@ describe("forwardReserve — Source: Dashboard!B33 / FIX_PLAN §B4", () => {
     const fwd = forwardReserve([new Bill("Always Early", 200.0, 3, true)]);
     closeTo(fwd, 200.0 + 7 * (600.0 / 30.4));
   });
+
+  it("Defect 1: bill in 1-7 already in current cycle is excluded", () => {
+    // Car Loan day=1: when today is Apr 24 and payday is May 7, its next due
+    // (May 1) is INSIDE the current cycle Required Hold. It must therefore
+    // be excluded from Forward Reserve to avoid double-counting downstream.
+    const allBills = makeRealBills();
+    const carLoan = allBills.find((b) => b.name === "Car Loan (2024 Camry)")!;
+    const fwdNoGuard = forwardReserve(allBills);
+    const fwdWithGuard = forwardReserve(allBills, 600, 30.4, [carLoan]);
+    closeTo(fwdNoGuard - fwdWithGuard, 337.0);
+  });
+
+  it("Defect 1: bill in 1-7 NOT in current cycle is still included", () => {
+    // A 1-7 bill that isn't in the current cycle (e.g. today is May 8 and
+    // the bill due day=5 already paid this month) should remain in Forward
+    // Reserve as the next-month obligation.
+    const allBills = makeRealBills();
+    const otherCycleBill = new Bill("Some Other Bill", 999.0, 15, true);
+    const fwd = forwardReserve(allBills, 600, 30.4, [otherCycleBill]);
+    // No 1-7 bill in current cycle → identical to the un-guarded result.
+    closeTo(fwd, forwardReserve(allBills));
+  });
+
+  it("Defect 1: backwards-compatible — omitting currentCycleBills retains old behavior", () => {
+    const allBills = makeRealBills();
+    closeTo(forwardReserve(allBills, 600, 30.4, []), forwardReserve(allBills, 600, 30.4));
+    closeTo(forwardReserve(allBills, 600, 30.4), 1561.16, 0.02);
+  });
+
+  it("Defect 1: monthlySavingsEstimate forwards currentCycleBills to forwardReserve", () => {
+    const allBills = makeRealBills();
+    const carLoan = allBills.find((b) => b.name === "Car Loan (2024 Camry)")!;
+    const today = d(2026, 4, 24);
+    const nextPayday = d(2026, 5, 7);
+    // baseNetMonthly is set high enough that neither result is floored at 0,
+    // so we can prove the $337 delta propagates through.
+    const baseArgs = [
+      6000, // baseNetMonthly
+      0,    // confirmedCommission
+      allBills, nextPayday, today, [], 0, allBills, 600, 30.4,
+    ] as const;
+    const sNoGuard = monthlySavingsEstimate(...baseArgs);
+    const sGuarded = monthlySavingsEstimate(...baseArgs, [carLoan]);
+    expect(sNoGuard).toBeGreaterThan(0);
+    closeTo(sGuarded - sNoGuard, 337.0, 0.02);
+  });
+
+  it("Defect 1: discretionaryThisMonth uses FULL forwardReserve (no current-cycle exclusion)", () => {
+    // Discretionary's formula does NOT subtract Required Hold separately, so
+    // every May 1-7 obligation must be reserved out of today's cash via
+    // Forward Reserve — including bills also in the current cycle hold. The
+    // double-count guard belongs only to monthlySavingsEstimate.
+    const allBills = makeRealBills();
+    const today = d(2026, 4, 24);
+    const checking = 2333.94;
+    const disc = discretionaryThisMonth(checking, 0, 0, 0, allBills, today, 600, 30.4);
+    // checking 2333.94 - prorated_var (7d × 600/30.4 = 138.16) - fwdReserve (1561.16) = 634.62
+    closeTo(disc, 634.62, 0.05);
+  });
 });
 
 describe("oneTimeExpensesDueInCycle — Source: Dashboard!B40", () => {

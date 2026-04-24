@@ -169,13 +169,24 @@ export async function computeCycleState(): Promise<CycleState> {
   );
 
   // Forward Reserve (1st-7th bills + 7d variable). Use engine.
+  // We deliberately do NOT pass currentCycleBills here — Forward Reserve
+  // represents the cash that must be held back from today's checking to cover
+  // the next-month 1-7 obligations, regardless of whether those obligations
+  // also appear in the current cycle's Required Hold. The double-count
+  // protection (Defect 1 fix in the engine) is only used by
+  // monthlySavingsEstimate, which subtracts BOTH full_month_fixed and
+  // forward_reserve and would otherwise count the same bill twice.
   const activeEngineBills = enriched
     .filter((b) => b.isActivePeriod)
     .map(
       (b) =>
         new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
     );
-  const forwardReserve = engineForwardReserve(activeEngineBills, variableSpendCap, monthLengthDays);
+  const forwardReserve = engineForwardReserve(
+    activeEngineBills,
+    variableSpendCap,
+    monthLengthDays,
+  );
 
   // Required Hold per BUILD_SPEC §4.4: bills + pending + cushion + one-time only.
   // Forward Reserve is NOT subtracted from Safe to Spend.
@@ -268,7 +279,10 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     }
   }
 
-  // Build engine-typed bills/one-times for monthlySavingsEstimate
+  // Build engine-typed bills/one-times for monthlySavingsEstimate.
+  // currentCycleEngineBills is needed by forwardReserve / monthlySavingsEstimate
+  // to suppress double-counting of bills already in the cycle Required Hold
+  // (Defect 1 / Playbook §2.1).
   const enriched = await enumerateBills(today);
   const includedEngineBills = enriched
     .filter((b) => b.countsThisMonth)
@@ -278,6 +292,12 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     );
   const allActiveEngineBills = enriched
     .filter((b) => b.isActivePeriod)
+    .map(
+      (b) =>
+        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
+    );
+  const currentCycleEngineBills = enriched
+    .filter((b) => b.countsThisCycle)
     .map(
       (b) =>
         new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
@@ -321,6 +341,7 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     allActiveEngineBills,
     variableSpendCap,
     monthLengthDays,
+    currentCycleEngineBills,
   );
 
   // Engine's monthlySavingsEstimate handles the floor-at-zero formula.
@@ -335,6 +356,7 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     allActiveEngineBills,
     variableSpendCap,
     monthLengthDays,
+    currentCycleEngineBills,
   );
 
   const totalMonthIncome = baseNetIncome + confirmedCommission;

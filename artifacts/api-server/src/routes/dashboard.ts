@@ -4,7 +4,7 @@ import {
   GetMonthlySavingsResponse,
 } from "@workspace/api-zod";
 import { computeCycleState, computeMonthlySavings, deriveNextPayday } from "../lib/financeEngine";
-import { billsThisMonth } from "../lib/cycleBillEngine";
+import { billsThisMonth, billsInCycle } from "../lib/cycleBillEngine";
 import { db, oneTimeExpenses, variableSpend, bills, assumptions, commissions, balances } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import {
@@ -159,6 +159,13 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const monthBillsForEngine: EngineBill[] = monthBillRows.map(
     (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category),
   );
+  // Current-cycle bills (countsThisCycle) — used to suppress double-counting
+  // of bills already in the cycle Required Hold inside Forward Reserve.
+  // Defect 1 / Playbook §2.1.
+  const cycleBillRows = await billsInCycle(today);
+  const cycleBillsForEngine: EngineBill[] = cycleBillRows.map(
+    (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category),
+  );
   const fixedMonthlyTotal = monthBillsForEngine.reduce((s, b) => s + b.amount, 0);
   const fixedRatio = baseNetIncome > 0 ? fixedMonthlyTotal / baseNetIncome : 0;
 
@@ -179,14 +186,17 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     monthBillsForEngine,
     variableCap,
     monthLengthDays,
+    cycleBillsForEngine,
   );
   const savingsRate = baseNetIncome > 0 ? engineSavings / (baseNetIncome + confirmedCommissionTotal) : 0;
 
   // Discretionary This Month — engine-sourced per Playbook §2.1.
-  // Subtracts forward reserve. Distinct from monthlySavingsEstimate (income
-  // ledger) and from safeToSpend (paycheck-bounded). billsForReserve uses
-  // monthBillsForEngine so the same bill set drives forward_reserve as the
-  // workbook expects (Dashboard B33 = SUMIFS over Bills sheet, Include=TRUE).
+  // Subtracts the FULL Forward Reserve (no current-cycle exclusion). The
+  // discretionary formula does NOT subtract Required Hold separately, so
+  // every May 1-7 obligation must be reserved out of today's cash via
+  // Forward Reserve. The Defect-1 double-count protection is only used by
+  // monthlySavingsEstimate above (which subtracts both full_month_fixed and
+  // forward_reserve and would otherwise count the same bill twice).
   const discretionaryHeadline = engineDiscretionaryThisMonth(
     checking,
     billsRemainingThisMonth,

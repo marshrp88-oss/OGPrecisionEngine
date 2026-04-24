@@ -1,0 +1,74 @@
+WHAT'S CONFIRMED WRONG:
+Discretionary This Month is broken. I read the code. The discretionaryThisMonth() function in engine.ts is correctly implemented — it subtracts forward reserve. But the Dashboard is displaying $1,971.58 which cannot come from that function given your current inputs. Something in the UI layer is not calling this function, or is passing wrong parameters.
+With checking $2,333.94 on April 24, the correct display is ~$634.60. It's showing ~$1,337 too high.
+
+WHAT I CANNOT CONFIRM FROM THE CODE:
+The Car Loan double-count suspicion (item 10 from my earlier list) — I looked at billNextDueDate(). It uses a clamped day-of-month and rolls to next month only if the date has passed. For Car Loan day 1, called on April 24, it returns May 1 — correct. So Car Loan is in the cycle hold (May 1 < May 7) AND in the forward reserve (day 1 qualifies for 1-7 window). Both are the same May payment. This IS double-counted. Forward Reserve of $1,561.16 includes the $337 Car Loan, and Required Hold of $1,423 also includes the $337 Car Loan. If you subtract both from checking, you've reserved the Car Loan twice.
+This is a real structural issue. It doesn't affect Safe to Spend (which only uses Required Hold, not Forward Reserve), but it DOES affect Discretionary This Month and Monthly Savings Estimate (both of which use Forward Reserve). The current Monthly Savings Estimate showing $0.00 might be because of this double-count, not because you're actually at floor.
+Let me recalculate what Discretionary should be without the double-count:
+Checking $2,333.94
+Minus prorated variable for 7 remaining April days: $138.18
+Minus Forward Reserve properly computed without Car Loan double-count:
+
+Bills 1-7 excluding Car Loan (since it's in current cycle): $65 + $21 + $1,000 = $1,086
+Plus 7 days prorated variable: $138.16
+Adjusted Forward Reserve: $1,224.16
+Minus unpaid April bills (none): $0
+
+Discretionary = $2,333.94 - $138.18 - $1,224.16 = $971.60
+So the real number is probably closer to $971, not $634 like I said earlier. I was also wrong because I was using the inflated Forward Reserve.
+
+WHAT ABOUT THE OTHER SUSPICIONS FROM MY LIST:
+Seasonal utilities: Looked for it in the engine code. Not there. Bills use flat amounts. The engine has no month-based lookup for Grid or Fuel. This feature from the OG workbook was dropped in the port. Impact: your Forward Reserve and Monthly Savings will be consistently off in winter (underestimate utilities) and summer (overestimate). Real but minor. Flag for future fix.
+Drought flag "last 3" display vs "all history" logic: The droughtFlag() function in the code uses consecutiveMonths parameter defaulting to 2, not "all months." The Python version and the playbook both say "all months." The display text says "0 of last 3" which matches neither. Mixed signals, confusing UX, but since your YTD take-home is $0, the flag state is correct in the current edge case. Flag this as a clarity issue, not a current bug.
+QuickSilver blind spot: The engine takes quicksilverAccrual as a parameter to monthlySavingsEstimate(). The Dashboard shows "CC Balance Owed: $0.00" and "QuickSilver Blind Spot: $215.65" as separate fields. These should be the same concept but are apparently wired differently. Low priority — won't affect math if you log variable spend correctly.
+One-Time Expense dateless flag: Can't confirm from screenshots without a test case. Add a dateless expense and see if it warns.
+Income Replacement Floor: Confirmed surfaced on Decision Sandbox. Works.
+Tax Planning: Confirmed in engine. Not sure if surfaced anywhere in the UI. Check if there's a display of the $360/paycheck or $720/month number.
+
+THE PRIORITY FIX LIST:
+Critical (fix now):
+
+Forward Reserve double-counting current-cycle bills. This is a structural bug. Forward Reserve should only include May 1-7 bills that are NOT already in the current cycle's Required Hold. When Car Loan day 1 is in the May 1-7 window AND its next_due_date falls in the current cycle (May 1 < May 7 payday), it's being counted twice in the Monthly Savings math.
+Discretionary This Month UI not calling the correct engine function. The engine has the right math. The UI isn't using it.
+
+High (fix soon):
+
+Drought flag display vs logic mismatch. Update display text to match actual logic or update logic to match display.
+QuickSilver balance owed vs blind spot inconsistency. Wire both to the same source.
+
+Medium (fix when convenient):
+
+Seasonal utility model. Restore from OG workbook as INDEX/MATCH on month.
+Tax planning surfacing. If the $360/paycheck isn't displayed anywhere, add it to the Dashboard or a Planning tab.
+
+
+THE CORRECTED PROMPT FOR REPLIT AGENT:
+
+Three defects identified after code audit. Fix in order.
+DEFECT 1 — Forward Reserve double-counts bills already in the current cycle hold.
+Current behavior: forwardReserve() sums all Include=TRUE bills with due_day between 1-7 regardless of whether they're already captured in the current cycle's Required Hold. When today is before a payday and a bill's next_due_date falls between today and payday (making it part of Required Hold), that same bill with due_day 1-7 is ALSO in the Forward Reserve. This causes double-counting in Monthly Savings Estimate and Discretionary This Month calculations.
+Example: Today April 24, next payday May 7. Car Loan (day 1) has next_due_date May 1, which is in the May 1-7 window. It appears in Required Hold ($1,423 total) AND in Forward Reserve ($1,561.16 total).
+Correct behavior: Forward Reserve should represent bills due in the 1-7 window of the NEXT month AFTER the upcoming payday. If a bill in the 1-7 window is already being reserved via Required Hold for the current cycle, it should not be counted again.
+Fix: modify forwardReserve() to accept currentCycleBills: Bill[] parameter representing bills already in the current cycle's Required Hold. Exclude those from the 1-7 sum. Update all callers of forwardReserve() to pass the appropriate list. Update both Python reference and TypeScript engine. Add test cases covering: (a) bill in 1-7 window already in current cycle (should be excluded), (b) bill in 1-7 window NOT in current cycle because today is past its due date (should be included), (c) same bill in multiple consecutive months.
+Expected values after fix for current state (today April 24, checking $2,333.94):
+
+Forward Reserve: approximately $1,224.16 (down from $1,561.16 by $337 Car Loan)
+Monthly Savings Estimate: may change from $0.00 to small positive number
+Discretionary This Month: approximately $971.60
+
+DEFECT 2 — Dashboard "Discretionary This Month" card displays incorrect value.
+Current behavior: Card displays $1,971.58. Engine function discretionaryThisMonth() with correct inputs produces ~$971.60 (after Defect 1 fix). The UI is either computing locally or calling the function with wrong parameters.
+Fix: locate the component rendering Discretionary This Month. Replace any local calculation with a direct call to discretionaryThisMonth() from the engine. Pass real state: current checking, unpaid remaining-month bills (computed from Bills table filtered by due_date > today and not yet paid), unpaid remaining-month one-time expenses, QuickSilver accrual, the bill list for Forward Reserve computation, today's date.
+Verify: card displays approximately $971.60 given today=2026-04-24, checking=$2,333.94.
+DEFECT 3 — Drought flag display text mismatches logic.
+Current behavior: display says "0 of last 3 below threshold" but engine function droughtFlag() uses consecutiveMonths=2 as default, not 3, and checks for "all below threshold" not "any below threshold." Display language is misleading.
+Fix: either (a) change display text to accurately describe the logic ("0 consecutive recent months below $50 threshold") or (b) change the default to consecutiveMonths=3 to match the display. Prefer (a) because the Python playbook methodology specifies "consecutive months" not a fixed window. Ensure display text and tooltip accurately describe the active logic.
+REPORTING:
+
+List files modified for each defect
+Show before/after values for Forward Reserve, Monthly Savings Estimate, Discretionary This Month
+Confirm all existing tests pass after the Forward Reserve fix (some may need updating to reflect the new correct behavior — update those tests and note which)
+Report total test count
+
+Do not mark complete until Discretionary This Month displays approximately $971.60 on the live Dashboard given current state.

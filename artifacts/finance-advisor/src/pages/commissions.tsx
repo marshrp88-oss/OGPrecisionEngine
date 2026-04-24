@@ -57,7 +57,7 @@ export default function Commissions() {
           <AlertTriangle className="h-5 w-5" />
           <AlertTitle className="text-lg font-bold">Commission Drought Active</AlertTitle>
           <AlertDescription>
-            {summary.droughtMonths} month(s) below threshold. Baseline savings mode: assume $0 commission.
+            Most recent 2 consecutive commission months below $50 take-home ({summary.droughtMonths} of last 2). Baseline savings mode: assume $0 commission.
           </AlertDescription>
         </Alert>
       )}

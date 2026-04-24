@@ -14,6 +14,7 @@ import {
 } from "@workspace/db";
 import { desc, asc } from "drizzle-orm";
 import { computeCycleState, computeMonthlySavings, effectivePayday, computeMrrPayout, computeNrrPayout, computeTakeHome } from "./financeEngine";
+import { droughtFlag as engineDroughtFlag, commissionTakeHome as engineCommissionTakeHome, DROUGHT_THRESHOLD, MRR_TARGET, NRR_TARGET, COMMISSION_TAX_RATE, type CommissionRow } from "@workspace/finance";
 import {
   matchGapAnalysis,
   sessionIntegrityCheck,
@@ -127,8 +128,40 @@ export async function buildAdvisorContext(): Promise<{
   const ytdTakeHome = ytd.reduce((s, c) => s + parseFloat(c.takeHome), 0);
   const last3 = allCommissions.slice(0, 3);
   const last3Avg = last3.length > 0 ? last3.reduce((s, c) => s + parseFloat(c.takeHome), 0) / last3.length : 0;
-  const droughtMonths = allCommissions.slice(0, 3).filter((c) => parseFloat(c.takeHome) < 100).length;
-  const droughtFlag = droughtMonths >= 2;
+  // Defect 3: drought flag now uses the engine's canonical implementation —
+  // most recent CONSECUTIVE_MONTHS commission months all below DROUGHT_THRESHOLD
+  // ($50 take-home), not "X of last 3 below $100" as it previously displayed.
+  // The displayed text below mirrors the engine logic exactly.
+  const CONSECUTIVE_MONTHS = 2;
+  const engineCommissionRows: CommissionRow[] = allCommissions.map((c) => ({
+    salesMonth: new Date(`${c.salesMonth}T00:00:00.000Z`),
+    mrrAchieved: parseFloat(c.mrrAchieved),
+    nrrAchieved: parseFloat(c.nrrAchieved),
+  }));
+  const droughtFlag = engineDroughtFlag(
+    engineCommissionRows,
+    DROUGHT_THRESHOLD,
+    MRR_TARGET,
+    NRR_TARGET,
+    COMMISSION_TAX_RATE,
+    CONSECUTIVE_MONTHS,
+  );
+  // For display: count of the most recent CONSECUTIVE_MONTHS that are below
+  // threshold. This matches the engine's "all-of-last-N" rule.
+  const recentN = engineCommissionRows
+    .slice()
+    .sort((a, b) => a.salesMonth.getTime() - b.salesMonth.getTime())
+    .slice(-CONSECUTIVE_MONTHS);
+  const droughtMonths = recentN.filter(
+    (r) =>
+      engineCommissionTakeHome(
+        r.mrrAchieved,
+        r.nrrAchieved,
+        MRR_TARGET,
+        NRR_TARGET,
+        COMMISSION_TAX_RATE,
+      ) < DROUGHT_THRESHOLD,
+  ).length;
 
   const oneTimeRows = await db.select().from(oneTimeExpenses);
   const unpaidOneTime = oneTimeRows.filter((o) => !o.paid);
@@ -203,7 +236,7 @@ export async function buildAdvisorContext(): Promise<{
   }
   lines.push(`3-month rolling avg take-home: ${fmt(last3Avg)}`);
   lines.push(`YTD take-home: ${fmt(ytdTakeHome)}`);
-  lines.push(`Drought flag: ${droughtFlag ? "ACTIVE" : "not active"} (${droughtMonths} of last 3 months below threshold)`);
+  lines.push(`Drought flag: ${droughtFlag ? "ACTIVE" : "not active"} (${droughtMonths} of last ${CONSECUTIVE_MONTHS} consecutive commission months below ${fmt(DROUGHT_THRESHOLD)} take-home; flag fires when all ${CONSECUTIVE_MONTHS} are below)`);
   lines.push("");
   lines.push("ONE-TIME EXPENSES (unpaid):");
   if (unpaidOneTime.length === 0) lines.push("- None");

@@ -436,16 +436,32 @@ export function billsInCurrentCycle(
 /**
  * Forward Reserve: bills due 1st-7th of next month (Include=TRUE) plus 7 days
  * of prorated variable spend. Uses due_day, NOT computed next_due_date.
+ *
+ * Double-count guard (Defect 1 / Playbook §2.1): bills whose dueDay 1-7
+ * already fall in the CURRENT cycle's Required Hold window (e.g. today is
+ * April 24, payday May 7, Car Loan dueDay 1 → next due May 1 < May 7) are
+ * already reserved by Required Hold. Counting them again in Forward Reserve
+ * inflates Monthly Savings Estimate and Discretionary This Month subtractions.
+ * Pass the current-cycle bills via `currentCycleBills` to exclude them from
+ * the 1-7 sum. Match key is name+dueDay+amount.
+ *
  * Source: Dashboard!B33 / Playbook §2.1 / BUILD_SPEC §4.3 / FIX_PLAN §B4
  */
 export function forwardReserve(
   bills: Bill[],
   variableCap: number = VARIABLE_SPEND_CAP,
   monthLengthDays: number = MONTH_LENGTH_DAYS,
+  currentCycleBills: Bill[] = [],
 ): number {
+  const cycleKeys = new Set<string>();
+  for (const b of currentCycleBills) {
+    cycleKeys.add(`${b.name}|${b.dueDay}|${b.amount}`);
+  }
   let bills1To7 = 0.0;
   for (const b of bills) {
-    if (b.include && b.dueDay >= 1 && b.dueDay <= 7) bills1To7 += b.amount;
+    if (!(b.include && b.dueDay >= 1 && b.dueDay <= 7)) continue;
+    if (cycleKeys.has(`${b.name}|${b.dueDay}|${b.amount}`)) continue;
+    bills1To7 += b.amount;
   }
   const dailyVariable = variableCap / monthLengthDays;
   return bills1To7 + 7.0 * dailyVariable;
@@ -646,6 +662,7 @@ export function monthlySavingsEstimate(
   billsForReserve: Bill[],
   variableCap: number = VARIABLE_SPEND_CAP,
   monthLengthDays: number = MONTH_LENGTH_DAYS,
+  currentCycleBills: Bill[] = [],
 ): number {
   const totalMonthIncome = baseNetMonthly + confirmedCommission;
 
@@ -666,8 +683,10 @@ export function monthlySavingsEstimate(
   // B60 — QuickSilver accrual
   const qsAccrual = quicksilverAccrual;
 
-  // B61 = B33 — forward reserve
-  const fwdReserve = forwardReserve(billsForReserve, variableCap, monthLengthDays);
+  // B61 = B33 — forward reserve. Pass currentCycleBills so that bills already
+  // captured in the current cycle's Required Hold are not double-counted here
+  // (Defect 1 / Playbook §2.1).
+  const fwdReserve = forwardReserve(billsForReserve, variableCap, monthLengthDays, currentCycleBills);
 
   const result =
     totalMonthIncome -
@@ -724,6 +743,13 @@ export function discretionaryThisMonth(
   const todayDay = today.getUTCDate();
   const daysRemaining = Math.max(0, lastDay - todayDay + 1);
   const proratedVariableRemaining = daysRemaining * (variableCap / monthLengthDays);
+  // Discretionary uses the FULL Forward Reserve (no current-cycle exclusion).
+  // The discretionary formula does NOT subtract Required Hold separately, so
+  // every May 1-7 obligation must be reserved out of today's cash via Forward
+  // Reserve. The double-count protection is only relevant for
+  // monthlySavingsEstimate, which subtracts full_month_fixed (current-month
+  // bills) AND forward_reserve (next-month-1-7 bills) — there the Car Loan
+  // would otherwise appear twice.
   const fwdReserve = forwardReserve(billsForReserve, variableCap, monthLengthDays);
   const result =
     checkingBalance -

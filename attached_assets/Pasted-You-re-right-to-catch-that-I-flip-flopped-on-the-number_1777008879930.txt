@@ -1,0 +1,86 @@
+You're right to catch that. I flip-flopped on the number and that's on me. Let me show the exact math cleanly so you know which is right.
+
+**Starting point: $2,333.94 on April 24, 7 days remaining in April.**
+
+---
+
+**What comes out between today and end of April:**
+
+Remaining April bills (if all mid-April bills already paid): $0
+Variable spend for April 24-30 (7 days × $19.74): $138
+One-time expenses this month: $0
+
+**Ends April at: $2,195.76**
+
+---
+
+**Forward Reserve for May 1-7:**
+
+The four bills due in that window: Car Loan $337, Verizon $65, Claude $21, Rent $1,000 = **$1,423**
+Plus 7 days prorated variable: $138
+**Forward Reserve total: $1,561**
+
+---
+
+**Discretionary = end-of-April balance minus forward reserve:**
+
+$2,195.76 − $1,561 = **$634.76**
+
+---
+
+**Why I said $971 earlier:** I got confused about the double-count fix direction. The double-count bug was overstating Forward Reserve by pulling in the Car Loan twice in the Monthly Savings math, but Discretionary This Month calculation doesn't have that same overlap problem. The Car Loan legitimately belongs in Forward Reserve for Discretionary because it IS a May 1-7 obligation that must be reserved from today's cash.
+
+**$634 is the correct target number.** I was right the first time.
+
+---
+
+**What this means for the agent's current debugging:**
+
+The live endpoint returned $1,868.68. Target is $634. The agent is off by about **$1,234**, not $900.
+
+That gap is roughly the $1,423 Forward Reserve, which suggests the live calculation is NOT subtracting Forward Reserve at all, or is subtracting a much smaller Forward Reserve than it should.
+
+When the agent finishes inspecting the database, the likely finding is one of these:
+
+**Option A:** The `discretionaryThisMonth()` function is being called without the forward reserve parameter, so it defaults to zero. Code bug.
+
+**Option B:** The "exclude current-cycle bills from forward reserve" fix that was just implemented is excluding too much — pulling ALL the May 1-7 bills out because they're technically also in the current cycle. That would drop Forward Reserve from $1,561 down to $138 (just the variable portion), producing Discretionary around $2,195 - $138 = $2,057. Close to but not exactly $1,868.
+
+**Option C:** The Car Loan is in the current cycle (today-to-May-7 window) but is ALSO being excluded from Forward Reserve. Discretionary then treats the Car Loan as if you don't have to pay it, which it is wrong.
+
+---
+
+**Option B or C is actually the more likely bug now.** The fix we shipped may have over-corrected. The correct behavior is: Forward Reserve should include all bills due May 1-7 regardless of whether they also happen to land in the current cycle window. Discretionary then subtracts Forward Reserve as a block.
+
+The original double-count concern was specifically about Monthly Savings — where the Car Loan was being counted both in Required Hold AND in Forward Reserve, simultaneously reducing both Safe to Spend and Monthly Savings. That was a real double-count.
+
+But Discretionary This Month doesn't have that issue. It doesn't subtract Required Hold. It only subtracts the specific things between today and end of month, then separately subtracts Forward Reserve for May 1-7. The Car Loan should be in Forward Reserve for Discretionary's purposes because it IS a May 1-7 obligation that must be reserved from today's cash.
+
+---
+
+**Send this to the agent when it comes back for guidance:**
+
+---
+
+The target for Discretionary This Month is approximately $634, not $971. Here's the exact math:
+
+Starting checking: $2,333.94
+Minus remaining April bills (all paid): $0
+Minus April 24-30 prorated variable (7 × $19.74): $138
+Minus Forward Reserve for May 1-7 (Car Loan $337 + Verizon $65 + Claude $21 + Rent $1,000 + 7d variable $138 = $1,561): $1,561
+Equals: **$634.94**
+
+The fix you shipped for T001 (excluding current-cycle bills from Forward Reserve) may be correct for Monthly Savings Estimate but is incorrect for Discretionary This Month. These two functions need different treatment of Forward Reserve:
+
+- Monthly Savings Estimate: Forward Reserve should exclude bills already counted in Required Hold (prevents double-count)
+- Discretionary This Month: Forward Reserve should include ALL bills due May 1-7 regardless (these obligations must be reserved from today's cash)
+
+Check which version of Forward Reserve is being used by `discretionaryThisMonth()`. If it's using the new "exclude current cycle" version, that's the bug. Discretionary needs the original full Forward Reserve computation.
+
+Fix: `discretionaryThisMonth()` should call the original `forwardReserve()` without the exclusion parameter, or with an empty exclusion list. `monthlySavingsEstimate()` should continue to use the exclusion parameter to avoid double-count.
+
+Expected result after fix: Discretionary This Month displays approximately $634 given current state (checking $2,333.94, today 2026-04-24).
+
+---
+
+Send that. It's a small but critical correction to the fix.

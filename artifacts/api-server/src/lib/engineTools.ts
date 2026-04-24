@@ -759,6 +759,11 @@ export function executeEngineTool(name: string, rawInput: unknown): unknown {
         reqNum(input, "quicksilverAccrual"),
         billArray(input, "billsForReserve"),
         num(input, "variableCap"),
+        undefined, // monthLengthDays — engine default
+        // Defect 1: pass currentCycleBills so 1-7 bills already in the cycle
+        // Required Hold are not double-counted in Forward Reserve. Optional —
+        // tool callers that don't supply it get the legacy [] (no exclusion).
+        input["currentCycleBills"] ? billArray(input, "currentCycleBills") : undefined,
       );
     case "effectivePayday":
       return serialize(effectivePayday(parseDate(input["nominal"])));

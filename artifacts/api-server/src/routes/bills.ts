@@ -156,7 +156,16 @@ router.get("/bills/summary", async (_req, res): Promise<void> => {
   const includedAsEngineBills: EngineBill[] = includedBills.map(
     (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category, b.autopay),
   );
-  const fwdReserve = engineForwardReserve(includedAsEngineBills, variableCap, monthLengthDays);
+  // Forward Reserve here is the FULL value (no current-cycle exclusion) — it
+  // represents the cash that must be held back from today's checking to cover
+  // the next-month 1-7 obligations. The Defect-1 double-count guard is only
+  // applied inside monthlySavingsEstimate (different formula, different
+  // overlap concern). Keeps this page's number consistent with the dashboard.
+  const fwdReserve = engineForwardReserve(
+    includedAsEngineBills,
+    variableCap,
+    monthLengthDays,
+  );
   const fixedBills = monthlyIncluded;
   const residualAfterFixed = totalMonthIncome - fixedBills;
   const residualAfterVariable = residualAfterFixed - variableCap;
