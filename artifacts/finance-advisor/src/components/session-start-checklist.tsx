@@ -66,16 +66,12 @@ export function SessionStartChecklist() {
     query: { enabled: open, queryKey: getGetCommissionsQueryKey() },
   });
 
-  // Fire on first session each calendar day
+  // Manual trigger only — listen for "reserve:open-checklist" custom event.
+  // Auto-open removed to avoid blocking the dashboard view per spec.
   useEffect(() => {
-    try {
-      const last = localStorage.getItem(STORAGE_KEY);
-      if (last !== todayISO()) {
-        setOpen(true);
-      }
-    } catch {
-      // localStorage unavailable; skip
-    }
+    const handler = () => setOpen(true);
+    window.addEventListener("reserve:open-checklist", handler);
+    return () => window.removeEventListener("reserve:open-checklist", handler);
   }, []);
 
   const dismissForToday = () => {

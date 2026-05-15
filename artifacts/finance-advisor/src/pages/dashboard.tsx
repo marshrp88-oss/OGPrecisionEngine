@@ -75,6 +75,7 @@ import {
 } from "@/components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IntegrityStatusBanner } from "@/components/integrity-status-banner";
+import { useEffect } from "react";
 import { useLocation } from "wouter";
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -879,7 +880,6 @@ function VariableSpendColumn() {
   const { data: vs } = useGetVariableSpend(undefined, {
     query: { queryKey: getGetVariableSpendQueryKey() },
   });
-  const [, navigate] = useLocation();
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -904,7 +904,7 @@ function VariableSpendColumn() {
           variant="ghost"
           size="sm"
           className="h-7 px-2 text-xs"
-          onClick={() => navigate("/")}
+          onClick={() => window.dispatchEvent(new CustomEvent("reserve:open-log-spend"))}
           data-testid="button-log-variable"
         >
           Log
@@ -1061,6 +1061,12 @@ function LogSpendDialog() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener("reserve:open-log-spend", handler);
+    return () => window.removeEventListener("reserve:open-log-spend", handler);
+  }, []);
   const [form, setForm] = useState({
     weekOf: new Date().toISOString().split("T")[0],
     amount: "",
