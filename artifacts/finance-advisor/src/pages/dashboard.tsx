@@ -82,7 +82,6 @@ const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface DiscretionaryResp {
   discretionaryThisMonth: number;
-  monthlySavings: number;
   monthEnd: string;
   forwardReserve: number;
   proratedVariableRemainingThisMonth: number;
@@ -402,7 +401,7 @@ export default function Dashboard() {
                   </p>
                   <Row
                     label="= Monthly Savings (estimated)"
-                    value={discretionary.monthlySavings}
+                    value={Math.max(0, discretionary.discretionaryThisMonth - 100)}
                     bold
                   />
                   <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">
@@ -575,7 +574,9 @@ function SituationBlock({
         <StripItem label="Forward Reserve" value={formatCurrency(cycle.forwardReserve)} />
         <StripItem
           label="Monthly Savings"
-          value={formatCurrency(discretionary?.monthlySavings ?? 0)}
+          value={formatCurrency(
+            Math.max(0, (discretionary?.discretionaryThisMonth ?? 0) - 100),
+          )}
         />
       </div>
     </section>
@@ -722,8 +723,8 @@ function ActionRow() {
       <LogSpendDialog />
       <OneTimeQuickAddDialog />
       <Button
-        variant="outline"
-        className="justify-start font-medium"
+        variant="ghost"
+        className="justify-start font-medium border border-border"
         onClick={() => navigate("/advisor")}
         data-testid="button-ask-advisor"
       >
@@ -1005,8 +1006,8 @@ function UpdateBalanceDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
-          variant="outline"
-          className="justify-start font-medium"
+          variant="ghost"
+          className="justify-start font-medium border border-border"
           data-testid="button-update-balance"
         >
           <ArrowUpCircle className="mr-2 h-4 w-4" />
@@ -1107,8 +1108,8 @@ function LogSpendDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
-          variant="outline"
-          className="justify-start font-medium"
+          variant="ghost"
+          className="justify-start font-medium border border-border"
           data-testid="button-log-spend"
         >
           <Plus className="mr-2 h-4 w-4" />
@@ -1249,8 +1250,8 @@ function OneTimeQuickAddDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
-          variant="outline"
-          className="justify-start font-medium"
+          variant="ghost"
+          className="justify-start font-medium border border-border"
           data-testid="button-add-one-time"
         >
           <CalendarPlus className="mr-2 h-4 w-4" />
