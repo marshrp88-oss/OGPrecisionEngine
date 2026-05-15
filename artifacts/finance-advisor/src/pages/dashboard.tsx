@@ -11,6 +11,7 @@ import {
   getGetOneTimeExpensesQueryKey,
   useUpdateOneTimeExpense,
   useCreateOneTimeExpense,
+  useUpdateAssumption,
 } from "@workspace/api-client-react";
 // Local mirror of GetDashboardCycleResponse — kept in sync with
 // lib/api-zod GetDashboardCycleResponse / api-server dashboard.ts. Inlined
@@ -64,7 +65,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -386,29 +387,26 @@ export default function Dashboard() {
                     value={discretionary.billsThisMonth}
                     negative
                   />
-                  <Row
-                    label="− Variable spend logged"
-                    value={discretionary.variableLoggedThisMonth}
-                    negative
-                  />
-                  <Row
-                    label={
-                      discretionary.plannedVariableRemainingOverride !== null
-                        ? `− Variable expected remaining (override)`
-                        : `− Variable expected remaining (cap ${formatCurrency(discretionary.variableCap)} − logged)`
-                    }
+                  <EditableOutgoRow
+                    label="− Variable expected this month"
+                    assumptionKey="planned_variable_remaining_override"
                     value={discretionary.variableExpectedRemaining}
-                    negative
+                    fallback={discretionary.variableCap}
+                    isOverridden={discretionary.plannedVariableRemainingOverride !== null}
+                    hint={`Starts at cap ${formatCurrency(discretionary.variableCap)}. Edit down as the month progresses. Logged so far: ${formatCurrency(discretionary.variableLoggedThisMonth)} (tracked separately, doesn't auto-reduce this).`}
                   />
                   <Row
                     label="− One-time expenses (unpaid, dated ≤ month end OR undated)"
                     value={discretionary.oneTimeThisMonth}
                     negative
                   />
-                  <Row
-                    label="− QuickSilver balance owed"
+                  <EditableOutgoRow
+                    label="− QuickSilver / CC balance owed"
+                    assumptionKey="quicksilver_balance_owed"
                     value={discretionary.quicksilverBalanceOwed}
-                    negative
+                    fallback={0}
+                    isOverridden={discretionary.quicksilverBalanceOwed > 0}
+                    hint="Total credit-card balance you plan to pay this month. Edit anytime."
                   />
                   <Row label="= Total Outgo" value={discretionary.totalMonthOutgo} bold />
 
@@ -417,8 +415,17 @@ export default function Dashboard() {
                     value={discretionary.discretionaryThisMonth}
                     bold
                   />
+                  <div className="rounded-md border border-border bg-muted/30 p-3 mt-3 space-y-1 text-xs">
+                    <p className="font-medium text-foreground uppercase tracking-wide">Cash reconciliation</p>
+                    <p className="text-muted-foreground">
+                      Cash in checking right now: <span className="font-mono text-foreground">{formatCurrency(discretionary.checking)}</span>
+                    </p>
+                    <p className="text-muted-foreground">
+                      Discretionary above is <em>income-anchored</em> — it counts paychecks &amp; commissions you'll receive between now and month-end, not just what's already in checking. The two numbers can differ; that's expected.
+                    </p>
+                  </div>
                   <p className="text-xs text-muted-foreground italic pt-2">
-                    Implements §1.2 (income-anchored). Distinct from Safe to Spend (current cycle, paycheck-bounded, no Forward Reserve).
+                    Implements §1.2 (income-anchored). Variable starts at full cap and is user-editable. Distinct from Safe to Spend (current cycle, paycheck-bounded, no Forward Reserve).
                   </p>
                 </TabsContent>
               )}
@@ -469,7 +476,7 @@ export default function Dashboard() {
                     value={discretionary.oneTimeDatedThisMonth}
                   />
                   <Row
-                    label="Variable cap remaining (cap minus already-spent)"
+                    label="Variable expected this month (editable above)"
                     value={discretionary.variableRemainingThisMonth}
                   />
                   <Row
@@ -1355,6 +1362,134 @@ function OneTimeQuickAddDialog() {
 // ---------------------------------------------------------------------------
 // Shared math row (used by Zone 3 tabs)
 // ---------------------------------------------------------------------------
+
+function EditableOutgoRow({
+  label,
+  assumptionKey,
+  value,
+  fallback,
+  isOverridden,
+  hint,
+}: {
+  label: string;
+  assumptionKey: string;
+  value: number;
+  fallback: number;
+  isOverridden: boolean;
+  hint?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value.toFixed(2));
+  const committedRef = useRef(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const updateMut = useUpdateAssumption();
+
+  useEffect(() => {
+    if (!editing) setDraft(value.toFixed(2));
+  }, [value, editing]);
+
+  const commit = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const trimmed = draft.trim();
+    const parsed = trimmed === "" ? null : parseFloat(trimmed);
+    if (trimmed !== "" && (parsed === null || isNaN(parsed) || parsed < 0)) {
+      toast({ title: "Enter a non-negative number or leave blank", variant: "destructive" });
+      setDraft(value.toFixed(2));
+      setEditing(false);
+      return;
+    }
+    updateMut.mutate(
+      { key: assumptionKey, data: { value: trimmed === "" ? "" : String(parsed) } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          setEditing(false);
+          toast({ title: "Updated" });
+        },
+        onError: () => {
+          toast({ title: "Update failed", variant: "destructive" });
+          setDraft(value.toFixed(2));
+          setEditing(false);
+        },
+      },
+    );
+  };
+
+  const reset = () => {
+    updateMut.mutate(
+      { key: assumptionKey, data: { value: "" } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          toast({ title: `Reset to default (${formatCurrency(fallback)})` });
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="border-b border-border/40 py-1.5">
+      <div className="flex justify-between items-center gap-2 text-destructive">
+        <span className="flex-1">{label}</span>
+        {editing ? (
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={() => {
+              committedRef.current = false;
+            }}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
+              if (e.key === "Escape") {
+                committedRef.current = true;
+                setDraft(value.toFixed(2));
+                setEditing(false);
+              }
+            }}
+            className="w-28 text-right font-mono bg-background border border-border rounded px-2 py-0.5 text-sm"
+            data-testid={`input-${assumptionKey}`}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="font-mono hover:underline decoration-dotted underline-offset-4"
+            data-testid={`edit-${assumptionKey}`}
+          >
+            {formatCurrency(value)}
+          </button>
+        )}
+      </div>
+      <div className="flex justify-between items-center gap-2 mt-0.5">
+        {hint ? (
+          <span className="text-[11px] text-muted-foreground/80 italic flex-1">{hint}</span>
+        ) : (
+          <span className="flex-1" />
+        )}
+        {isOverridden && !editing && (
+          <button
+            type="button"
+            onClick={reset}
+            className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-wider"
+            data-testid={`reset-${assumptionKey}`}
+          >
+            reset
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Row({
   label,

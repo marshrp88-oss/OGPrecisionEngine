@@ -161,7 +161,7 @@ export function AdvisorSnapshotDrawer() {
                   <Row label="Total inflows available" value={fmtCompact(discretionary.totalInflowsAvailable)} valueClass="font-mono" />
                   <Row label="− Bills remaining" value={fmtCompact(discretionary.billsRemainingThisMonth)} valueClass="font-mono" />
                   <Row label="− One-time dated" value={fmtCompact(discretionary.oneTimeDatedThisMonth)} valueClass="font-mono" />
-                  <Row label="− Variable cap remaining" value={fmtCompact(discretionary.variableCapRemainingThisMonth)} valueClass="font-mono" />
+                  <Row label="− Variable expected this month" value={fmtCompact(discretionary.variableCapRemainingThisMonth)} valueClass="font-mono" />
                   <Row label="− QuickSilver Owed" value={fmtCompact(discretionary.quicksilverBalanceOwed)} valueClass="font-mono" />
                   <Row label="− Min cushion" value={fmtCompact(discretionary.minimumCushion)} valueClass="font-mono" />
                 </div>

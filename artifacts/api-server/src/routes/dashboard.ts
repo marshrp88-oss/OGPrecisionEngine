@@ -48,7 +48,11 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const allAssumps = await db.select().from(assumptions);
   const A = (k: string, dflt = 0) => {
     const r = allAssumps.find((a) => a.key === k);
-    return r ? parseFloat(r.value) : dflt;
+    if (!r) return dflt;
+    const raw = (r.value ?? "").toString().trim();
+    if (raw === "") return dflt;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : dflt;
   };
   const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
   const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
@@ -174,12 +178,15 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const quicksilverAccruedThisMonth = monthVs
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
-  // §1.2: variableExpected = override ?? max(0, cap − logged).
-  const variableCapRemaining = Math.max(0, variableCap - variableLoggedThisMonth);
+  // Per user direction (2026-05-15): variable expected starts at the FULL cap
+  // and is user-editable via the override. Logging spend tracks history but
+  // does NOT auto-decrement the expected — the user manually edits the
+  // remaining number to reflect their plan. This matches "start with the full
+  // amount and edit it down during the month for accurate discretionary."
   const variableExpectedRemaining =
     plannedVariableRemainingOverride !== null
       ? plannedVariableRemainingOverride
-      : variableCapRemaining;
+      : variableCap;
   const variableRemainingThisMonth = variableExpectedRemaining; // back-compat alias
 
   // ---- §1.2 ledger ----
@@ -189,10 +196,12 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     expectedRemainingPaychecks +
     commissionPaidThisMonth +
     commissionPendingThisMonth;
-  // Outgo side (calendar-month obligations, with override-aware variable).
+  // Outgo side (calendar-month obligations). Per user direction (2026-05-15):
+  // variableLogged is NOT added to outgo — only variableExpectedRemaining is.
+  // Logging spend is for tracking; the user controls the remaining figure
+  // directly via the editable field on the dashboard.
   const totalMonthOutgo =
     billsThisMonthTotal +
-    variableLoggedThisMonth +
     variableExpectedRemaining +
     oneTimeThisMonth +
     quicksilverBalanceOwed;
