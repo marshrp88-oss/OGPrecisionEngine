@@ -178,50 +178,62 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const quicksilverAccruedThisMonth = monthVs
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
-  // Per user direction (2026-05-15): variable expected starts at the FULL cap
-  // and is user-editable via the override. Logging spend tracks history but
-  // does NOT auto-decrement the expected — the user manually edits the
-  // remaining number to reflect their plan. This matches "start with the full
-  // amount and edit it down during the month for accurate discretionary."
+  // Per user direction (2026-05-15, REVISED): variable expected auto-decrements
+  // from logged spend by default (cap − logged, floored at 0). Override lets
+  // the user pin a specific planned amount. Logged spend reduces the remaining
+  // because money already gone is no longer discretionary headroom.
   const variableExpectedRemaining =
     plannedVariableRemainingOverride !== null
       ? plannedVariableRemainingOverride
-      : variableCap;
+      : Math.max(0, variableCap - variableLoggedThisMonth);
   const variableRemainingThisMonth = variableExpectedRemaining; // back-compat alias
 
-  // ---- §1.2 ledger ----
-  // Income side (calendar-month, paycheck schedule + commission status).
+  // §1.2 income-anchored ledger (back-compat for breakdown UI / tests).
   const totalMonthIncome =
     paychecksReceivedThisMonth +
     expectedRemainingPaychecks +
     commissionPaidThisMonth +
     commissionPendingThisMonth;
-  // Outgo side (calendar-month obligations). Per user direction (2026-05-15):
-  // variableLogged is NOT added to outgo — only variableExpectedRemaining is.
-  // Logging spend is for tracking; the user controls the remaining figure
-  // directly via the editable field on the dashboard.
   const totalMonthOutgo =
     billsThisMonthTotal +
     variableExpectedRemaining +
     oneTimeThisMonth +
     quicksilverBalanceOwed;
-  // §1.2: result CAN be negative. Do not floor.
-  const discretionaryHeadline = totalMonthIncome - totalMonthOutgo;
+
+  // ---- HEADLINE: cash-anchored Discretionary (2026-05-15 user direction) ----
+  // "What's actually safe to spend above bills + planned variable + savings goal,
+  //  using the cash I have today plus income still coming this month."
+  //
+  //   Discretionary = Cash on hand
+  //                 + Income still coming before month-end (paychecks + pending commission)
+  //                 − Bills remaining (due today → month-end, include=TRUE)
+  //                 − Variable expected (override OR max(0, cap − logged))
+  //                 − One-time remaining (dated today→monthEnd OR undated)
+  //                 − QuickSilver / CC balance to pay (separate from any CC bill)
+  //                 − Forward Reserve (savings goal contribution)
+  //
+  // Result CAN be negative. Do not floor.
+  const oneTimeRemaining = oneTimeDatedThisMonth + oneTimeUndated;
+  const cashAnchoredIncome =
+    checking + expectedRemainingPaychecks + commissionPendingThisMonth;
+  const cashAnchoredOutgo =
+    billsRemainingThisMonth +
+    variableExpectedRemaining +
+    oneTimeRemaining +
+    quicksilverBalanceOwed;
+  const cycle = await computeCycleState();
+  const forwardReserveDeduction = cycle.forwardReserve;
+  const discretionaryHeadline =
+    cashAnchoredIncome - cashAnchoredOutgo - forwardReserveDeduction;
 
   // Back-compat aliases for older UI pieces still referencing inflows/outflows.
-  const inflows = checking + expectedRemainingPaychecks + commissionPendingThisMonth;
+  const inflows = cashAnchoredIncome;
   const outflows =
     billsRemainingThisMonth +
-    oneTimeDatedThisMonth +
+    oneTimeRemaining +
     variableExpectedRemaining +
     quicksilverBalanceOwed +
     minimumCushion;
-
-  // Cycle parity (Safe-to-Spend frame) — engine via computeCycleState.
-  // We also need cycle.forwardReserve as an input to the discretionary engine
-  // function — but discretionaryThisMonth recomputes its own forward reserve
-  // from billsForReserve so it's self-consistent.
-  const cycle = await computeCycleState();
 
   const round = (n: number) => Math.round(n * 100) / 100;
 

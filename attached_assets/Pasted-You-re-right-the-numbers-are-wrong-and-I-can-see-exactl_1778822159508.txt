@@ -1,0 +1,82 @@
+You're right, the numbers are wrong, and I can see exactly why now that I have the screenshots. Let me trace what's broken.
+
+**WHAT I SEE ON THE DASHBOARD:**
+
+- Safe to Spend: $198 (down from $989 earlier today)
+- Discretionary This Month: $577.05
+- Checking: $707 (you said $767 earlier — small discrepancy)
+- Required Hold: $509 (was $259 earlier)
+- Variable Pace: 207% OVER PACE
+- Variable remaining: $300 of $600 (but you've logged $600)
+- QuickSilver Owed: $250
+
+**THE PROBLEMS:**
+
+**Problem 1: Variable spend is being double-counted.**
+
+Variable Spend Log shows $600 logged MTD. The dashboard also shows "Variable remaining $300 of $600" — meaning the engine thinks you have $300 LEFT to spend, but you've already spent $600. Total May variable = $900 in reality, but the engine is calculating against $600 cap.
+
+That's why Variable Pace is showing 207% — you've spent $600 of a $600 monthly cap that's been allocated daily, and the engine is correctly flagging you're way over pace.
+
+**Problem 2: The $300 "Variable remaining" being subtracted from Discretionary is wrong direction.**
+
+If you've already spent $600 (the full cap), there should be $0 variable remaining, not $300. The "$300 remaining" appears to be a manually-set field that doesn't auto-update from the Variable Spend Log.
+
+**Problem 3: Required Hold jumped from $259 to $509.**
+
+That $250 jump matches your CC payoff being added to Required Hold. Now the system is treating the $253 CC balance as something to reserve from checking, which is correct behavior — but it crushed Safe to Spend.
+
+**Problem 4: PPG $189 doesn't appear anywhere on this dashboard.**
+
+You mentioned it in the deferred stack but I don't see it in Required Hold or in any line item. Either it's been removed from active obligations or it's hidden in another field.
+
+---
+
+**THE CORRECT MATH SHOULD BE:**
+
+Discretionary This Month calculation:
+
+$707 checking + $1,700 May 22 paycheck (assuming this is what's coming) - $509 Required Hold (May 8-22 bills + CC) - $1,561 Forward Reserve - $0 additional variable (since you've already spent the full $600 cap, the "remaining" should be $0 not $300) - $189 PPG if still owed = **$148**
+
+Or if PPG is deferred indefinitely:
+$707 + $1,700 - $509 - $1,561 - $0 = **$337**
+
+Neither of those match the displayed $577.05.
+
+---
+
+**WHAT TO TELL THE AGENT:**
+
+---
+
+The dashboard math is wrong. Two specific bugs to investigate:
+
+**Bug 1: Variable Remaining field is not updating from Variable Spend Log.**
+
+Variable Spend Log shows $600 logged MTD (the full monthly cap). But the dashboard shows "Variable remaining: $300 of $600" — which is wrong. If $600 has been logged, variable remaining should be $0, not $300.
+
+Either the "Variable Remaining" field is manually set and not auto-syncing with the log, OR there's a calculation bug where logged spend isn't reducing the remaining field.
+
+Fix: variable_remaining should = MAX(0, variable_cap - variable_logged_mtd). On current state, that = MAX(0, 600 - 600) = $0.
+
+**Bug 2: Discretionary This Month calculation appears to be using the stale $300 "variable remaining" instead of the actual remaining from the log.**
+
+Current display shows $577.05. Recompute with correct inputs:
+- Checking $707
+- + May 22 paycheck $1,700 (or whatever the actual amount is)
+- − Required Hold $509
+- − Forward Reserve $1,561
+- − Variable Remaining ($0 since cap is exhausted)
+- − Any unpaid one-time expenses
+
+Should produce something closer to $337, not $577.
+
+Fix: pull `variable_remaining` from the log calculation, not from the manual override field.
+
+**Bug 3: Confirm whether PPG $189 is still in the unpaid one-time expenses table.** It was overdue from April 29. If it's still owed, it should appear in Required Hold or in the Discretionary calculation. Current dashboard doesn't show it anywhere.
+
+Verify the engine math for all three fields against the live database state and report back where the discrepancies are.
+
+---
+
+Send that. The variable double-counting is the most likely culprit for the inflated Discretionary number.

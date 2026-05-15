@@ -366,66 +366,61 @@ export default function Dashboard() {
                   className="space-y-3 font-mono text-sm pt-4"
                 >
                   <p className="text-xs text-muted-foreground italic pb-1">
-                    Horizon: full calendar month (May 1 → {formatDate(discretionary.monthEnd)}). Total income this month minus everything that leaves the account this month. Per §1.2 — can go negative; negative means this month consumes reserves.
+                    Cash-anchored: cash you have <em>right now</em> + income still coming this month, minus every obligation between today and {formatDate(discretionary.monthEnd)}, minus the Forward Reserve savings goal. Negative = this month consumes reserves.
                   </p>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Income This Month</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Cash + Income</p>
+                  <Row label="Checking balance (today)" value={discretionary.checking} />
                   <Row
-                    label={`Paychecks received (${discretionary.paychecksReceivedCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
-                    value={discretionary.paychecksReceivedThisMonth}
-                  />
-                  <Row
-                    label={`+ Expected remaining paychecks (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
+                    label={`+ Remaining paychecks this month (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
                     value={discretionary.expectedRemainingPaychecks}
                   />
-                  <Row label="+ Commission paid" value={discretionary.commissionPaidThisMonth} />
                   <Row label="+ Commission pending" value={discretionary.commissionPendingThisMonth} />
-                  <Row label="= Total Income" value={discretionary.totalMonthIncome} bold />
-
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">Outgo This Month</p>
                   <Row
-                    label="− Bills (all month due dates, include=TRUE)"
-                    value={discretionary.billsThisMonth}
+                    label="= Total cash + income"
+                    value={discretionary.checking + discretionary.expectedRemainingPaychecks + discretionary.commissionPendingThisMonth}
+                    bold
+                  />
+
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">Subtractions (today → month end)</p>
+                  <Row
+                    label={`− Bills remaining (due ${new Date().getDate()}–${new Date(discretionary.monthEnd).getDate()})`}
+                    value={discretionary.billsRemainingThisMonth}
                     negative
                   />
                   <EditableOutgoRow
-                    label="− Variable expected this month"
+                    label="− Variable expected (remaining of cap)"
                     assumptionKey="planned_variable_remaining_override"
                     value={discretionary.variableExpectedRemaining}
-                    fallback={discretionary.variableCap}
+                    fallback={Math.max(0, discretionary.variableCap - discretionary.variableLoggedThisMonth)}
                     isOverridden={discretionary.plannedVariableRemainingOverride !== null}
-                    hint={`Starts at cap ${formatCurrency(discretionary.variableCap)}. Edit down as the month progresses. Logged so far: ${formatCurrency(discretionary.variableLoggedThisMonth)} (tracked separately, doesn't auto-reduce this).`}
+                    hint={`Default = max(0, cap ${formatCurrency(discretionary.variableCap)} − logged ${formatCurrency(discretionary.variableLoggedThisMonth)}) = ${formatCurrency(Math.max(0, discretionary.variableCap - discretionary.variableLoggedThisMonth))}. Override anytime.`}
                   />
                   <Row
-                    label="− One-time expenses (unpaid, dated ≤ month end OR undated)"
-                    value={discretionary.oneTimeThisMonth}
+                    label="− One-time remaining (dated today–month-end + undated)"
+                    value={discretionary.oneTimeDatedThisMonth + discretionary.oneTimeUndatedAdvisory}
                     negative
                   />
                   <EditableOutgoRow
-                    label="− QuickSilver / CC balance owed"
+                    label="− Extra CC balance owed (beyond CC bills)"
                     assumptionKey="quicksilver_balance_owed"
                     value={discretionary.quicksilverBalanceOwed}
                     fallback={0}
                     isOverridden={discretionary.quicksilverBalanceOwed > 0}
-                    hint="Total credit-card balance you plan to pay this month. Edit anytime."
+                    hint="Use only if you owe MORE on the card than what's already in your bills list. Don't double-count the QuickSilver bill — it's already subtracted above."
                   />
-                  <Row label="= Total Outgo" value={discretionary.totalMonthOutgo} bold />
+                  <Row
+                    label="− Forward Reserve (savings goal contribution)"
+                    value={discretionary.forwardReserve}
+                    negative
+                  />
 
                   <Row
                     label="= Discretionary This Month"
                     value={discretionary.discretionaryThisMonth}
                     bold
                   />
-                  <div className="rounded-md border border-border bg-muted/30 p-3 mt-3 space-y-1 text-xs">
-                    <p className="font-medium text-foreground uppercase tracking-wide">Cash reconciliation</p>
-                    <p className="text-muted-foreground">
-                      Cash in checking right now: <span className="font-mono text-foreground">{formatCurrency(discretionary.checking)}</span>
-                    </p>
-                    <p className="text-muted-foreground">
-                      Discretionary above is <em>income-anchored</em> — it counts paychecks &amp; commissions you'll receive between now and month-end, not just what's already in checking. The two numbers can differ; that's expected.
-                    </p>
-                  </div>
                   <p className="text-xs text-muted-foreground italic pt-2">
-                    Implements §1.2 (income-anchored). Variable starts at full cap and is user-editable. Distinct from Safe to Spend (current cycle, paycheck-bounded, no Forward Reserve).
+                    What's truly safe to spend on top of bills, planned variable, and savings. Distinct from Safe to Spend (current pay cycle only, no Forward Reserve subtracted).
                   </p>
                 </TabsContent>
               )}
