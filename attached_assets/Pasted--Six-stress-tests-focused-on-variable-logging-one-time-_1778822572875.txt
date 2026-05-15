@@ -1,0 +1,99 @@
+**Six stress tests focused on variable, logging, one-time expenses, and discretionary reliability.**
+
+---
+
+**Stress Test 1 — Over-cap variable logging:**
+
+Log a $200 variable spend right now, pushing your MTD logged total to $800 (over the $600 cap). Confirm:
+- Variable Remaining shows $0, never negative
+- Variable Pace shows over 130% with "OVER PACE" flag
+- Discretionary does NOT increase from the over-cap spending (negative remaining must not be treated as credit)
+- Safe to Spend is unaffected (variable logging is a tracking metric, not a checking-side calculation)
+
+If Discretionary jumps up when you log over-cap, the floor logic is broken.
+
+---
+
+**Stress Test 2 — Variable Remaining override conflict:**
+
+You've logged $600 MTD so auto-calculated Remaining = $0. Now manually override Variable Remaining to $200. Confirm:
+- Override wins, dashboard shows Variable Remaining = $200
+- Discretionary drops by $200 vs the auto-calculated state
+- A clear indicator shows the field is manually overridden
+- Removing the override snaps back to auto = $0
+
+This tests whether manual overrides cleanly coexist with auto-calculated values without silent corruption.
+
+---
+
+**Stress Test 3 — One-time expense added for future date:**
+
+Add a one-time expense of $150 dated May 25 (after today, before May 31). Confirm:
+- Discretionary drops by $150
+- Safe to Spend stays the same (May 25 is after May 22 payday, so it shouldn't be in current cycle hold)
+- Required Hold stays the same
+- The expense appears in "One-Time Remaining" line of Discretionary breakdown
+
+Then change the date to May 20 (before payday). Confirm:
+- Safe to Spend NOW drops by $150
+- Required Hold increases by $150
+- Discretionary still reflects the $150 subtraction
+
+This tests whether one-time expense due date routing correctly determines whether it hits cycle hold vs end-of-month surplus.
+
+---
+
+**Stress Test 4 — Mark one-time as paid:**
+
+Take your $150 one-time expense from Test 3 and mark it Paid. Confirm:
+- It immediately drops out of Safe to Spend math (no longer in Required Hold)
+- It drops out of Discretionary math (no longer in unpaid remaining)
+- Required Hold returns to prior value
+- It appears in "Paid History" or equivalent section, not in active obligations
+
+Then add a NEW one-time for $189 dated April 29 (pre-today, overdue). Confirm:
+- It appears in some "overdue" section
+- You get a choice: include it in current calculations or exclude as "deferred"
+- The default behavior matches what you want (probably include, since unpaid is unpaid)
+
+This tests paid-state propagation and overdue handling — both have been problem areas.
+
+---
+
+**Stress Test 5 — Variable logging mid-month recalibration:**
+
+Right now logged MTD is $600 of $600 cap. The system thinks your variable budget is fully spent. Add a NEW variable spend entry for $50. Confirm:
+- Logged MTD updates to $650
+- Variable Pace recalculates (should now show 217% over)
+- Variable Remaining stays $0 (never negative)
+- Discretionary does NOT change (variable over-cap is sunk cost, not future obligation)
+- Safe to Spend stays the same
+
+Then delete that $50 entry. Confirm:
+- Logged MTD drops back to $600
+- All metrics return to prior state
+
+This tests variable log mutation and whether the engine handles logged-spend changes cleanly without state corruption.
+
+---
+
+**Stress Test 6 — The full reconciliation:**
+
+Ask the Advisor this exact question: "Show me the complete cash flow ledger for May 2026 from today through May 31. Start with current checking balance. List every inflow with date and amount. List every outflow with date and amount including all bills, all logged variable spend (as already-spent context, not future outflow), all variable remaining as future outflow, all one-time expenses, the CC payoff, and the Forward Reserve for June 1-7. Show the running balance after each line. End with the Discretionary This Month value and confirm it equals the displayed $326.84."
+
+The advisor should produce a chronological ledger where every dollar is accounted for, the running balance never goes mysteriously negative or jumps, and the final number reconciles. If anything doesn't add up, you've found the bug.
+
+---
+
+**WHAT THESE TESTS PROVE TOGETHER:**
+
+Test 1: Variable over-cap can't break the floor.
+Test 2: Manual overrides and auto-calc coexist correctly.
+Test 3: One-time expense date routing works (cycle vs end-of-month).
+Test 4: Paid-state propagates everywhere; overdue items are handled deterministically.
+Test 5: Variable log mutations don't corrupt state.
+Test 6: The full math reconciles end-to-end with no hidden subtractions.
+
+If all six pass, you have a system you can trust for daily decisions. If any one fails, you know the exact category of bug and where to look.
+
+Run them. Paste failures back to me.
