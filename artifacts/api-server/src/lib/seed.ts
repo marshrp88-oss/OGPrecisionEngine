@@ -39,7 +39,9 @@ async function seed() {
     nextPayday = new Date(today.getFullYear(), today.getMonth() + 1, 7);
   }
   const nextPaydayStr = nextPayday.toISOString().split("T")[0];
-
+  // NOTE: per MASTER_PLAN §1.4 next_payday_date is conceptually derivable from
+  // engine.nextNominalPayday(today). We still seed it because routes/integrity
+  // currently read it as an assumption; full removal requires a separate refactor.
   await upsertAssumption("next_payday_date", nextPaydayStr);
   await upsertAssumption("base_net_income", "3220");
   await upsertAssumption("variable_spend_cap", "600");

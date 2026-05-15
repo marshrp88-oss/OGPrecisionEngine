@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { IntegrityChip } from "@/components/integrity-chip";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { SessionStartChecklist } from "@/components/session-start-checklist";
 import { useScenariosEnabled } from "@/hooks/use-scenarios-enabled";
 
 const ALL_NAV_ITEMS = [
@@ -160,6 +161,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {/* Spec §3G — mobile bottom tabs (fixed, never on desktop). */}
         <MobileBottomNav />
       </div>
+      {/* MASTER_PLAN §1.1 — daily session-start ritual. */}
+      <SessionStartChecklist />
     </div>
   );
 }

@@ -34,7 +34,7 @@ const ASSUMPTION_META: Record<string, AssumptionMeta> = {
   next_payday_date: { label: "Next Payday Date", description: "Your next scheduled paycheck (7th or 22nd)" },
   base_net_income: { label: "Base Net Income", description: "Monthly take-home after federal/state taxes (biweekly pay × 2)", prefix: "$" },
   variable_spend_until_payday: { label: "Variable Spend Until Payday", description: "Already-spent variable amount in current cycle", prefix: "$" },
-  quicksilver_balance_owed: { label: "QuickSilver Balance Owed", description: "Outstanding credit card balance to pay mid-next month", prefix: "$" },
+  quicksilver_balance_owed: { label: "QuickSilver Owed", description: "Outstanding credit card balance to pay mid-next month", prefix: "$" },
   month_length_days: { label: "Month Length (days)", description: "Days used for proration (standard: 30.4)", suffix: " days" },
 
   // Reserves group

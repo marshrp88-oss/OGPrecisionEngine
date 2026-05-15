@@ -370,7 +370,7 @@ export default function Dashboard() {
                     negative
                   />
                   <Row
-                    label="− QuickSilver Balance Owed (CC payoff not yet posted)"
+                    label="− QuickSilver Owed"
                     value={discretionary.quicksilverBalanceOwed}
                     negative
                   />
@@ -432,7 +432,7 @@ export default function Dashboard() {
                     value={discretionary.variableRemainingThisMonth}
                   />
                   <Row
-                    label="QuickSilver balance owed"
+                    label="QuickSilver Owed"
                     value={discretionary.quicksilverBalanceOwed}
                   />
                   <Row label="Minimum cushion" value={discretionary.minimumCushion} />
@@ -544,7 +544,7 @@ function SituationBlock({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">CC balance owed</span>
+                <span className="text-muted-foreground">QuickSilver Owed</span>
                 <span>{formatCurrency(discretionary.quicksilverBalanceOwed)}</span>
               </div>
             </div>
@@ -929,7 +929,7 @@ function VariableSpendColumn() {
             </tr>
             <tr>
               <td colSpan={2} className="text-xs text-muted-foreground">
-                QS Blind Spot
+                QuickSilver Owed
               </td>
               <td className="text-right text-xs text-muted-foreground">
                 {formatCurrency(quicksilverTotal)}
