@@ -81,6 +81,7 @@ const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface DiscretionaryResp {
   discretionaryThisMonth: number;
+  monthlySavings: number;
   monthEnd: string;
   forwardReserve: number;
   proratedVariableRemainingThisMonth: number;
@@ -306,18 +307,18 @@ export default function Dashboard() {
                   Safe to Spend
                 </TabsTrigger>
                 <TabsTrigger
+                  value="monthly-savings"
+                  data-testid="tab-math-monthly-savings"
+                  disabled={!discretionary}
+                >
+                  Monthly Savings
+                </TabsTrigger>
+                <TabsTrigger
                   value="discretionary"
                   data-testid="tab-math-discretionary"
                   disabled={!discretionary}
                 >
                   Discretionary
-                </TabsTrigger>
-                <TabsTrigger
-                  value="reserves"
-                  data-testid="tab-math-reserves"
-                  disabled={!discretionary}
-                >
-                  Reserves
                 </TabsTrigger>
               </TabsList>
 
@@ -384,7 +385,7 @@ export default function Dashboard() {
                     value={discretionary.discretionaryThisMonth}
                     bold
                   />
-                  <p className="text-[10px] text-muted-foreground italic pt-2">
+                  <p className="text-xs text-muted-foreground italic pt-2">
                     Engine-sourced via discretionaryThisMonth(). Distinct from Safe to Spend (current cycle, no Forward Reserve).
                   </p>
                 </TabsContent>
@@ -392,11 +393,19 @@ export default function Dashboard() {
 
               {discretionary && (
                 <TabsContent
-                  value="reserves"
+                  value="monthly-savings"
                   className="space-y-3 font-mono text-sm pt-4"
                 >
                   <p className="text-xs text-muted-foreground italic pb-1">
-                    Inflows already in checking + future-cash credits, vs. every reservation between today and end of month.
+                    Estimated cash that survives to month end. Inflows already in checking + future-cash credits, vs. every reservation between today and end of month. Headline = Discretionary − $100 conservative buffer (per Playbook B62 placeholder).
+                  </p>
+                  <Row
+                    label="= Monthly Savings (estimated)"
+                    value={discretionary.monthlySavings}
+                    bold
+                  />
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">
+                    Inflows / Reservations breakdown
                   </p>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider pt-1">
                     Inflows
@@ -564,8 +573,8 @@ function SituationBlock({
         />
         <StripItem label="Forward Reserve" value={formatCurrency(cycle.forwardReserve)} />
         <StripItem
-          label="Variable Cap"
-          value={formatCurrency(discretionary?.variableCap ?? 0)}
+          label="Monthly Savings"
+          value={formatCurrency(discretionary?.monthlySavings ?? 0)}
         />
       </div>
     </section>
@@ -645,7 +654,7 @@ function DisciplineStrip({
         }
         testid="discipline-savings-rate"
       />
-      <span className="ml-auto text-[11px] text-muted-foreground font-mono">
+      <span className="ml-auto text-xs text-muted-foreground font-mono">
         day {d.dayOfMonth}/{d.daysInMonth}
       </span>
     </div>
@@ -687,7 +696,7 @@ function DisciplineMetric({
       </span>
       <span
         className={cn(
-          "text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border reserve-animate",
+          "text-xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border reserve-animate",
           badgeBg,
         )}
       >
@@ -870,6 +879,7 @@ function VariableSpendColumn() {
   const { data: vs } = useGetVariableSpend(undefined, {
     query: { queryKey: getGetVariableSpendQueryKey() },
   });
+  const [, navigate] = useLocation();
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -886,9 +896,20 @@ function VariableSpendColumn() {
 
   return (
     <section data-testid="variable-spend-column" className="space-y-3">
-      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        Variable Spend Log
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Variable Spend Log
+        </h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() => navigate("/")}
+          data-testid="button-log-variable"
+        >
+          Log
+        </Button>
+      </div>
       {recent.length === 0 ? (
         <p className="text-xs text-muted-foreground font-mono">— No entries yet</p>
       ) : (
@@ -910,7 +931,7 @@ function VariableSpendColumn() {
                   <span className="inline-flex items-center gap-1.5">
                     {v.category ?? ""}
                     {v.quicksilver && (
-                      <span className="text-[10px] font-mono uppercase tracking-wider px-1 py-0 rounded bg-warning/15 text-warning border border-warning/30">
+                      <span className="text-xs font-mono uppercase tracking-wider px-1 py-0 rounded bg-warning/15 text-warning border border-warning/30">
                         QS
                       </span>
                     )}
