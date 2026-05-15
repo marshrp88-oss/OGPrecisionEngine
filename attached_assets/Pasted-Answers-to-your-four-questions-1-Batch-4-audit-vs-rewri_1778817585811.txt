@@ -1,0 +1,31 @@
+Answers to your four questions:
+
+1. Batch 4 (audit vs rewrite): AUDIT AND PATCH ONLY. Do not rewrite from scratch. Preserve the 170/170 test suite. The function being live and tested is more valuable than starting over.
+
+Audit checklist — verify each against the §1.2 formula and patch only on divergence:
+- Does it include "expected remaining paychecks this month" as income? (Most likely actual bug.)
+- Does it correctly avoid subtracting Forward Reserve? (Plan says no — bills already inside this month are already in outgo.)
+- Does it support plannedVariableRemainingOverride as user opt-in?
+- Are paid vs pending commissions distinguished correctly?
+- Does it handle the negative-discretionary case (display the negative, do not floor to zero)?
+
+Report what you find before patching. If the audit shows the existing function is already correct on all five points, mark Batch 4 done and move on. Do not invent reasons to change working code.
+
+2. Conflict B (Monthly Savings card): RE-ADD AS TERTIARY. Override the prior "dropped" decision. The plan stands. Three numbers on the dashboard: Discretionary This Month (primary, largest), Safe to Spend (secondary), Monthly Savings (tertiary, smaller or expandable). Reasoning: Monthly Savings answers the forward-paycheck-boundary question that Discretionary doesn't — they're complementary, not redundant. If the comment in advisor-snapshot-drawer.tsx:150 explains a real engineering reason it was dropped (not just a UX preference), surface that to me before re-adding. Otherwise, re-add.
+
+3. Conflict C (naming): YES. Rip out "CC balance owed" and "QS Blind Spot" everywhere. Replace with "QuickSilver Owed" universally. One label, one number, one definition. No exceptions, no legacy strings left in tooltips or advisor copy.
+
+4. plannedVariableRemainingOverride UI: YES, add the input. Place it inside the Discretionary breakdown expandable, on the "Variable expected remaining" line. Make it a small editable field that defaults to cap minus logged. When the user types an override value, recompute Discretionary live. Add a subtle "Reset to default" link next to the field. Reasoning: the whole point of Discretionary is decision-making, and "what if I spend lighter this month" is the most common scenario the user models in his head. The override turns that mental exercise into a real-time slider.
+
+Smaller flags from your inventory — confirmed:
+
+- seed.ts next_payday_date field: DELETE. It's vestigial. Engine computes dynamically, no value in seeding a static field that will go stale immediately.
+- qs_paid_off flag on variable_spend rows: ADD per §2.4. Required for the reconciliation cycle when QuickSilver bill is marked paid.
+- FORWARD_RESERVE_AUDIT.md: WRITE IT during Batch 3 §2.1. Short document, but it goes in the repo so future sessions don't re-litigate this.
+- Seasonal utilities (§2.8): build it as scoped. Add seasonal_amounts JSONB to bills schema, wire the engine to use month-keyed lookup with fallback to flat amount, ship the UI toggle in the Bills edit modal. I'll get historical National Grid / National Fuel numbers to you separately.
+
+One revision to the session plan based on your inventory:
+
+Batch 4 is already substantially done. That frees credits. Re-allocate the saved time to Batch 5 (Session-Start Checklist) — it's the highest-leverage incomplete item and I want it to ship complete in this session, not partial. Spend the extra time making the checklist actually nag (cannot be permanently dismissed, returns next day even if dismissed today), making the five items genuinely fast (each under 10 seconds to confirm/complete), and integrating Check 13 (variable spend staleness) tightly with checklist item 2.
+
+Approved to generate the Part 8 task plan. Show me the plan before executing, then proceed batch by batch with verification after each.
