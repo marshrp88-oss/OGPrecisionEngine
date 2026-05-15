@@ -84,6 +84,18 @@ interface DiscretionaryResp {
   discretionaryThisMonth: number;
   monthlySavings: number;
   monthEnd: string;
+  paychecksReceivedThisMonth: number;
+  paychecksReceivedCount: number;
+  expectedRemainingPaychecks: number;
+  commissionPaidThisMonth: number;
+  commissionPendingThisMonth: number;
+  totalMonthIncome: number;
+  billsThisMonth: number;
+  variableLoggedThisMonth: number;
+  variableExpectedRemaining: number;
+  plannedVariableRemainingOverride: number | null;
+  oneTimeThisMonth: number;
+  totalMonthOutgo: number;
   forwardReserve: number;
   proratedVariableRemainingThisMonth: number;
   daysRemainingInMonth: number;
@@ -353,41 +365,60 @@ export default function Dashboard() {
                   className="space-y-3 font-mono text-sm pt-4"
                 >
                   <p className="text-xs text-muted-foreground italic pb-1">
-                    Horizon: today through {formatDate(discretionary.monthEnd)}. End-of-month deployable surplus from current checking after every known obligation between today and the first paycheck of next month — including the Forward Reserve held back per Playbook §2.1.
+                    Horizon: full calendar month (May 1 → {formatDate(discretionary.monthEnd)}). Total income this month minus everything that leaves the account this month. Per §1.2 — can go negative; negative means this month consumes reserves.
                   </p>
-                  <Row label="Checking Balance" value={discretionary.checking} />
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Income This Month</p>
                   <Row
-                    label="− Bills Remaining This Month (Include=TRUE, due today→month end)"
-                    value={discretionary.billsRemainingThisMonth}
+                    label={`Paychecks received (${discretionary.paychecksReceivedCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
+                    value={discretionary.paychecksReceivedThisMonth}
+                  />
+                  <Row
+                    label={`+ Expected remaining paychecks (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
+                    value={discretionary.expectedRemainingPaychecks}
+                  />
+                  <Row label="+ Commission paid" value={discretionary.commissionPaidThisMonth} />
+                  <Row label="+ Commission pending" value={discretionary.commissionPendingThisMonth} />
+                  <Row label="= Total Income" value={discretionary.totalMonthIncome} bold />
+
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">Outgo This Month</p>
+                  <Row
+                    label="− Bills (all month due dates, include=TRUE)"
+                    value={discretionary.billsThisMonth}
                     negative
                   />
                   <Row
-                    label={`− Prorated Variable Remaining (${discretionary.daysRemainingInMonth} days × ${formatCurrency(discretionary.variableCap / 30.4)}/day)`}
-                    value={discretionary.proratedVariableRemainingThisMonth}
+                    label="− Variable spend logged"
+                    value={discretionary.variableLoggedThisMonth}
                     negative
                   />
                   <Row
-                    label="− One-Time Expenses dated through month end"
-                    value={discretionary.oneTimeDatedThisMonth}
+                    label={
+                      discretionary.plannedVariableRemainingOverride !== null
+                        ? `− Variable expected remaining (override)`
+                        : `− Variable expected remaining (cap ${formatCurrency(discretionary.variableCap)} − logged)`
+                    }
+                    value={discretionary.variableExpectedRemaining}
                     negative
                   />
                   <Row
-                    label="− QuickSilver Owed"
+                    label="− One-time expenses (unpaid, dated ≤ month end OR undated)"
+                    value={discretionary.oneTimeThisMonth}
+                    negative
+                  />
+                  <Row
+                    label="− QuickSilver balance owed"
                     value={discretionary.quicksilverBalanceOwed}
                     negative
                   />
-                  <Row
-                    label="− Forward Reserve (next-month days 1-7 + 7d variable, §2.1)"
-                    value={discretionary.forwardReserve}
-                    negative
-                  />
+                  <Row label="= Total Outgo" value={discretionary.totalMonthOutgo} bold />
+
                   <Row
                     label="= Discretionary This Month"
                     value={discretionary.discretionaryThisMonth}
                     bold
                   />
                   <p className="text-xs text-muted-foreground italic pt-2">
-                    Engine-sourced via discretionaryThisMonth(). Distinct from Safe to Spend (current cycle, no Forward Reserve).
+                    Implements §1.2 (income-anchored). Distinct from Safe to Spend (current cycle, paycheck-bounded, no Forward Reserve).
                   </p>
                 </TabsContent>
               )}

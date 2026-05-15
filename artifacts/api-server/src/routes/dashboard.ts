@@ -9,7 +9,7 @@ import {
   MONTH_LENGTH_DAYS,
   VARIABLE_SPEND_CAP,
   Bill as EngineBill,
-  discretionaryThisMonth as engineDiscretionaryThisMonth,
+  commissionTakeHome,
   nextNominalPayday,
 } from "@workspace/finance";
 
@@ -55,84 +55,156 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const monthLengthDays = A("month_length_days", MONTH_LENGTH_DAYS);
   const minimumCushion = A("minimum_cushion", 0);
   const quicksilverBalanceOwed = A("quicksilver_balance_owed", 0);
+  const mrrTarget = A("mrr_target", 700);
+  const nrrTarget = A("nrr_target", 6000);
+  const taxRate = A("commission_tax_rate", 0.435);
+  // §1.2 override: empty/missing → use cap − logged. Numeric → use that.
+  const overrideRow = allAssumps.find((a) => a.key === "planned_variable_remaining_override");
+  const plannedVariableRemainingOverride: number | null =
+    overrideRow && overrideRow.value !== "" && !isNaN(parseFloat(overrideRow.value))
+      ? parseFloat(overrideRow.value)
+      : null;
 
-  // Paychecks remaining this month: walk engine `nextNominalPayday` until end-of-month.
+  // §1.2: paychecksReceivedThisMonth + expectedRemainingPaychecks.
+  // Paydays: 7th and 22nd of month (engine convention).
   const paydayDays = [7, 22];
-  const monthEndUtc = new Date(Date.UTC(monthEnd.getFullYear(), monthEnd.getMonth(), monthEnd.getDate()));
-  const cursorStart = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate() + 1));
-  let paychecksRemaining = 0;
-  let cursor = new Date(cursorStart);
-  while (cursor.getTime() <= monthEndUtc.getTime()) {
-    const nominal = nextNominalPayday(cursor, paydayDays);
-    if (nominal.getTime() > monthEndUtc.getTime()) break;
-    // Count using nominal day; effectivePayday only matters for cash-availability,
-    // not for "did this month's paycheck land in checking yet".
-    paychecksRemaining += 1;
-    cursor = new Date(Date.UTC(nominal.getUTCFullYear(), nominal.getUTCMonth(), nominal.getUTCDate() + 1));
+  const netPerPaycheck = baseNetIncome / 2;
+  let paychecksReceivedThisMonth = 0;
+  let expectedRemainingPaychecks = 0;
+  let paychecksReceivedCount = 0;
+  let paychecksRemainingCount = 0;
+  for (const day of paydayDays) {
+    const nominal = new Date(today.getFullYear(), today.getMonth(), day);
+    const effective = nextNominalPayday(
+      new Date(Date.UTC(today.getFullYear(), today.getMonth(), day - 1)),
+      paydayDays,
+    );
+    void effective;
+    if (nominal <= today) {
+      paychecksReceivedThisMonth += netPerPaycheck;
+      paychecksReceivedCount += 1;
+    } else if (nominal <= monthEnd) {
+      expectedRemainingPaychecks += netPerPaycheck;
+      paychecksRemainingCount += 1;
+    }
   }
-  const remainingPaychecksThisMonth = Math.round((baseNetIncome / 2) * paychecksRemaining * 100) / 100;
+  const remainingPaychecksThisMonth = expectedRemainingPaychecks; // back-compat alias
 
-  // Confirmed commission for THIS month, split into already-received vs pending.
+  // §1.2: commissionPaid (status=paid, payoutDate in [monthStart, today]) and
+  // commissionPending (status=pending, payoutDate in (today, monthEnd]).
   const allCommissions = await db.select().from(commissions);
-  let confirmedCommissionUnreceived = 0;
-  let confirmedCommissionAlready = 0;
-  let confirmedCommissionTotal = 0;
+  let commissionPaidThisMonth = 0;
+  let commissionPendingThisMonth = 0;
   for (const c of allCommissions) {
     if (!c.payoutDate) continue;
     const pd = new Date(c.payoutDate);
     if (pd.getFullYear() !== today.getFullYear() || pd.getMonth() !== today.getMonth()) continue;
-    if (c.status !== "paid" && c.status !== "confirmed") continue;
-    const amount = parseFloat(c.takeHome);
-    confirmedCommissionTotal += amount;
-    if (pd <= today) confirmedCommissionAlready += amount;
-    else confirmedCommissionUnreceived += amount;
+    // Prefer stored takeHome; fall back to recomputing if missing.
+    const stored = parseFloat(c.takeHome);
+    const amount = !isNaN(stored) && stored > 0
+      ? stored
+      : commissionTakeHome(
+          parseFloat(c.mrrAchieved as unknown as string),
+          parseFloat(c.nrrAchieved as unknown as string),
+          mrrTarget,
+          nrrTarget,
+          taxRate,
+        );
+    if (c.status === "paid" && pd <= today) commissionPaidThisMonth += amount;
+    else if (c.status === "pending" && pd > today && pd <= monthEnd)
+      commissionPendingThisMonth += amount;
   }
+  // Back-compat aliases for older UI fields:
+  const confirmedCommissionAlready = commissionPaidThisMonth;
+  const confirmedCommissionUnreceived = commissionPendingThisMonth;
+  const confirmedCommissionTotal = commissionPaidThisMonth + commissionPendingThisMonth;
 
-  // Bills remaining this month (Include=TRUE, due day in [today, month end]).
+  // §1.2: bills due THIS MONTH (include=TRUE, dueDay in [1, monthEnd.day]).
+  // NOT just remaining — all of the month, paid or not. The income side already
+  // accounts for paychecks received, so the outgo side must mirror the same
+  // calendar-month frame.
   const allBills = await db.select().from(bills);
+  let billsThisMonthTotal = 0;
   let billsRemainingThisMonth = 0;
+  const billsThisMonthDetail: { id: number; name: string; amount: number; dueDay: number }[] = [];
   const billsRemainingDetail: { id: number; name: string; amount: number; dueDay: number }[] = [];
   for (const b of allBills) {
     if (!b.includeInCycle) continue;
     const amt = parseFloat(b.amount);
     if (amt <= 0) continue;
+    if (b.dueDay >= 1 && b.dueDay <= monthEnd.getDate()) {
+      billsThisMonthTotal += amt;
+      billsThisMonthDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay });
+    }
     if (b.dueDay >= today.getDate() && b.dueDay <= monthEnd.getDate()) {
       billsRemainingThisMonth += amt;
       billsRemainingDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay });
     }
   }
 
-  // Unpaid one-time expenses: dated through month-end + undated (advisory).
+  // §1.2: one-time = paid=false AND (dueDate IS NULL OR dueDate <= monthEnd).
+  // Includes undated unpaid items (no longer "advisory only").
   const oteRows = await db.select().from(oneTimeExpenses).where(eq(oneTimeExpenses.paid, false));
+  let oneTimeThisMonth = 0;
   let oneTimeDatedThisMonth = 0;
   let oneTimeUndated = 0;
   for (const o of oteRows) {
     const amt = parseFloat(o.amount);
-    if (!o.dueDate) { oneTimeUndated += amt; continue; }
+    if (!o.dueDate) {
+      oneTimeUndated += amt;
+      oneTimeThisMonth += amt; // §1.2 includes undated
+      continue;
+    }
     const dd = new Date(o.dueDate);
-    if (dd >= today && dd <= monthEnd) oneTimeDatedThisMonth += amt;
+    if (dd <= monthEnd) {
+      oneTimeThisMonth += amt;
+      if (dd >= today) oneTimeDatedThisMonth += amt;
+    }
   }
 
-  // Variable spent this month and remaining (cap − spent).
+  // Variable spent this month — full month window (entries can be future-dated
+  // weeks too; spec says monthStart..monthEnd).
   const allVs = await db.select().from(variableSpend);
-  const monthVs = allVs.filter((v) => new Date(v.weekOf) >= monthStart && new Date(v.weekOf) <= today);
-  const variableSpentThisMonth = monthVs.reduce((s, v) => s + parseFloat(v.amount), 0);
+  const monthVs = allVs.filter((v) => {
+    const w = new Date(v.weekOf);
+    return w >= monthStart && w <= monthEnd;
+  });
+  const variableLoggedThisMonth = monthVs.reduce((s, v) => s + parseFloat(v.amount), 0);
+  const variableSpentThisMonth = variableLoggedThisMonth;
   const quicksilverAccruedThisMonth = monthVs
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
-  const variableRemainingThisMonth = Math.max(0, variableCap - variableSpentThisMonth);
+  // §1.2: variableExpected = override ?? max(0, cap − logged).
+  const variableCapRemaining = Math.max(0, variableCap - variableLoggedThisMonth);
+  const variableExpectedRemaining =
+    plannedVariableRemainingOverride !== null
+      ? plannedVariableRemainingOverride
+      : variableCapRemaining;
+  const variableRemainingThisMonth = variableExpectedRemaining; // back-compat alias
 
-  // ---- Aggregate ----
-  // Inflow / outflow rollups are kept for the breakdown UI so the user can see
-  // every component, but the headline number must come from the engine to
-  // satisfy Playbook §2.1 (Forward Reserve Rule). The engine function and the
-  // raw inflow/outflow ledger answer different questions — see the engine doc
-  // comment on discretionaryThisMonth().
-  const inflows = checking + remainingPaychecksThisMonth + confirmedCommissionUnreceived;
+  // ---- §1.2 ledger ----
+  // Income side (calendar-month, paycheck schedule + commission status).
+  const totalMonthIncome =
+    paychecksReceivedThisMonth +
+    expectedRemainingPaychecks +
+    commissionPaidThisMonth +
+    commissionPendingThisMonth;
+  // Outgo side (calendar-month obligations, with override-aware variable).
+  const totalMonthOutgo =
+    billsThisMonthTotal +
+    variableLoggedThisMonth +
+    variableExpectedRemaining +
+    oneTimeThisMonth +
+    quicksilverBalanceOwed;
+  // §1.2: result CAN be negative. Do not floor.
+  const discretionaryHeadline = totalMonthIncome - totalMonthOutgo;
+
+  // Back-compat aliases for older UI pieces still referencing inflows/outflows.
+  const inflows = checking + expectedRemainingPaychecks + commissionPendingThisMonth;
   const outflows =
     billsRemainingThisMonth +
     oneTimeDatedThisMonth +
-    variableRemainingThisMonth +
+    variableExpectedRemaining +
     quicksilverBalanceOwed +
     minimumCushion;
 
@@ -152,26 +224,10 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const fixedMonthlyTotal = monthBillsForEngine.reduce((s, b) => s + b.amount, 0);
   const fixedRatio = baseNetIncome > 0 ? fixedMonthlyTotal / baseNetIncome : 0;
 
-  // Discretionary This Month — engine-sourced per Playbook §2.1.
-  // Subtracts the FULL Forward Reserve. The discretionary formula does NOT
-  // subtract Required Hold separately, so every May 1-7 obligation must be
-  // reserved out of today's cash via Forward Reserve.
-  const discretionaryHeadline = engineDiscretionaryThisMonth(
-    checking,
-    billsRemainingThisMonth,
-    oneTimeDatedThisMonth,
-    quicksilverBalanceOwed,
-    monthBillsForEngine,
-    today,
-    variableCap,
-    monthLengthDays,
-  );
-
-  // PLACEHOLDER (per user direction 2026-04-24): Monthly Savings Estimate is
-  // expressed as Discretionary minus a fixed $100 buffer. Rationale: Monthly
-  // Savings must always be ≤ Discretionary (both end at the same payday
-  // boundary), and the $100 offset keeps it conservative while the income/
-  // instance accounting in the full B62 formula is reconciled.
+  // Monthly Savings = Discretionary − $100 conservative buffer (Playbook B62
+  // placeholder). Floored at 0 because "savings" can't be negative — when
+  // Discretionary is negative, savings is simply $0 and the negative is shown
+  // on the Discretionary line itself.
   const engineSavings = Math.max(0, discretionaryHeadline - 100);
   const savingsRate = baseNetIncome > 0 ? engineSavings / (baseNetIncome + confirmedCommissionTotal) : 0;
 
@@ -229,16 +285,33 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     proratedVariableRemainingThisMonth: round(proratedVariableRemainingForBreakdown),
     daysRemainingInMonth,
 
-    // Inflows
+    // §1.2 Income ledger
+    paychecksReceivedThisMonth: round(paychecksReceivedThisMonth),
+    paychecksReceivedCount,
+    expectedRemainingPaychecks: round(expectedRemainingPaychecks),
+    commissionPaidThisMonth: round(commissionPaidThisMonth),
+    commissionPendingThisMonth: round(commissionPendingThisMonth),
+    totalMonthIncome: round(totalMonthIncome),
+
+    // §1.2 Outgo ledger
+    billsThisMonth: round(billsThisMonthTotal),
+    billsThisMonthDetail,
+    variableLoggedThisMonth: round(variableLoggedThisMonth),
+    variableExpectedRemaining: round(variableExpectedRemaining),
+    plannedVariableRemainingOverride,
+    oneTimeThisMonth: round(oneTimeThisMonth),
+    totalMonthOutgo: round(totalMonthOutgo),
+
+    // Inflows (back-compat aliases)
     checking: round(checking),
     remainingPaychecksThisMonth,
-    paychecksRemainingCount: paychecksRemaining,
+    paychecksRemainingCount,
     baseNetIncome,
     confirmedCommissionUnreceived: round(confirmedCommissionUnreceived),
     confirmedCommissionAlready: round(confirmedCommissionAlready),
     totalInflowsAvailable: round(inflows),
 
-    // Outflows
+    // Outflows (back-compat aliases)
     billsRemainingThisMonth: round(billsRemainingThisMonth),
     billsRemainingDetail,
     oneTimeDatedThisMonth: round(oneTimeDatedThisMonth),
