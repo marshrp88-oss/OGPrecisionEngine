@@ -1,0 +1,65 @@
+I just added MASTER_PLAN_APRIL_30.md to the project. Read it in full before doing anything else. It supersedes all other plan documents in this repo (BUILD_SPEC.md, FIX_PLAN.md, FIX_PLAN_PART_K.md, APRIL_30_PLAN.md) for this session. Those earlier files remain as reference only — do not execute against them directly.
+
+Before generating any task plan, do these four things and report back:
+
+1. Inventory the current codebase against Part 8 of the master plan. For each batch (1 through 11), tell me what's already built, what's partial, and what's missing. Do not assume the prior session left things in the state the plan describes — verify by reading the code. Specifically check whether Bills page completions (Category Breakdown, Autopay Audit, Upcoming Timeline, Income vs Obligations) and other Part 6 items are already done. I do not want to waste credits rebuilding completed work.
+
+2. Surface every conflict between this plan and the current codebase. If anything in the plan contradicts what you find in the code, flag it now. Do not silently reconcile.
+
+3. Confirm your understanding of the three governing principles by stating them back in your own words: monthly anchoring beats cycle anchoring as the primary frame, universal UI editability is non-negotiable, and the session-start ritual is what prevents data staleness systemically.
+
+4. Walk me through your proposed approach for Batch 4 (Discretionary This Month rewrite) specifically, in plain English, before writing any code. Show me the formula structure, the inputs, and how the breakdown waterfall will display. I need to verify it matches my mental model before implementation begins. This is the single most important task in the plan — do not start coding it until I approve.
+
+Once those four items are reported and Batch 4 is approved, generate a task plan that follows Part 8 batching exactly. Do not reorder across batches. Within a batch, parallelize where files do not collide. Do not merge batches.
+
+Hard rules for this session:
+
+- Do not seed placeholder or demo data. If a value is unknown, leave it null and ask me.
+- Do not skip the verification step at the end of any batch. Run the checks in Part 9 before marking a batch complete.
+- If a verification fails, stop and report. Do not attempt a fix and retry silently.
+- Do not modify MASTER_PLAN_APRIL_30.md without my explicit approval.
+- When you encounter editability work (Batch 6), use the matrix in the prior APRIL_30_PLAN.md §P0-2 as the checklist. Tick through every row. Do not declare editability "done" page by page — declare it done only when every cell of the matrix is verified.
+- If credits drop below 20% remaining, stop starting new batches. Run verification on what's done, commit, and leave the repo compilable.
+
+Two batches override others if forced to choose:
+- Batch 4 (Discretionary rewrite) must ship in this session. It is the headline.
+- Batch 5 (Session-Start Checklist + Quick-Log + Staleness Check + Overdue Escalation) must ship in this session. It closes more issues than any other single item.
+
+If you finish those two plus Batches 1-3 and 6, the session is a success even if everything else is deferred.
+
+Report back with items 1-4 before generating the task plan.
+
+Three things about how I wrote that prompt:
+The inventory step (item 1) is the most expensive insurance you can buy at the start of a session. Agent 4 will sometimes happily rebuild things that already exist if you don't force it to look first. The Bills page screenshot tells me at least four "deferred" features are already built. That inventory could save you 30-60 minutes of credit burn.
+The Batch 4 review gate (item 4) is the most important quality control in the prompt. If the formula is wrong, the rewrite is worse than the current cycle version. Make the Agent describe it in English first, push back hard if anything sounds off, and only approve when it matches your Excel mental model exactly.
+The fallback priority at the bottom ("if forced to choose, Batch 4 and Batch 5 must ship") gives Agent 4 a clear decision rule if credits run thin. Without it, the Agent will often spread effort evenly across batches and leave the most important work half-done. With it, the Agent will sacrifice lower-priority work to protect the headline items.
+Paste it as-is. Don't add to it — extra context dilutes the directives. If the Agent's inventory or Batch 4 walkthrough surfaces problems, address those in follow-up messages, not by editing the initial prompt.You said: Just paste the correct prompt to paste in the replit chat whatever you think is optimal nothing else paste here nothing elseJust paste the correct prompt to paste in the replit chat whatever you think is optimal nothing else paste here nothing else11:54 PMI just added MASTER_PLAN_APRIL_30.md to the project. Read it in full before doing anything else. It supersedes all other plan documents in this repo (BUILD_SPEC.md, FIX_PLAN.md, FIX_PLAN_PART_K.md, APRIL_30_PLAN.md) for this session. Those earlier files remain as reference only — do not execute against them directly.
+
+Before generating any task plan, do these four things and report back:
+
+1. Inventory the current codebase against Part 8 of the master plan. For each batch (1 through 11), tell me what's already built, what's partial, and what's missing. Do not assume the prior session left things in the state the plan describes — verify by reading the code. Specifically check whether Bills page completions (Category Breakdown, Autopay Audit, Upcoming Timeline, Income vs Obligations) and other Part 6 items are already done. I do not want to waste credits rebuilding completed work.
+
+2. Surface every conflict between this plan and the current codebase. If anything in the plan contradicts what you find in the code, flag it now. Do not silently reconcile.
+
+3. Confirm your understanding of the three governing principles by stating them back in your own words: monthly anchoring beats cycle anchoring as the primary frame, universal UI editability is non-negotiable, and the session-start ritual is what prevents data staleness systemically.
+
+4. Walk me through your proposed approach for Batch 4 (Discretionary This Month rewrite) specifically, in plain English, before writing any code. Show me the formula structure, the inputs, and how the breakdown waterfall will display. I need to verify it matches my mental model before implementation begins. This is the single most important task in the plan — do not start coding it until I approve.
+
+Once those four items are reported and Batch 4 is approved, generate a task plan that follows Part 8 batching exactly. Do not reorder across batches. Within a batch, parallelize where files do not collide. Do not merge batches.
+
+Hard rules for this session:
+
+- Do not seed placeholder or demo data. If a value is unknown, leave it null and ask me.
+- Do not skip the verification step at the end of any batch. Run the checks in Part 9 before marking a batch complete.
+- If a verification fails, stop and report. Do not attempt a fix and retry silently.
+- Do not modify MASTER_PLAN_APRIL_30.md without my explicit approval.
+- When you encounter editability work (Batch 6), use the matrix in the prior APRIL_30_PLAN.md §P0-2 as the checklist. Tick through every row. Do not declare editability "done" page by page — declare it done only when every cell of the matrix is verified.
+- If credits drop below 20% remaining, stop starting new batches. Run verification on what's done, commit, and leave the repo compilable.
+
+Two batches override others if forced to choose:
+- Batch 4 (Discretionary rewrite) must ship in this session. It is the headline.
+- Batch 5 (Session-Start Checklist + Quick-Log + Staleness Check + Overdue Escalation) must ship in this session. It closes more issues than any other single item.
+
+If you finish those two plus Batches 1-3 and 6, the session is a success even if everything else is deferred.
+
+Report back with items 1-4 before generating the task plan.
