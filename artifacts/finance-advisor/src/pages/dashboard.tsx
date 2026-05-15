@@ -581,20 +581,25 @@ function SituationBlock({
             {discretionary ? formatCurrency(discretionary.discretionaryThisMonth) : "—"}
           </h3>
           {discretionary && (
-            <div className="mt-3 space-y-1 text-xs font-mono">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Variable remaining</span>
-                <span>
-                  {formatCurrency(discretionary.variableRemainingThisMonth)}{" "}
-                  <span className="text-muted-foreground">
-                    of {formatCurrency(discretionary.variableCap)}
-                  </span>
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">QuickSilver Owed</span>
-                <span>{formatCurrency(discretionary.quicksilverBalanceOwed)}</span>
-              </div>
+            <div className="mt-3 space-y-1.5 text-xs font-mono">
+              <InlineAssumptionEditor
+                label="Variable remaining"
+                assumptionKey="planned_variable_remaining_override"
+                value={discretionary.variableExpectedRemaining}
+                fallback={discretionary.variableCap}
+                isOverridden={discretionary.plannedVariableRemainingOverride !== null}
+                suffix={`of ${formatCurrency(discretionary.variableCap)}`}
+              />
+              <InlineAssumptionEditor
+                label="QuickSilver / CC Owed"
+                assumptionKey="quicksilver_balance_owed"
+                value={discretionary.quicksilverBalanceOwed}
+                fallback={0}
+                isOverridden={discretionary.quicksilverBalanceOwed > 0}
+              />
+              <p className="text-[10px] text-muted-foreground/70 italic pt-1">
+                Tap a number to edit. Updates Discretionary instantly.
+              </p>
             </div>
           )}
         </div>
@@ -1362,6 +1367,131 @@ function OneTimeQuickAddDialog() {
 // ---------------------------------------------------------------------------
 // Shared math row (used by Zone 3 tabs)
 // ---------------------------------------------------------------------------
+
+function InlineAssumptionEditor({
+  label,
+  assumptionKey,
+  value,
+  fallback,
+  isOverridden,
+  suffix,
+}: {
+  label: string;
+  assumptionKey: string;
+  value: number;
+  fallback: number;
+  isOverridden: boolean;
+  suffix?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value.toFixed(2));
+  const committedRef = useRef(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const updateMut = useUpdateAssumption();
+
+  useEffect(() => {
+    if (!editing) setDraft(value.toFixed(2));
+  }, [value, editing]);
+
+  const commit = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const trimmed = draft.trim();
+    const parsed = trimmed === "" ? null : parseFloat(trimmed);
+    if (trimmed !== "" && (parsed === null || isNaN(parsed) || parsed < 0)) {
+      toast({ title: "Enter a non-negative number or leave blank to reset", variant: "destructive" });
+      setDraft(value.toFixed(2));
+      setEditing(false);
+      return;
+    }
+    updateMut.mutate(
+      { key: assumptionKey, data: { value: trimmed === "" ? "" : String(parsed) } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+          setEditing(false);
+        },
+        onError: () => {
+          toast({ title: "Update failed", variant: "destructive" });
+          setDraft(value.toFixed(2));
+          setEditing(false);
+        },
+      },
+    );
+  };
+
+  const reset = () => {
+    updateMut.mutate(
+      { key: assumptionKey, data: { value: "" } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+          toast({ title: `Reset to default (${formatCurrency(fallback)})` });
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="flex justify-between items-center gap-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="flex items-center gap-1.5">
+        {editing ? (
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={() => {
+              committedRef.current = false;
+            }}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
+              if (e.key === "Escape") {
+                committedRef.current = true;
+                setDraft(value.toFixed(2));
+                setEditing(false);
+              }
+            }}
+            className="w-24 text-right font-mono bg-background border border-border rounded px-2 py-0.5 text-xs"
+            data-testid={`inline-input-${assumptionKey}`}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="font-mono hover:underline decoration-dotted underline-offset-4 text-foreground"
+            data-testid={`inline-edit-${assumptionKey}`}
+          >
+            {formatCurrency(value)}
+          </button>
+        )}
+        {suffix && !editing && (
+          <span className="text-muted-foreground">{suffix}</span>
+        )}
+        {isOverridden && !editing && (
+          <button
+            type="button"
+            onClick={reset}
+            className="text-[9px] text-muted-foreground hover:text-foreground uppercase tracking-wider ml-1"
+            data-testid={`inline-reset-${assumptionKey}`}
+          >
+            reset
+          </button>
+        )}
+      </span>
+    </div>
+  );
+}
 
 function EditableOutgoRow({
   label,
