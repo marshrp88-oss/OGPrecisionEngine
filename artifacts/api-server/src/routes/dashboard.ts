@@ -218,6 +218,9 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   res.json({
     // Headline — engine-sourced per Playbook §2.1 (Forward Reserve Rule).
     discretionaryThisMonth: round(discretionaryHeadline),
+    // Monthly Savings — engine-sourced (engineSavings, computed above
+    // from discretionaryHeadline per Playbook B62 placeholder rule).
+    monthlySavings: round(engineSavings),
     monthEnd: monthEnd.toISOString().split("T")[0],
 
     // Forward Reserve subtracted from the headline per §2.1. Surfaced so the

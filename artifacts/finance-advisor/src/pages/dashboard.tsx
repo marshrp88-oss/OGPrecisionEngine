@@ -82,6 +82,7 @@ const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface DiscretionaryResp {
   discretionaryThisMonth: number;
+  monthlySavings: number;
   monthEnd: string;
   forwardReserve: number;
   proratedVariableRemainingThisMonth: number;
@@ -207,6 +208,15 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
+      {/* ZONE 1 — SITUATION (above the fold, first primary content) */}
+      <SituationBlock cycle={cycle} discretionary={discretionary} status={status} />
+
+      {discretionary?.discipline && (
+        <DisciplineStrip d={discretionary.discipline} />
+      )}
+
+      <ActionRow />
+
       <IntegrityStatusBanner />
 
       {cycle.isStale && (
@@ -263,15 +273,6 @@ export default function Dashboard() {
           </AlertDescription>
         </Alert>
       )}
-
-      {/* ZONE 1 — SITUATION */}
-      <SituationBlock cycle={cycle} discretionary={discretionary} status={status} />
-
-      {discretionary?.discipline && (
-        <DisciplineStrip d={discretionary.discipline} />
-      )}
-
-      <ActionRow />
 
       {/* ZONE 2 — SUPPORTING CONTEXT */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -401,7 +402,7 @@ export default function Dashboard() {
                   </p>
                   <Row
                     label="= Monthly Savings (estimated)"
-                    value={Math.max(0, discretionary.discretionaryThisMonth - 100)}
+                    value={discretionary.monthlySavings}
                     bold
                   />
                   <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">
@@ -510,7 +511,7 @@ function SituationBlock({
       data-testid="situation-block"
       data-status={status}
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x divide-border">
+      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border">
         {/* LEFT — Safe to Spend */}
         <div className="p-6 md:p-8">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
@@ -574,9 +575,7 @@ function SituationBlock({
         <StripItem label="Forward Reserve" value={formatCurrency(cycle.forwardReserve)} />
         <StripItem
           label="Monthly Savings"
-          value={formatCurrency(
-            Math.max(0, (discretionary?.discretionaryThisMonth ?? 0) - 100),
-          )}
+          value={formatCurrency(discretionary?.monthlySavings ?? 0)}
         />
       </div>
     </section>
