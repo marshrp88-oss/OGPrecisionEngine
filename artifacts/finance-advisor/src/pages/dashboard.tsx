@@ -366,9 +366,14 @@ export default function Dashboard() {
                   value={cycle.oneTimeDueBeforePayday}
                   negative
                 />
+                <Row
+                  label="− Forward Reserve"
+                  value={cycle.forwardReserve}
+                  negative
+                />
                 <Row label="= Safe to Spend" value={cycle.safeToSpend} bold />
                 <p className="text-xs text-muted-foreground pt-2 border-t border-border/30 mt-2">
-                  Forward Reserve ({formatCurrency(cycle.forwardReserve)}) is excluded from Safe to Spend per spec — it is reserved for next-cycle bills.
+                  Forward Reserve ({formatCurrency(cycle.forwardReserve)}) is subtracted from Safe to Spend per Correction Playbook v8.0 §1.1 so the headline never overstates spendable cash.
                 </p>
               </TabsContent>
 

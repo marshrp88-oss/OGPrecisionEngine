@@ -458,16 +458,19 @@ describe("safeToSpend — Source: Dashboard!B19 / FIX_PLAN §B2", () => {
     expect(safeToSpend(100.0, 500.0)).toBe(0.0);
   });
 
-  it("forward reserve NOT in required hold (B33 only in B61)", () => {
+  it("forward reserve subtracted from STS per Playbook v8.0 §1.1", () => {
     const inCycle = billsInCurrentCycle(bills, d(2026, 4, 10), d(2026, 4, 22));
     const billsTotal = inCycle.reduce((s, [b]) => s + b.amount, 0);
-    const stsWithout = safeToSpend(2000.0, billsTotal);
+    const stsWithout = safeToSpend(2000.0, billsTotal, {
+      includeForwardReserveInSts: false,
+    });
     const fwd = forwardReserve(bills);
     const stsWith = safeToSpend(2000.0, billsTotal, {
       forwardReserveAmount: fwd,
       includeForwardReserveInSts: true,
     });
-    closeTo(stsWithout, stsWith);
+    expect(fwd).toBeGreaterThan(0);
+    closeTo(stsWith, Math.max(0, stsWithout - fwd));
   });
 });
 

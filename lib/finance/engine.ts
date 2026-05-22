@@ -544,9 +544,12 @@ export interface SafeToSpendOpts {
 
 /**
  * Safe to Spend — primary cycle decision output.
- * CRITICAL: safe_to_spend NEVER calls forward_reserve. They answer different
- * questions (this cycle's spend vs end-of-cycle savings).
- * Source: Dashboard!B19 / Playbook §1.2 / BUILD_SPEC §4.4 / FIX_PLAN §B2
+ * Per Correction Playbook v8.0 §1.1, Safe to Spend subtracts Forward Reserve
+ * so the headline never overstates spendable cash. When
+ * `includeForwardReserveInSts` is true (default), the forward reserve amount
+ * is added to the required hold; pass false only for legacy callers that need
+ * the pre-§1.1 behavior.
+ * Source: Dashboard!B19 / Playbook §1.1 / BUILD_SPEC §4.4 / FIX_PLAN §B2
  */
 export function safeToSpend(
   checkingBalance: number,
@@ -572,7 +575,7 @@ export function safeToSpend(
     timingBuffer,
     oneTimeDueTotal,
   );
-  const effectiveHold = includeForwardReserveInSts ? hold : hold - forwardReserveAmount;
+  const effectiveHold = includeForwardReserveInSts ? hold + forwardReserveAmount : hold;
   return Math.max(0.0, checkingBalance - effectiveHold);
 }
 

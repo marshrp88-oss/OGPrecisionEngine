@@ -192,10 +192,15 @@ export async function computeCycleState(): Promise<CycleState> {
     monthLengthDays,
   );
 
-  // Required Hold per BUILD_SPEC §4.4: bills + pending + cushion + one-time only.
-  // Forward Reserve is NOT subtracted from Safe to Spend.
+  // Required Hold per BUILD_SPEC §4.4: bills + pending + cushion + one-time.
+  // Per Correction Playbook v8.0 §1.1, Forward Reserve is ALSO subtracted
+  // from Safe to Spend (applied inside the engine via includeForwardReserveInSts).
   const totalRequiredHold =
-    billsDueBeforePayday + pendingHoldsReserve + minimumCushion + oneTimeDueBeforePayday;
+    billsDueBeforePayday +
+    pendingHoldsReserve +
+    minimumCushion +
+    oneTimeDueBeforePayday +
+    forwardReserve;
 
   const variableSpendUntilPayday = await getAssumption("variable_spend_until_payday", 0);
 
