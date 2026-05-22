@@ -679,9 +679,19 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     });
   }
 
-  // ---- Projection ----
+  // ---- Projections ----
+  // Two distinct numbers:
+  //   commitmentBalance = checking + income − bills − one-time (NO future variable)
+  //                       "What I owe right now vs what I have."
+  //   projectedEndOfMonthChecking = commitmentBalance − variableExpectedRemainingCash
+  //                       "Same, but assuming I burn the planned variable budget."
+  // Splitting these prevents a generous future-variable override from
+  // making the headline far more negative than the user's actual position.
+  const commitmentOutflowsRemaining = billsNotYetDebited + oneTimeStillToPay;
+  const commitmentBalance =
+    currentChecking + incomeStillToReceive - commitmentOutflowsRemaining;
   const totalCashOutflowsRemaining =
-    billsNotYetDebited + variableExpectedRemainingCash + oneTimeStillToPay;
+    commitmentOutflowsRemaining + variableExpectedRemainingCash;
   const projectedEndOfMonthChecking =
     currentChecking + incomeStillToReceive - totalCashOutflowsRemaining;
 
@@ -716,11 +726,13 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     oneTimeStillToPay: round(oneTimeStillToPay),
     oneTimeStillToPayDetail,
     // Totals
+    commitmentOutflowsRemaining: round(commitmentOutflowsRemaining),
+    commitmentBalance: round(commitmentBalance),
     totalCashOutflowsRemaining: round(totalCashOutflowsRemaining),
     projectedEndOfMonthChecking: round(projectedEndOfMonthChecking),
-    // Status flags
-    isDeficit: projectedEndOfMonthChecking < 0,
-    isTight: projectedEndOfMonthChecking >= 0 && projectedEndOfMonthChecking < 100,
+    // Status flags — based on commitmentBalance (the headline number)
+    isDeficit: commitmentBalance < 0,
+    isTight: commitmentBalance >= 0 && commitmentBalance < 100,
   });
 });
 

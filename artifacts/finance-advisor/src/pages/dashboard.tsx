@@ -1920,6 +1920,8 @@ interface CashPositionResp {
   quicksilverAccruedRatio: number;
   oneTimeStillToPay: number;
   oneTimeStillToPayDetail: { id: number; description: string; amount: number; dueDate: string | null }[];
+  commitmentOutflowsRemaining: number;
+  commitmentBalance: number;
   totalCashOutflowsRemaining: number;
   projectedEndOfMonthChecking: number;
   isDeficit: boolean;
@@ -1992,9 +1994,13 @@ function CashPositionCard() {
     return <Skeleton className="h-48 w-full rounded-xl" />;
   }
 
+  // Headline = commitmentBalance (what you owe right now vs what you have).
+  // Future variable spend is shown as a secondary "if you also burn the plan" line.
+  const head = data.commitmentBalance;
   const eom = data.projectedEndOfMonthChecking;
+  const headColor = head < 0 ? "text-destructive" : head < 100 ? "text-warning" : "text-success";
   const eomColor = eom < 0 ? "text-destructive" : eom < 100 ? "text-warning" : "text-success";
-  const borderColor = eom < 0 ? "border-l-destructive" : eom < 100 ? "border-l-warning" : "border-l-success";
+  const borderColor = head < 0 ? "border-l-destructive" : head < 100 ? "border-l-warning" : "border-l-success";
 
   return (
     <section
@@ -2008,21 +2014,21 @@ function CashPositionCard() {
         <div className="flex items-baseline justify-between mb-4">
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
-              Projected Checking at Month End
+              Cash vs Commitments
             </p>
             <p className="text-[10px] text-muted-foreground/70 mt-1">
-              Cash truth: balance today − every dollar that still has to leave checking by {formatDate(data.monthEnd)}.
+              What you have right now vs every dollar already owed (bills not yet debited + one-time). Future variable spend shown separately below.
             </p>
           </div>
           <div className="text-right">
             <h3
-              className={cn("text-4xl font-bold font-mono tracking-tighter", eomColor)}
-              data-testid="text-projected-eom"
+              className={cn("text-4xl font-bold font-mono tracking-tighter", headColor)}
+              data-testid="text-commitment-balance"
             >
-              {formatCurrency(eom)}
+              {formatCurrency(head)}
             </h3>
             {data.isDeficit && (
-              <p className="text-xs text-destructive font-mono mt-1">deficit — cash runs out before month end</p>
+              <p className="text-xs text-destructive font-mono mt-1">already over-committed</p>
             )}
             {data.isTight && (
               <p className="text-xs text-warning font-mono mt-1">tight — under $100 cushion</p>
@@ -2030,7 +2036,7 @@ function CashPositionCard() {
           </div>
         </div>
 
-        {/* Math chain */}
+        {/* Math chain — headline */}
         <div className="space-y-1.5 font-mono text-sm border-t border-border/30 pt-3">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Checking now</span>
@@ -2045,25 +2051,41 @@ function CashPositionCard() {
             <span>−{formatCurrency(data.billsNotYetDebited)}</span>
           </div>
           <div className="flex justify-between text-destructive">
-            <span>
-              − Variable still to spend from checking
-              {data.quicksilverAccruedRatio > 0 && (
-                <span className="text-[10px] text-muted-foreground ml-1">
-                  ({Math.round((1 - data.quicksilverAccruedRatio) * 100)}% of {formatCurrency(data.variableExpectedRemaining)}, rest on QS card)
-                </span>
-              )}
-            </span>
-            <span>−{formatCurrency(data.variableExpectedRemainingCash)}</span>
-          </div>
-          <div className="flex justify-between text-destructive">
             <span>− One-time expenses still to pay</span>
             <span>−{formatCurrency(data.oneTimeStillToPay)}</span>
           </div>
-          <div className={cn("flex justify-between font-bold border-t border-border/30 pt-2 mt-1", eomColor)}>
-            <span>= Projected end-of-month checking</span>
-            <span>{formatCurrency(eom)}</span>
+          <div className={cn("flex justify-between font-bold border-t border-border/30 pt-2 mt-1", headColor)}>
+            <span>= Cash vs commitments</span>
+            <span>{formatCurrency(head)}</span>
           </div>
         </div>
+
+        {/* Secondary projection — including future variable */}
+        {data.variableExpectedRemainingCash > 0 && (
+          <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 font-mono text-sm">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wider">
+              If you also spend the planned variable budget
+            </p>
+            <div className="flex justify-between text-destructive">
+              <span>
+                − Variable still to spend from checking
+                {data.quicksilverAccruedRatio > 0 && (
+                  <span className="text-[10px] text-muted-foreground ml-1">
+                    ({Math.round((1 - data.quicksilverAccruedRatio) * 100)}% cash, rest on QS card)
+                  </span>
+                )}
+              </span>
+              <span>−{formatCurrency(data.variableExpectedRemainingCash)}</span>
+            </div>
+            <div className={cn("flex justify-between font-medium", eomColor)}>
+              <span>= Projected end-of-month checking</span>
+              <span>{formatCurrency(eom)}</span>
+            </div>
+            <p className="text-[10px] text-muted-foreground/70 italic">
+              Variable plan editable in Settings (planned_variable_remaining_override) or via "Variable remaining" pill above.
+            </p>
+          </div>
+        )}
 
         {/* Per-bill toggles — the actual fix the user asked for */}
         {data.billsNotYetDebitedDetail.length > 0 && (
