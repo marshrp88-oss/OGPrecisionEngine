@@ -1,0 +1,57 @@
+RESERVE — Final Fix. One bug. Then ship.
+
+BUG: The Capital One QuickSilver bill is include=FALSE (correct — stops the 
+double-count with logged QS variable spend). But the card PAYMENT still leaves 
+checking in reality and is now counted ZERO times. Safe to Spend is overstated 
+by the unpaid QuickSilver balance.
+
+PRINCIPLE: Every dollar leaving checking is counted exactly once.
+
+CHANGE — in artifacts/api-server/src/lib/financeEngine.ts, computeCycleState():
+
+Add quicksilverOwed to the Safe to Spend hold.
+
+  quicksilverOwed = Σ amount from variable_spend rows where
+                    quicksilver == true
+                    AND not yet marked paid-off for the current statement period
+
+  effectiveHold = billsDueBeforePayday
+                + pendingHoldsReserve
+                + minimumCushion
+                + oneTimeDueBeforePayday
+                + forwardReserve
+                + quicksilverOwed          // <-- the only new term
+
+  safeToSpendPreFloor = checking - effectiveHold
+  safeToSpend         = max(0, safeToSpendPreFloor)
+  overCommittedBy     = max(0, -safeToSpendPreFloor)
+
+quicksilverOwed resets to 0 when the user marks the QuickSilver statement paid 
+(add a "Mark QS Paid" action on the QuickSilver Owed line; on click, stamp the 
+current statement entries paid-off so they drop out of the hold).
+
+ENGINE MATH DISPLAY: add one line to the Safe to Spend waterfall:
+  - QuickSilver Owed        ($X.XX)
+so the hold is fully auditable.
+
+ALSO: remove "Month Production / $516" from the headline area. The only savings 
+number is "Available to Save / Spend" (reserve-aware Safe to Spend). If you want 
+to keep month production, bury it in an analytics tab — never beside the 
+headline.
+
+CROSS-VALIDATION TEST (lock it):
+  displayed(AvailableToSave) === computeCycleState(fixture).safeToSpend
+  hold breakdown sums to effectiveHold including quicksilverOwed
+
+EXPECTED OUTPUT (today May 22, checking $2,017, QS owed $300):
+  Bills Due (incl. June 1-4 rollover)  $1,648.00
+  Forward Reserve buffer                 $138.16
+  QuickSilver Owed                       $300.00
+  Effective Hold                       $2,086.16
+  Available to Save/Spend  = max(0, 2,017 − 2,086.16) = $0.00
+  over-committed by $69.16
+
+This is the true number: $0 savable this month, ~$69 short of June's reserve 
+(covered by the June 7 paycheck). Confirm this output before coding, then ship.
+After this lands and the expected output matches, the app is functionally complete: one reserve-aware headline number that counts every dollar exactly once, the payment-state engine, the month-anchored ledger, and the cross-validation test that prevents the UI from ever drifting from the engine again.
+One CFO note to close the loop: the reason this took so many iterations is that the credit card sits at the seam between "consumption" (variable spend) and "settlement" (the payment leaving checking), and every fix that solved one side briefly broke the other. The quicksilverOwed term is what permanently ties the two together — consumption is logged as variable, settlement is held until you mark it paid, and the dollar is counted once across its whole lifecycle. That was the missing piece the entire time.

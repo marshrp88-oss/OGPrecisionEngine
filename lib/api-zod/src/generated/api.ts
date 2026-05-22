@@ -289,6 +289,19 @@ export const CreateVariableSpendEntryBody = zod.object({
 });
 
 /**
+ * v8.0 Final Fix — settles the QuickSilver lifecycle. Every quicksilver=
+true row with paid_off_at IS NULL is timestamped now(), dropping them
+out of the cycle's quicksilverOwed hold. Returns the count and sum of
+rows settled so the client can confirm.
+
+ * @summary Stamp all unpaid QuickSilver variable-spend rows as paid-off
+ */
+export const MarkQuicksilverPaidResponse = zod.object({
+  settledCount: zod.number(),
+  settledAmount: zod.number(),
+});
+
+/**
  * @summary Update a variable spend entry
  */
 export const UpdateVariableSpendEntryParams = zod.object({
@@ -812,6 +825,7 @@ export const GetDashboardCycleResponse = zod.object({
   minimumCushion: zod.number(),
   oneTimeDueBeforePayday: zod.number(),
   totalRequiredHold: zod.number(),
+  quicksilverOwed: zod.number(),
   safeToSpend: zod.number(),
   safeToSpendPreFloor: zod.number(),
   overCommittedBy: zod.number(),

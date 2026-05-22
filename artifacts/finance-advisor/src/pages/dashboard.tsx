@@ -7,6 +7,7 @@ import {
   useGetVariableSpend,
   getGetVariableSpendQueryKey,
   useCreateVariableSpendEntry,
+  useMarkQuicksilverPaid,
   useGetOneTimeExpenses,
   getGetOneTimeExpensesQueryKey,
   useUpdateOneTimeExpense,
@@ -29,6 +30,7 @@ interface CycleData {
   minimumCushion: number;
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
+  quicksilverOwed: number;
   safeToSpend: number;
   safeToSpendPreFloor: number;
   overCommittedBy: number;
@@ -380,9 +382,24 @@ export default function Dashboard() {
                   value={cycle.forwardReserve}
                   negative
                 />
+                <div className="flex items-center justify-between gap-3">
+                  <Row
+                    label="− QuickSilver Owed"
+                    value={cycle.quicksilverOwed}
+                    negative
+                  />
+                  {cycle.quicksilverOwed > 0 && (
+                    <MarkQsPaidButton amount={cycle.quicksilverOwed} />
+                  )}
+                </div>
                 <Row label="= Safe to Spend" value={cycle.safeToSpend} bold />
+                {cycle.overCommittedBy > 0 && (
+                  <p className="text-xs text-destructive font-mono pt-1">
+                    pre-floor = {formatCurrency(cycle.safeToSpendPreFloor)} → over-committed by {formatCurrency(cycle.overCommittedBy)}
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground pt-2 border-t border-border/30 mt-2">
-                  Forward Reserve ({formatCurrency(cycle.forwardReserve)}) is subtracted from Safe to Spend per Correction Playbook v8.0 §1.1 so the headline never overstates spendable cash.
+                  Forward Reserve ({formatCurrency(cycle.forwardReserve)}) and QuickSilver Owed ({formatCurrency(cycle.quicksilverOwed)}) are both subtracted from Safe to Spend so every dollar leaving checking is counted exactly once. Mark QS Paid when the statement settles to release that hold.
                 </p>
               </TabsContent>
 
@@ -570,8 +587,9 @@ function SituationBlock({
       data-testid="situation-block"
       data-status={status}
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border">
-        {/* LEFT — PRIMARY: Available to Save / Spend (Correction Playbook v8.0 Fix 4) */}
+      {/* v8.0 Final Fix — single reserve-aware headline. "Month Production"
+          panel removed; the only savings number is Available to Save / Spend. */}
+      <div className="grid grid-cols-1">
         <div className="p-6 md:p-8">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
             Available to Save / Spend
@@ -597,29 +615,10 @@ function SituationBlock({
             {formatCurrency(cycle.dailyRateRealTime)}/day · {paydayLabel}
           </p>
           <p className="text-[10px] text-muted-foreground/70 mt-1">
-            Reserve-aware cash position — your daily decision number.
-          </p>
-        </div>
-
-        {/* RIGHT — SECONDARY: Month Production (savings rate) */}
-        <div className="p-6 md:p-8">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
-            Month Production <span className="text-muted-foreground/70 normal-case">(savings rate)</span>
-          </p>
-          <h3
-            className={cn(
-              "text-3xl md:text-4xl font-bold tracking-tighter font-mono",
-              discretionary && discretionary.discretionaryThisMonth < 0 && "text-destructive",
-            )}
-            data-testid="text-discretionary-month"
-          >
-            {discretionary ? formatCurrency(discretionary.discretionaryThisMonth) : "—"}
-          </h3>
-          <p className="text-[10px] text-muted-foreground/70 mt-1">
-            What this month generated — not what's free to move today.
+            Reserve-aware cash position — your daily decision number. Every dollar leaving checking is counted exactly once.
           </p>
           {discretionary && (
-            <div className="mt-3 space-y-1.5 text-xs font-mono">
+            <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 text-xs font-mono">
               <InlineAssumptionEditor
                 label="Variable remaining"
                 assumptionKey="planned_variable_remaining_override"
@@ -628,15 +627,8 @@ function SituationBlock({
                 isOverridden={discretionary.plannedVariableRemainingOverride !== null}
                 suffix={`of ${formatCurrency(discretionary.variableCap)}`}
               />
-              <InlineAssumptionEditor
-                label="QuickSilver / CC Owed"
-                assumptionKey="quicksilver_balance_owed"
-                value={discretionary.quicksilverBalanceOwed}
-                fallback={0}
-                isOverridden={discretionary.quicksilverBalanceOwed > 0}
-              />
               <p className="text-[10px] text-muted-foreground/70 italic pt-1">
-                Tap a number to edit. Updates Discretionary instantly.
+                Tap a number to edit. Month Production now lives in the math accordion below.
               </p>
             </div>
           )}
@@ -660,6 +652,35 @@ function SituationBlock({
         />
       </div>
     </section>
+  );
+}
+
+// v8.0 Final Fix — settles the QuickSilver lifecycle. Bulk-stamps every
+// unpaid quicksilver variable_spend row as paid-off; the cycle's
+// quicksilverOwed hold drops to $0 and Safe to Spend rises by the same
+// amount on the next cycle refresh.
+function MarkQsPaidButton({ amount }: { amount: number }) {
+  const queryClient = useQueryClient();
+  const mut = useMarkQuicksilverPaid({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
+        queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+      },
+    },
+  });
+  return (
+    <button
+      type="button"
+      onClick={() => mut.mutate()}
+      disabled={mut.isPending}
+      className="text-[10px] font-medium uppercase tracking-wider text-primary hover:underline disabled:opacity-50 whitespace-nowrap"
+      data-testid="button-mark-qs-paid"
+      title={`Settles ${formatCurrency(amount)} of unpaid QuickSilver spend`}
+    >
+      {mut.isPending ? "Settling…" : "Mark QS Paid"}
+    </button>
   );
 }
 

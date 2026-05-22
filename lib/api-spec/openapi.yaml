@@ -381,6 +381,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VariableSpendEntry"
+  /variable-spend/quicksilver/mark-paid:
+    post:
+      operationId: markQuicksilverPaid
+      tags: [variable-spend]
+      summary: Stamp all unpaid QuickSilver variable-spend rows as paid-off
+      description: |
+        v8.0 Final Fix — settles the QuickSilver lifecycle. Every quicksilver=
+        true row with paid_off_at IS NULL is timestamped now(), dropping them
+        out of the cycle's quicksilverOwed hold. Returns the count and sum of
+        rows settled so the client can confirm.
+      responses:
+        "200":
+          description: Settled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [settledCount, settledAmount]
+                properties:
+                  settledCount:
+                    type: integer
+                  settledAmount:
+                    type: number
   /variable-spend/{id}:
     patch:
       operationId: updateVariableSpendEntry
@@ -2028,6 +2051,8 @@ components:
           type: number
         totalRequiredHold:
           type: number
+        quicksilverOwed:
+          type: number
         safeToSpend:
           type: number
         safeToSpendPreFloor:
@@ -2061,6 +2086,7 @@ components:
         - minimumCushion
         - oneTimeDueBeforePayday
         - totalRequiredHold
+        - quicksilverOwed
         - safeToSpend
         - safeToSpendPreFloor
         - overCommittedBy

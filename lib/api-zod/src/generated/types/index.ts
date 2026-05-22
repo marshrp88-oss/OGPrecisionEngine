@@ -50,6 +50,7 @@ export * from "./integrityCheck";
 export * from "./integrityCheckResult";
 export * from "./integrityCheckResultOverallStatus";
 export * from "./integrityCheckStatus";
+export * from "./markQuicksilverPaid200";
 export * from "./oneTimeExpense";
 export * from "./plaidAccountMeta";
 export * from "./plaidItem";

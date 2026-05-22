@@ -23,6 +23,7 @@ export interface DashboardCycle {
   minimumCushion: number;
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
+  quicksilverOwed: number;
   safeToSpend: number;
   safeToSpendPreFloor: number;
   overCommittedBy: number;

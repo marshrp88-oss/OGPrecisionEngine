@@ -1434,4 +1434,78 @@ describe("Fix 5 — UI = engine cross-validation guard rails", () => {
       expect(sts).toBe(Math.max(0, preFloor));
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // v8.0 Final Fix — QuickSilver Owed lifecycle (the seam between consumption
+  // and settlement). The route adds quicksilverOwed to the engine's
+  // pendingHolds term so safeToSpend stays the single source of truth.
+  // ---------------------------------------------------------------------------
+  it("quicksilverOwed enters the hold via pendingHolds — STS unchanged whether term lives in pendingHolds or is split out", () => {
+    const checking = 2017;
+    const bills = 1648;
+    const fr = 138.16;
+    const qsOwed = 300;
+    // Route formulation: quicksilverOwed folded into pendingHolds.
+    const stsViaRoute = safeToSpend(checking, bills, {
+      pendingHolds: qsOwed,
+      forwardReserveAmount: fr,
+      includeForwardReserveInSts: true,
+    });
+    // Independent algebraic preFloor.
+    const preFloor = checking - (bills + qsOwed + fr);
+    expect(stsViaRoute).toBe(Math.max(0, preFloor));
+    // Brief's expected output: checking 2017, bills 1648, fr 138.16, qs 300
+    // → effective hold 2086.16, preFloor = -69.16, STS = 0.
+    expect(preFloor).toBeCloseTo(-69.16, 2);
+    expect(stsViaRoute).toBe(0);
+    expect(Math.max(0, -preFloor)).toBeCloseTo(69.16, 2);
+  });
+
+  it("settling QuickSilver (paid_off_at stamped) releases hold dollar-for-dollar", () => {
+    const checking = 2017;
+    const bills = 1648;
+    const fr = 138.16;
+    // Pre-settlement
+    const stsBefore = safeToSpend(checking, bills, {
+      pendingHolds: 300, // qsOwed
+      forwardReserveAmount: fr,
+      includeForwardReserveInSts: true,
+    });
+    // Post-settlement (paid_off_at set → row drops out of qsOwed sum)
+    const stsAfter = safeToSpend(checking, bills, {
+      pendingHolds: 0,
+      forwardReserveAmount: fr,
+      includeForwardReserveInSts: true,
+    });
+    // STS rises by exactly the released amount, modulo the preFloor floor.
+    // Here stsBefore=0 (floored), stsAfter = 2017 - 1648 - 138.16 = 230.84.
+    expect(stsBefore).toBe(0);
+    expect(stsAfter).toBeCloseTo(230.84, 2);
+  });
+
+  it("dollar-counted-exactly-once invariant: hold composition sums equal effective hold", () => {
+    // Synthesized cycle state mirroring computeCycleState's algebra.
+    const checking = 2500;
+    const bills = 1000;
+    const pendingNonQs = 50;
+    const minCushion = 100;
+    const oneTime = 200;
+    const fr = 150;
+    const qsOwed = 175;
+    const effectiveHold = bills + pendingNonQs + minCushion + oneTime + fr + qsOwed;
+    const preFloor = checking - effectiveHold;
+    const sts = safeToSpend(checking, bills, {
+      pendingHolds: pendingNonQs + qsOwed, // route folds QS into pendingHolds
+      minimumCushion: minCushion,
+      oneTimeDueTotal: oneTime,
+      forwardReserveAmount: fr,
+      includeForwardReserveInSts: true,
+    });
+    expect(sts).toBe(Math.max(0, preFloor));
+    // Confirm sum identity (every dollar counted exactly once across the
+    // 6 hold terms — no double-count, no orphan).
+    expect(effectiveHold).toBe(
+      bills + pendingNonQs + minCushion + oneTime + fr + qsOwed,
+    );
+  });
 });

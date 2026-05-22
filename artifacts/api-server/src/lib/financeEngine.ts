@@ -59,6 +59,7 @@ export interface CycleState {
   minimumCushion: number;
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
+  quicksilverOwed: number;
   safeToSpend: number;
   safeToSpendPreFloor: number;
   overCommittedBy: number;
@@ -233,20 +234,38 @@ export async function computeCycleState(): Promise<CycleState> {
     currentCycleEngineBills,
   );
 
+  // v8.0 Final Fix — QuickSilver settlement hold. Every QS row (quicksilver=
+  // true) that has NOT been marked paid-off represents a dollar that has left
+  // the cycle as "consumption" (variable spend) but has NOT yet left checking
+  // as "settlement". To enforce "every dollar counted exactly once", we hold
+  // the unpaid QS balance against checking until the user marks it paid via
+  // POST /variable-spend/quicksilver/mark-paid. This is independent of the
+  // Column-H bill gate (the QS bill itself is include=FALSE to avoid the
+  // double-count the prior pass introduced).
+  const allVarSpend = await db.select().from(variableSpend);
+  const quicksilverOwed = allVarSpend
+    .filter((v) => v.quicksilver && v.paidOffAt === null)
+    .reduce((s, v) => s + parseFloat(v.amount), 0);
+
   // Required Hold per BUILD_SPEC §4.4: bills + pending + cushion + one-time.
   // Per Correction Playbook v8.0 §1.1, Forward Reserve is ALSO subtracted
   // from Safe to Spend (applied inside the engine via includeForwardReserveInSts).
+  // v8.0 Final Fix — plus quicksilverOwed (credit-card settlement reserve).
   const totalRequiredHold =
     billsDueBeforePayday +
     pendingHoldsReserve +
     minimumCushion +
     oneTimeDueBeforePayday +
-    forwardReserve;
+    forwardReserve +
+    quicksilverOwed;
 
   const variableSpendUntilPayday = await getAssumption("variable_spend_until_payday", 0);
 
+  // We add quicksilverOwed via pendingHolds (the engine's generic "extra hold"
+  // term) so the engine.safeToSpend computation stays the single source of
+  // truth for the floor + Forward-Reserve composition.
   const sts = safeToSpend(checkingBalance, billsDueBeforePayday, {
-    pendingHolds: pendingHoldsReserve,
+    pendingHolds: pendingHoldsReserve + quicksilverOwed,
     minimumCushion,
     oneTimeDueTotal: oneTimeDueBeforePayday,
     forwardReserveAmount: forwardReserve,
@@ -254,14 +273,15 @@ export async function computeCycleState(): Promise<CycleState> {
   });
   // v8.0 Fix 4 — surface the PRE-FLOOR Safe to Spend so the UI can render
   // "$0.00 — over-committed by $X.XX" instead of silently flooring at $0.
-  // Required Hold here already includes Forward Reserve (§1.1).
+  // Required Hold here already includes Forward Reserve (§1.1) and QS owed.
   const safeToSpendPreFloor =
     checkingBalance -
     (billsDueBeforePayday +
       pendingHoldsReserve +
       minimumCushion +
       oneTimeDueBeforePayday +
-      forwardReserve);
+      forwardReserve +
+      quicksilverOwed);
   const overCommittedBy = safeToSpendPreFloor < 0 ? -safeToSpendPreFloor : 0;
 
   const lastUpdateDate = lastBalanceUpdate ? utcStartOfDay(lastBalanceUpdate) : today;
@@ -303,6 +323,7 @@ export async function computeCycleState(): Promise<CycleState> {
     minimumCushion,
     oneTimeDueBeforePayday,
     totalRequiredHold,
+    quicksilverOwed,
     safeToSpend: sts,
     safeToSpendPreFloor,
     overCommittedBy,

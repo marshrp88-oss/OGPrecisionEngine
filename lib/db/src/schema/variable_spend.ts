@@ -9,9 +9,15 @@ export const variableSpend = pgTable("variable_spend", {
   category: text("category"),
   quicksilver: boolean("quicksilver").notNull().default(false),
   notes: text("notes"),
+  // v8.0 Final Fix — QuickSilver settlement lifecycle. When NULL, this QS row
+  // is "owed" (the dollar has been spent on the card but not yet paid off from
+  // checking). When set, the row has been settled and drops out of the
+  // Required Hold's quicksilverOwed term. Bulk-stamped by
+  // POST /variable-spend/quicksilver/mark-paid.
+  paidOffAt: timestamp("paid_off_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const insertVariableSpendSchema = createInsertSchema(variableSpend).omit({ id: true, createdAt: true });
+export const insertVariableSpendSchema = createInsertSchema(variableSpend).omit({ id: true, createdAt: true, paidOffAt: true });
 export type VariableSpend = typeof variableSpend.$inferSelect;
 export type InsertVariableSpend = z.infer<typeof insertVariableSpendSchema>;

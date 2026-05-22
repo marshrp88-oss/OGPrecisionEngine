@@ -569,6 +569,7 @@ export interface DashboardCycle {
   minimumCushion: number;
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
+  quicksilverOwed: number;
   safeToSpend: number;
   safeToSpendPreFloor: number;
   overCommittedBy: number;
@@ -670,4 +671,9 @@ export type GetBalanceHistoryParams = {
 
 export type GetVariableSpendParams = {
   weeks?: number;
+};
+
+export type MarkQuicksilverPaid200 = {
+  settledCount: number;
+  settledAmount: number;
 };

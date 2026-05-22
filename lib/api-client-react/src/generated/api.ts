@@ -46,6 +46,7 @@ import type {
   GetVariableSpendParams,
   HealthStatus,
   IntegrityCheckResult,
+  MarkQuicksilverPaid200,
   OneTimeExpense,
   PlaidItem,
   PlaidStatusResponse,
@@ -1487,6 +1488,92 @@ export const useCreateVariableSpendEntry = <
   TContext
 > => {
   return useMutation(getCreateVariableSpendEntryMutationOptions(options));
+};
+
+/**
+ * v8.0 Final Fix — settles the QuickSilver lifecycle. Every quicksilver=
+true row with paid_off_at IS NULL is timestamped now(), dropping them
+out of the cycle's quicksilverOwed hold. Returns the count and sum of
+rows settled so the client can confirm.
+
+ * @summary Stamp all unpaid QuickSilver variable-spend rows as paid-off
+ */
+export const getMarkQuicksilverPaidUrl = () => {
+  return `/api/variable-spend/quicksilver/mark-paid`;
+};
+
+export const markQuicksilverPaid = async (
+  options?: RequestInit,
+): Promise<MarkQuicksilverPaid200> => {
+  return customFetch<MarkQuicksilverPaid200>(getMarkQuicksilverPaidUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getMarkQuicksilverPaidMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markQuicksilverPaid>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof markQuicksilverPaid>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["markQuicksilverPaid"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof markQuicksilverPaid>>,
+    void
+  > = () => {
+    return markQuicksilverPaid(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MarkQuicksilverPaidMutationResult = NonNullable<
+  Awaited<ReturnType<typeof markQuicksilverPaid>>
+>;
+
+export type MarkQuicksilverPaidMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Stamp all unpaid QuickSilver variable-spend rows as paid-off
+ */
+export const useMarkQuicksilverPaid = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markQuicksilverPaid>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof markQuicksilverPaid>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getMarkQuicksilverPaidMutationOptions(options));
 };
 
 /**

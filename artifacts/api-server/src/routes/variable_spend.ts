@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, variableSpend } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, isNull } from "drizzle-orm";
 import {
   GetVariableSpendResponse,
   GetVariableSpendQueryParams,
@@ -42,6 +42,19 @@ router.post("/variable-spend", async (req, res): Promise<void> => {
     return;
   }
   res.status(201).json({ ...row, amount: parseFloat(row.amount) });
+});
+
+// v8.0 Final Fix — bulk-settle every unpaid QuickSilver row. This drops the
+// rows out of the cycle's quicksilverOwed hold so the dollar (already counted
+// once as consumption) is not counted a second time as settlement.
+router.post("/variable-spend/quicksilver/mark-paid", async (_req, res): Promise<void> => {
+  const settled = await db
+    .update(variableSpend)
+    .set({ paidOffAt: new Date() })
+    .where(and(eq(variableSpend.quicksilver, true), isNull(variableSpend.paidOffAt)))
+    .returning();
+  const settledAmount = settled.reduce((s, r) => s + parseFloat(r.amount), 0);
+  res.json({ settledCount: settled.length, settledAmount });
 });
 
 router.patch("/variable-spend/:id", async (req, res): Promise<void> => {
