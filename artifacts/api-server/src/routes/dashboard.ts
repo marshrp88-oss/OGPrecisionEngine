@@ -728,9 +728,15 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     // Totals
     commitmentOutflowsRemaining: round(commitmentOutflowsRemaining),
     commitmentBalance: round(commitmentBalance),
+    // availableToInvest is the canonical, user-facing name for the headline:
+    // the literal dollar amount you could safely sweep to HYSA / brokerage
+    // right now without bouncing a known obligation. Same value as
+    // commitmentBalance — kept as an alias so the API reads cleanly in code
+    // and the UI label matches the field name.
+    availableToInvest: round(commitmentBalance),
     totalCashOutflowsRemaining: round(totalCashOutflowsRemaining),
     projectedEndOfMonthChecking: round(projectedEndOfMonthChecking),
-    // Status flags — based on commitmentBalance (the headline number)
+    // Status flags — based on availableToInvest (the headline number)
     isDeficit: commitmentBalance < 0,
     isTight: commitmentBalance >= 0 && commitmentBalance < 100,
   });

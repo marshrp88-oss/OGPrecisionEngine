@@ -604,7 +604,7 @@ function SituationBlock({
       <div className="grid grid-cols-1">
         <div className="p-6 md:p-8">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
-            Available to Save / Spend
+            Safe to Spend (This Cycle)
           </p>
           <h2
             className={cn(
@@ -659,7 +659,7 @@ function SituationBlock({
         />
         <StripItem label="Forward Reserve" value={formatCurrency(cycle.forwardReserve)} />
         <StripItem
-          label="Monthly Savings"
+          label="Monthly Savings (theoretical)"
           value={formatCurrency(discretionary?.monthlySavings ?? 0)}
         />
       </div>
@@ -2014,10 +2014,10 @@ function CashPositionCard() {
         <div className="flex items-baseline justify-between mb-4">
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
-              Cash vs Commitments
+              Available to Move to HYSA / Investments
             </p>
             <p className="text-[10px] text-muted-foreground/70 mt-1">
-              What you have right now vs every dollar already owed (bills not yet debited + one-time). Future variable spend shown separately below.
+              The dollar amount you can safely sweep to savings or brokerage right now without bouncing a known obligation. Checking − bills not yet debited − one-time + income still arriving. Future variable spend shown separately below.
             </p>
           </div>
           <div className="text-right">
@@ -2055,7 +2055,7 @@ function CashPositionCard() {
             <span>−{formatCurrency(data.oneTimeStillToPay)}</span>
           </div>
           <div className={cn("flex justify-between font-bold border-t border-border/30 pt-2 mt-1", headColor)}>
-            <span>= Cash vs commitments</span>
+            <span>= Available to move to HYSA / investments</span>
             <span>{formatCurrency(head)}</span>
           </div>
         </div>
