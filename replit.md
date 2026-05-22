@@ -89,6 +89,11 @@ NRR: $0-1K: 0.5%, $1K-2K: 1.0%, $2K-4K: 2.0%, $4K-6K: 3.0%, >$6K: 4.2%
 - `GET /api/dashboard/cycle?asOf=YYYY-MM-DD` — simulate a different "today" for testability (D1). When omitted, uses real clock.
 - `POST /api/balances/reconcile-suggestions` — body `{newAmount: number}`. Returns `{currentAmount, delta, pendingBills, suggestedClearIds, suggestedBills, suggestedSum, confidence: "exact"|"close"|"none", tolerance}`. Read-only; UI calls `POST /api/bills/:id/mark-cleared` per accepted suggestion (C3). Tolerance $5; subset search capped at 20 pending bills.
 
+## v8.3 — Cash Position (the "have-bills-actually-debited" view)
+
+- `GET /api/dashboard/cash-position` — balance-flow truth. Returns `currentChecking`, `incomeStillToReceive` (unreceived paychecks + confirmed pending commission), `billsAlreadyDebited[]` (state=`paid` AND `clearedDate` set), `billsNotYetDebited[]` (state=`paid` w/o cleared OR `paid_pending_clear` OR `late_unpaid` OR `scheduled`), `variableExpectedRemainingCash` (`(1-qsRatio) * variableExpectedRemaining`, where `qsRatio = qsAccrued/logged`), `oneTimeStillToPay`, and `projectedEndOfMonthChecking`. Solves the gap where the income-flow Discretionary number reported positive while the user's checking was actually heading negative because many "paid" bills hadn't physically debited.
+- Dashboard `CashPositionCard` (above the fold under Action Row) shows the signed projection (red <0, amber <100, green ≥100) plus a per-bill **Debited / Not yet** toggle. "Debited" → PATCH `paymentState=paid` (server stamps `clearedDate=now()`). "Not yet" on a paid bill → `paid_pending_clear` (server nulls `clearedDate`). Invalidates `dashboard-cash-position`, `dashboard-discretionary`, `dashboard-cycle`, and `bills` query keys on every toggle.
+
 ## Environment Variables
 
 - `DATABASE_URL` — PostgreSQL connection string (auto-provisioned)

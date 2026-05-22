@@ -478,6 +478,252 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   });
 });
 
+// ============================================================
+// v8.3 — CASH POSITION endpoint
+//
+// Answers the user's real question: "What will my checking actually look like
+// at the end of the month, given some 'paid' bills haven't actually debited
+// yet?" Discretionary is income-flow math (full month income vs full month
+// obligations). Cash position is balance-flow math (current checking +
+// remaining income − every dollar that still has to leave checking).
+//
+//   projectedEndOfMonthChecking
+//     = currentChecking
+//     + incomeStillToReceive          (paychecks not yet received + pending commission)
+//     − billsNotYetDebited            (paid_pending_clear + paid w/o clearedDate + late_unpaid)
+//     − variableExpectedRemaining     (planned variable still to spend from cash)
+//     − oneTimeStillToPay             (non-deferred one-times still unpaid)
+//
+// Each bill is classified explicitly so the UI can offer a per-bill
+// "did this debit yet?" toggle. A bill marked `paid` WITHOUT a clearedDate
+// is treated as not-yet-debited (you told the engine you paid it, but the
+// money hasn't actually left checking). This is the field that's been
+// silently inflating "available" numbers.
+// ============================================================
+router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
+  await syncBillPaymentStates(new Date());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  // ---- Current checking ----
+  const [latestChecking] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+  const currentChecking = latestChecking
+    ? parseFloat(latestChecking.amount as unknown as string)
+    : 0;
+  const lastBalanceUpdate = latestChecking?.asOfDate ?? null;
+
+  // ---- Assumptions ----
+  const allAssumps = await db.select().from(assumptions);
+  const A = (k: string, dflt = 0) => {
+    const r = allAssumps.find((a) => a.key === k);
+    if (!r) return dflt;
+    const raw = (r.value ?? "").toString().trim();
+    if (raw === "") return dflt;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
+  const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
+  const plannedVariableRemainingOverride = (() => {
+    const r = allAssumps.find((a) => a.key === "planned_variable_remaining_override");
+    if (!r) return null;
+    const raw = (r.value ?? "").toString().trim();
+    if (raw === "") return null;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : null;
+  })();
+
+  // ---- Income still to receive this month ----
+  // Paychecks: 7th and 22nd. Any payday <= today is "received".
+  const paydayDates = [
+    new Date(today.getFullYear(), today.getMonth(), 7),
+    new Date(today.getFullYear(), today.getMonth(), 22),
+  ];
+  let incomeStillToReceive = 0;
+  const paychecksStillExpected: { date: string; amount: number }[] = [];
+  for (const p of paydayDates) {
+    if (p > today) {
+      const amt = baseNetIncome / 2;
+      incomeStillToReceive += amt;
+      paychecksStillExpected.push({
+        date: p.toISOString().split("T")[0],
+        amount: amt,
+      });
+    }
+  }
+
+  // Pending commissions (status=confirmed, not yet received this month)
+  const commsRows = await db.select().from(commissions);
+  let pendingCommissionUnreceived = 0;
+  for (const c of commsRows) {
+    if (c.status !== "confirmed") continue;
+    const expected = c.payoutDate ? new Date(c.payoutDate) : null;
+    if (!expected) continue;
+    if (expected < monthStart || expected > monthEnd) continue;
+    if (expected <= today) continue; // already in checking presumably
+    pendingCommissionUnreceived += parseFloat(c.takeHome as unknown as string);
+  }
+  incomeStillToReceive += pendingCommissionUnreceived;
+
+  // ---- Bill classification ----
+  // Three buckets for May bills (dueDay in 1..monthEnd):
+  //   alreadyDebited     state=paid AND clearedDate set
+  //   notYetDebited      state=paid w/o clearedDate, OR paid_pending_clear, OR late_unpaid
+  //   scheduledUnpaid    state=scheduled (counted in notYetDebited too; future debit)
+  //   skipped            excluded
+  const allBills = await db.select().from(bills);
+  type BillRow = {
+    id: number;
+    name: string;
+    amount: number;
+    dueDay: number;
+    paymentState: string;
+    paidDate: string | null;
+    clearedDate: string | null;
+    cashStatus: "debited" | "pending" | "late" | "scheduled";
+  };
+  let billsAlreadyDebited = 0;
+  let billsNotYetDebited = 0;
+  const billsAlreadyDebitedDetail: BillRow[] = [];
+  const billsNotYetDebitedDetail: BillRow[] = [];
+  for (const b of allBills) {
+    if (!b.includeInCycle) continue;
+    const amt = parseFloat(b.amount);
+    if (amt <= 0) continue;
+    if (b.dueDay < 1 || b.dueDay > monthEnd.getDate()) continue;
+    if (b.paymentState === "skipped_cycle") continue;
+
+    const paidDateStr = b.paidDate ? new Date(b.paidDate).toISOString().split("T")[0] : null;
+    const clearedDateStr = b.clearedDate ? new Date(b.clearedDate).toISOString().split("T")[0] : null;
+    const isCleared = b.paymentState === "paid" && !!b.clearedDate;
+
+    let cashStatus: BillRow["cashStatus"];
+    if (isCleared) cashStatus = "debited";
+    else if (b.paymentState === "late_unpaid") cashStatus = "late";
+    else if (b.paymentState === "paid" || b.paymentState === "paid_pending_clear") cashStatus = "pending";
+    else cashStatus = "scheduled";
+
+    const row: BillRow = {
+      id: b.id,
+      name: b.name,
+      amount: amt,
+      dueDay: b.dueDay,
+      paymentState: b.paymentState,
+      paidDate: paidDateStr,
+      clearedDate: clearedDateStr,
+      cashStatus,
+    };
+
+    if (cashStatus === "debited") {
+      billsAlreadyDebited += amt;
+      billsAlreadyDebitedDetail.push(row);
+    } else {
+      billsNotYetDebited += amt;
+      billsNotYetDebitedDetail.push(row);
+    }
+  }
+
+  // ---- Variable expected remaining (cash portion only) ----
+  // The QuickSilver-flagged portion of variable spend hits the card, not
+  // checking. We subtract only the non-QS planned remaining from checking.
+  // Conservative approach: assume the planned remaining mirrors the current
+  // logged QS:cash mix.
+  const allVs = await db.select().from(variableSpend);
+  const monthVs = allVs.filter((v) => {
+    const w = new Date(v.weekOf);
+    return w >= monthStart && w <= monthEnd;
+  });
+  const variableLoggedThisMonth = monthVs.reduce((s, v) => s + parseFloat(v.amount), 0);
+  const quicksilverAccruedThisMonth = monthVs
+    .filter((v) => v.quicksilver)
+    .reduce((s, v) => s + parseFloat(v.amount), 0);
+  const monthVariableObligation = monthVariableObligationHeadline(
+    variableLoggedThisMonth,
+    variableCap,
+    plannedVariableRemainingOverride,
+  );
+  const variableExpectedRemaining = Math.max(
+    0,
+    monthVariableObligation - variableLoggedThisMonth,
+  );
+  // Pro-rate the QS:cash mix from logged spend; fallback to all-cash.
+  const qsRatio = variableLoggedThisMonth > 0
+    ? quicksilverAccruedThisMonth / variableLoggedThisMonth
+    : 0;
+  const variableExpectedRemainingCash = variableExpectedRemaining * (1 - qsRatio);
+  const variableExpectedRemainingQs = variableExpectedRemaining * qsRatio;
+
+  // ---- One-time still to pay (non-deferred, unpaid, this month or undated) ----
+  const oteRows = await db.select().from(oneTimeExpenses);
+  let oneTimeStillToPay = 0;
+  const oneTimeStillToPayDetail: { id: number; description: string; amount: number; dueDate: string | null }[] = [];
+  for (const o of oteRows) {
+    if (o.deferred || o.paid) continue;
+    const amt = parseFloat(o.amount);
+    const dd = o.dueDate ? new Date(o.dueDate) : null;
+    const inWindow = dd === null || (dd >= monthStart && dd <= monthEnd);
+    if (!inWindow) continue;
+    oneTimeStillToPay += amt;
+    oneTimeStillToPayDetail.push({
+      id: o.id,
+      description: o.description,
+      amount: amt,
+      dueDate: o.dueDate,
+    });
+  }
+
+  // ---- Projection ----
+  const totalCashOutflowsRemaining =
+    billsNotYetDebited + variableExpectedRemainingCash + oneTimeStillToPay;
+  const projectedEndOfMonthChecking =
+    currentChecking + incomeStillToReceive - totalCashOutflowsRemaining;
+
+  const daysSinceUpdate = lastBalanceUpdate
+    ? Math.floor((today.getTime() - new Date(lastBalanceUpdate).getTime()) / 86400000)
+    : null;
+
+  const round = (n: number) => Math.round(n * 100) / 100;
+
+  res.json({
+    asOf: today.toISOString().split("T")[0],
+    monthEnd: monthEnd.toISOString().split("T")[0],
+    // Starting point
+    currentChecking: round(currentChecking),
+    lastBalanceUpdate: lastBalanceUpdate ? new Date(lastBalanceUpdate).toISOString() : null,
+    daysSinceUpdate,
+    // Inflows
+    incomeStillToReceive: round(incomeStillToReceive),
+    paychecksStillExpected,
+    pendingCommissionUnreceived: round(pendingCommissionUnreceived),
+    // Outflows — bills
+    billsAlreadyDebited: round(billsAlreadyDebited),
+    billsAlreadyDebitedDetail,
+    billsNotYetDebited: round(billsNotYetDebited),
+    billsNotYetDebitedDetail,
+    // Outflows — variable
+    variableExpectedRemaining: round(variableExpectedRemaining),
+    variableExpectedRemainingCash: round(variableExpectedRemainingCash),
+    variableExpectedRemainingQs: round(variableExpectedRemainingQs),
+    quicksilverAccruedRatio: Math.round(qsRatio * 1000) / 1000,
+    // Outflows — one-time
+    oneTimeStillToPay: round(oneTimeStillToPay),
+    oneTimeStillToPayDetail,
+    // Totals
+    totalCashOutflowsRemaining: round(totalCashOutflowsRemaining),
+    projectedEndOfMonthChecking: round(projectedEndOfMonthChecking),
+    // Status flags
+    isDeficit: projectedEndOfMonthChecking < 0,
+    isTight: projectedEndOfMonthChecking >= 0 && projectedEndOfMonthChecking < 100,
+  });
+});
+
 // Lightweight integrity summary for the dashboard banner.
 // Does NOT log a row. Independent of /integrity/check (which logs).
 router.get("/dashboard/integrity-summary", async (_req, res): Promise<void> => {

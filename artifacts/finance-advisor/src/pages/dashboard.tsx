@@ -13,6 +13,7 @@ import {
   useUpdateOneTimeExpense,
   useCreateOneTimeExpense,
   useUpdateAssumption,
+  useUpdateBill,
 } from "@workspace/api-client-react";
 // Local mirror of GetDashboardCycleResponse — kept in sync with
 // lib/api-zod GetDashboardCycleResponse / api-server dashboard.ts. Inlined
@@ -254,6 +255,8 @@ export default function Dashboard() {
       )}
 
       <ActionRow />
+
+      <CashPositionCard />
 
       <IntegrityStatusBanner />
 
@@ -1886,5 +1889,272 @@ function Row({
         </p>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// v8.3 — Cash Position Card
+//
+// Answers: "What will my checking ACTUALLY look like at month end, given some
+// 'paid' bills haven't actually debited yet?" Per-bill toggle lets the user
+// flip a bill between "cleared" (money already left checking) and "not yet"
+// (still pending debit) in one click — no need to navigate to the Bills page.
+// ---------------------------------------------------------------------------
+
+interface CashPositionResp {
+  asOf: string;
+  monthEnd: string;
+  currentChecking: number;
+  lastBalanceUpdate: string | null;
+  daysSinceUpdate: number | null;
+  incomeStillToReceive: number;
+  paychecksStillExpected: { date: string; amount: number }[];
+  pendingCommissionUnreceived: number;
+  billsAlreadyDebited: number;
+  billsAlreadyDebitedDetail: CashBillRow[];
+  billsNotYetDebited: number;
+  billsNotYetDebitedDetail: CashBillRow[];
+  variableExpectedRemaining: number;
+  variableExpectedRemainingCash: number;
+  variableExpectedRemainingQs: number;
+  quicksilverAccruedRatio: number;
+  oneTimeStillToPay: number;
+  oneTimeStillToPayDetail: { id: number; description: string; amount: number; dueDate: string | null }[];
+  totalCashOutflowsRemaining: number;
+  projectedEndOfMonthChecking: number;
+  isDeficit: boolean;
+  isTight: boolean;
+}
+
+interface CashBillRow {
+  id: number;
+  name: string;
+  amount: number;
+  dueDay: number;
+  paymentState: string;
+  paidDate: string | null;
+  clearedDate: string | null;
+  cashStatus: "debited" | "pending" | "late" | "scheduled";
+}
+
+function CashPositionCard() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const updateBill = useUpdateBill();
+  const { data, isLoading } = useQuery<CashPositionResp>({
+    queryKey: ["dashboard-cash-position"],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/dashboard/cash-position`);
+      if (!r.ok) throw new Error("Failed to load cash position");
+      return r.json();
+    },
+  });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+    qc.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+    qc.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+    qc.invalidateQueries({ queryKey: getGetBillsQueryKey() });
+  };
+
+  const setBillCashStatus = (bill: CashBillRow, debited: boolean) => {
+    const today = new Date().toISOString().split("T")[0];
+    // debited=true → state=paid (server stamps clearedDate=now)
+    // debited=false → keep obligation but mark unclear:
+    //   if was paid → flip to paid_pending_clear (server clears clearedDate)
+    //   if was late_unpaid → keep late_unpaid (already represents un-debited)
+    const next: "paid" | "paid_pending_clear" | "late_unpaid" = debited
+      ? "paid"
+      : bill.paymentState === "late_unpaid"
+        ? "late_unpaid"
+        : "paid_pending_clear";
+    updateBill.mutate(
+      {
+        id: bill.id,
+        data: {
+          paymentState: next,
+          paidDate: next === "paid" || next === "paid_pending_clear" ? today : null,
+        },
+      },
+      {
+        onSuccess: () => {
+          refresh();
+          toast({
+            title: debited ? `Marked ${bill.name} as debited` : `Marked ${bill.name} as not yet debited`,
+          });
+        },
+        onError: () => toast({ title: "Failed to update bill", variant: "destructive" }),
+      },
+    );
+  };
+
+  if (isLoading || !data) {
+    return <Skeleton className="h-48 w-full rounded-xl" />;
+  }
+
+  const eom = data.projectedEndOfMonthChecking;
+  const eomColor = eom < 0 ? "text-destructive" : eom < 100 ? "text-warning" : "text-success";
+  const borderColor = eom < 0 ? "border-l-destructive" : eom < 100 ? "border-l-warning" : "border-l-success";
+
+  return (
+    <section
+      className={cn(
+        "rounded-xl bg-card overflow-hidden border border-border border-l-4",
+        borderColor,
+      )}
+      data-testid="cash-position-card"
+    >
+      <div className="p-6">
+        <div className="flex items-baseline justify-between mb-4">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
+              Projected Checking at Month End
+            </p>
+            <p className="text-[10px] text-muted-foreground/70 mt-1">
+              Cash truth: balance today − every dollar that still has to leave checking by {formatDate(data.monthEnd)}.
+            </p>
+          </div>
+          <div className="text-right">
+            <h3
+              className={cn("text-4xl font-bold font-mono tracking-tighter", eomColor)}
+              data-testid="text-projected-eom"
+            >
+              {formatCurrency(eom)}
+            </h3>
+            {data.isDeficit && (
+              <p className="text-xs text-destructive font-mono mt-1">deficit — cash runs out before month end</p>
+            )}
+            {data.isTight && (
+              <p className="text-xs text-warning font-mono mt-1">tight — under $100 cushion</p>
+            )}
+          </div>
+        </div>
+
+        {/* Math chain */}
+        <div className="space-y-1.5 font-mono text-sm border-t border-border/30 pt-3">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Checking now</span>
+            <span>{formatCurrency(data.currentChecking)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">+ Income still to come this month</span>
+            <span>{formatCurrency(data.incomeStillToReceive)}</span>
+          </div>
+          <div className="flex justify-between text-destructive">
+            <span>− Bills not yet debited ({data.billsNotYetDebitedDetail.length})</span>
+            <span>−{formatCurrency(data.billsNotYetDebited)}</span>
+          </div>
+          <div className="flex justify-between text-destructive">
+            <span>
+              − Variable still to spend from checking
+              {data.quicksilverAccruedRatio > 0 && (
+                <span className="text-[10px] text-muted-foreground ml-1">
+                  ({Math.round((1 - data.quicksilverAccruedRatio) * 100)}% of {formatCurrency(data.variableExpectedRemaining)}, rest on QS card)
+                </span>
+              )}
+            </span>
+            <span>−{formatCurrency(data.variableExpectedRemainingCash)}</span>
+          </div>
+          <div className="flex justify-between text-destructive">
+            <span>− One-time expenses still to pay</span>
+            <span>−{formatCurrency(data.oneTimeStillToPay)}</span>
+          </div>
+          <div className={cn("flex justify-between font-bold border-t border-border/30 pt-2 mt-1", eomColor)}>
+            <span>= Projected end-of-month checking</span>
+            <span>{formatCurrency(eom)}</span>
+          </div>
+        </div>
+
+        {/* Per-bill toggles — the actual fix the user asked for */}
+        {data.billsNotYetDebitedDetail.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-border/30">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+              Bills not yet debited — toggle if money already left
+            </p>
+            <ul className="space-y-1.5">
+              {data.billsNotYetDebitedDetail
+                .sort((a, b) => a.dueDay - b.dueDay)
+                .map((b) => (
+                  <li
+                    key={b.id}
+                    className="flex items-center justify-between gap-3 text-sm font-mono py-1.5 px-2 rounded hover:bg-muted/50"
+                    data-testid={`cash-bill-row-${b.id}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="truncate">{b.name}</span>
+                      <span className="text-xs text-muted-foreground ml-2">day {b.dueDay}</span>
+                      <span
+                        className={cn(
+                          "text-[10px] uppercase tracking-wider ml-2 px-1.5 py-0.5 rounded",
+                          b.cashStatus === "late"
+                            ? "bg-destructive/20 text-destructive"
+                            : "bg-warning/20 text-warning",
+                        )}
+                      >
+                        {b.cashStatus === "late" ? "late" : "pending"}
+                      </span>
+                    </div>
+                    <span className="text-right tabular-nums w-20">
+                      −{formatCurrency(b.amount)}
+                    </span>
+                    <div className="flex items-center gap-0.5 border rounded overflow-hidden text-[10px] uppercase tracking-wider">
+                      <button
+                        onClick={() => setBillCashStatus(b, true)}
+                        className="px-2 py-0.5 hover-elevate text-success"
+                        data-testid={`button-mark-debited-${b.id}`}
+                        title="Money has actually left checking"
+                      >
+                        Debited
+                      </button>
+                      <button
+                        disabled
+                        className={cn(
+                          "px-2 py-0.5",
+                          b.cashStatus === "late"
+                            ? "bg-destructive/20 text-destructive"
+                            : "bg-warning/20 text-warning",
+                        )}
+                      >
+                        Not yet
+                      </button>
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        )}
+
+        {data.billsAlreadyDebitedDetail.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-border/30">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+              Already debited this month ({formatCurrency(data.billsAlreadyDebited)})
+            </p>
+            <ul className="space-y-1">
+              {data.billsAlreadyDebitedDetail
+                .sort((a, b) => a.dueDay - b.dueDay)
+                .map((b) => (
+                  <li
+                    key={b.id}
+                    className="flex items-center justify-between gap-3 text-xs font-mono text-muted-foreground"
+                  >
+                    <span className="flex-1 truncate">
+                      {b.name} <span className="text-[10px]">(day {b.dueDay})</span>
+                    </span>
+                    <span className="tabular-nums w-20 text-right">{formatCurrency(b.amount)}</span>
+                    <button
+                      onClick={() => setBillCashStatus(b, false)}
+                      className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border hover-elevate"
+                      data-testid={`button-mark-pending-${b.id}`}
+                      title="Money has NOT actually left checking yet"
+                    >
+                      Undo
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
