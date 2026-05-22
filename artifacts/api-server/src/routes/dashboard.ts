@@ -11,16 +11,40 @@ import {
   VARIABLE_SPEND_CAP,
   Bill as EngineBill,
   commissionTakeHome,
+  cycleStatus as engineCycleStatus,
 } from "@workspace/finance";
+
+// v8.0 Playbook §1.1 — Safe to Spend must subtract Forward Reserve so the
+// headline never overstates spendable cash. Engine is frozen (170+ unit tests),
+// so we apply the correction at the route boundary. We also recompute status
+// because the engine status was derived from the pre-correction value.
+function applyForwardReserveToSafeToSpend(
+  rawSafeToSpend: number,
+  forwardReserve: number,
+  alertThreshold: number,
+): { safeToSpend: number; status: "GREEN" | "YELLOW" | "RED" } {
+  const adjusted = Math.max(0, rawSafeToSpend - forwardReserve);
+  const status = engineCycleStatus(adjusted, alertThreshold) as "GREEN" | "YELLOW" | "RED";
+  return { safeToSpend: adjusted, status };
+}
 
 const router: IRouter = Router();
 
 router.get("/dashboard/cycle", async (_req, res): Promise<void> => {
   await syncBillPaymentStates(new Date());
   const cycle = await computeCycleState();
+  // v8.0 §1.1 — subtract Forward Reserve from Safe to Spend at route boundary.
+  const { safeToSpend: adjustedSts, status: adjustedStatus } =
+    applyForwardReserveToSafeToSpend(
+      cycle.safeToSpend,
+      cycle.forwardReserve,
+      cycle.alertThreshold,
+    );
   res.json(
     GetDashboardCycleResponse.parse({
       ...cycle,
+      safeToSpend: adjustedSts,
+      status: adjustedStatus,
       lastBalanceUpdate: cycle.lastBalanceUpdate?.toISOString() ?? null,
       nextPayday: cycle.nextPayday?.toISOString().split("T")[0] ?? null,
     })
@@ -386,8 +410,17 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     minimumCushion: round(minimumCushion),
     totalReservationsRequired: round(outflows),
 
-    safeToSpend: cycle.safeToSpend,
-    cycleStatus: cycle.status,
+    // v8.0 §1.1 — Forward Reserve subtracted from Safe to Spend at route boundary.
+    safeToSpend: applyForwardReserveToSafeToSpend(
+      cycle.safeToSpend,
+      cycle.forwardReserve,
+      cycle.alertThreshold,
+    ).safeToSpend,
+    cycleStatus: applyForwardReserveToSafeToSpend(
+      cycle.safeToSpend,
+      cycle.forwardReserve,
+      cycle.alertThreshold,
+    ).status,
     discipline,
   });
 });
