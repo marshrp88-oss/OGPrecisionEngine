@@ -96,7 +96,9 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     const row = allAssumps.find((a) => a.key === `income_override:${paydayISO}`);
     if (!row || row.value === "") return null;
     const n = parseFloat(row.value);
-    return Number.isFinite(n) && n > 0 ? n : null;
+    // Accept any finite non-negative number — including 0, which models an
+    // intentionally-missed paycheck (e.g. unpaid leave, payroll glitch).
+    return Number.isFinite(n) && n >= 0 ? n : null;
   };
   let paychecksReceivedThisMonth = 0;
   let expectedRemainingPaychecks = 0;
@@ -466,14 +468,16 @@ router.get("/dashboard/integrity-summary", async (_req, res): Promise<void> => {
     else checks.push({ name: "Balance freshness", status: "pass", detail: `Updated ${days} day(s) ago.` });
   }
 
-  // 2. Next payday
-  const [payRow] = await db.select().from(assumptions).where(eq(assumptions.key, "next_payday_date"));
-  if (!payRow?.value) checks.push({ name: "Next payday set", status: "fail", detail: "Configure in Settings." });
-  else {
-    const pd = new Date(payRow.value);
-    if (pd < today) checks.push({ name: "Next payday set", status: "fail", detail: `Payday (${payRow.value}) is in the past.` });
-    else checks.push({ name: "Next payday set", status: "pass", detail: `Payday: ${payRow.value}.` });
-  }
+  // 2. Next payday — v8.0 dynamic derivation (7th/22nd). No assumption row
+  // required; deriveNextPayday() is always-on. This check now confirms the
+  // engine can produce a future payday from today's clock (which it always
+  // can by construction), and surfaces the derived date for transparency.
+  const derivedPayday = deriveNextPayday(today);
+  checks.push({
+    name: "Next payday (derived)",
+    status: "pass",
+    detail: `Payday: ${derivedPayday.toISOString().slice(0, 10)} (dynamic 7th/22nd).`,
+  });
 
   // 3. Active bills exist
   const allBills = await db.select().from(bills);
