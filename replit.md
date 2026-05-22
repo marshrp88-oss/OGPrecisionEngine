@@ -52,7 +52,7 @@ pnpm workspace monorepo. "Reserve" is a precision personal finance advisor for M
 1. **Paycheck Boundary** — All cycle calcs use next payday boundary, never calendar month-end
 2. **Commission-as-Zero** — Baseline assumes $0 commission unless status="confirmed"
 3. **Column H AND-Gate** — Bill counts if: include=TRUE, amount>0, due >= today, due < next payday
-4. **Forward Reserve Exclusion (§2.1)** — Forward reserve is in monthly savings AND in Discretionary This Month, but NOT in Safe to Spend. Three engine functions answer three different questions: `safeToSpend()` (current cycle, no reserve, paycheck-bounded), `discretionaryThisMonth()` (end-of-month deployable surplus from checking, subtracts reserve), `monthlySavingsEstimate()` (full-month income/outflow ledger, paycheck boundary, subtracts reserve).
+4. **Forward Reserve (v8.2)** — FR covers ONE FULL NEXT PAY CYCLE = 14 days after next payday. Sum of (real bills' next occurrence in `(nextPayday, nextPayday+14d]`, skipping current-cycle and paid_pending_clear bills) + 14-day variable proration (`cap/30.4 * 14`). Subtracted from Safe to Spend so every dollar leaving checking before the payday-after-next is held exactly once.
 5. **One-Time Cost Gating** — Reserved only when amount + due date between today and next payday
 6. **Stale Data Failure** — >3 days since balance update blocks reliable cycle analysis
 7. **Variable Spend Proration** — cap ÷ 30.4 × days remaining
@@ -83,6 +83,11 @@ NRR: $0-1K: 0.5%, $1K-2K: 1.0%, $2K-4K: 2.0%, $4K-6K: 3.0%, >$6K: 4.2%
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
 - `cd lib/db && pnpm drizzle-kit push` — push DB schema changes
 - `node_modules/.bin/tsx artifacts/api-server/src/lib/seed.ts` — reseed default data
+
+## v8.2 Endpoints (audit closures)
+
+- `GET /api/dashboard/cycle?asOf=YYYY-MM-DD` — simulate a different "today" for testability (D1). When omitted, uses real clock.
+- `POST /api/balances/reconcile-suggestions` — body `{newAmount: number}`. Returns `{currentAmount, delta, pendingBills, suggestedClearIds, suggestedBills, suggestedSum, confidence: "exact"|"close"|"none", tolerance}`. Read-only; UI calls `POST /api/bills/:id/mark-cleared` per accepted suggestion (C3). Tolerance $5; subset search capped at 20 pending bills.
 
 ## Environment Variables
 

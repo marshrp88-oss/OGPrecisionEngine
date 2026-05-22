@@ -383,7 +383,7 @@ export default function Dashboard() {
                   label="− Forward Reserve"
                   value={cycle.forwardReserve}
                   negative
-                  sublabel={`${formatCurrency(cycle.forwardReserveBillsTotal)} bills + ${formatCurrency(cycle.forwardReserve - cycle.forwardReserveBillsTotal)} variable, 7d after next payday`}
+                  sublabel={`${formatCurrency(cycle.forwardReserveBillsTotal)} bills + ${formatCurrency(cycle.forwardReserve - cycle.forwardReserveBillsTotal)} variable, 14d after next payday (one pay cycle)`}
                 />
                 <Row
                   label="− Pending Bill Payments"
@@ -1078,38 +1078,126 @@ function VariableSpendColumn() {
 // Action Row dialogs
 // ---------------------------------------------------------------------------
 
+// v8.2 — reconcile suggestion shape returned by POST /api/balances/reconcile-suggestions
+type ReconcileSuggestion = {
+  currentAmount: number;
+  newAmount: number;
+  delta: number;
+  pendingBills: { id: number; name: string; amount: number }[];
+  suggestedClearIds: number[];
+  suggestedBills: { id: number; name: string; amount: number }[];
+  suggestedSum: number;
+  confidence: "exact" | "close" | "none";
+  tolerance: number;
+};
+
 function UpdateBalanceDialog() {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
+  const [suggestion, setSuggestion] = useState<ReconcileSuggestion | null>(null);
+  const [selectedClearIds, setSelectedClearIds] = useState<Set<number>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
   const createBalance = useCreateBalance();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const handleSave = () => {
+  // v8.2 — Step 1: peek at the balance change before committing. Calls the
+  // reconcile-suggestions endpoint with the proposed amount and shows the
+  // user any paid_pending_clear bills whose sum matches the drop, so a
+  // single confirm clears the balance AND the pending lifecycle in one go.
+  const handlePreview = async () => {
     const parsed = parseFloat(amount);
     if (isNaN(parsed)) return;
+    try {
+      const r = await fetch("/api/balances/reconcile-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newAmount: parsed }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data: ReconcileSuggestion = await r.json();
+      // Short-circuit: nothing pending OR balance went up → skip preview, just commit.
+      if (data.pendingBills.length === 0 || data.delta >= 0) {
+        commitBalance(parsed, []);
+        return;
+      }
+      setSuggestion(data);
+      setSelectedClearIds(new Set(data.suggestedClearIds));
+    } catch {
+      // Reconcile is best-effort — if the endpoint fails for any reason,
+      // fall back to a straight balance update so the user is never blocked.
+      commitBalance(parsed, []);
+    }
+  };
+
+  const commitBalance = (parsedAmount: number, clearIds: number[]) => {
+    setSubmitting(true);
     createBalance.mutate(
       {
         data: {
           accountType: "checking",
-          amount: parsed,
+          amount: parsedAmount,
           asOfDate: new Date().toISOString(),
           source: "manual",
         },
       },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
+          // Fire mark-cleared in parallel for every selected pending bill.
+          // Failures are reported but don't roll back the balance update.
+          // IMPORTANT: fetch() resolves on HTTP 4xx/5xx — we must inspect
+          // response.ok to count true successes, otherwise we'd over-report.
+          const results = await Promise.allSettled(
+            clearIds.map((id) =>
+              fetch(`/api/bills/${id}/mark-cleared`, { method: "POST" }),
+            ),
+          );
+          let cleared = 0;
+          let failed = 0;
+          for (const r of results) {
+            if (r.status === "fulfilled" && r.value.ok) cleared++;
+            else failed++;
+          }
           queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
           queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
           queryClient.invalidateQueries({ queryKey: ["dashboard-integrity"] });
+          queryClient.invalidateQueries({ queryKey: ["bills"] });
           setOpen(false);
           setAmount("");
-          toast({ title: "Balance updated" });
+          setSuggestion(null);
+          setSelectedClearIds(new Set());
+          setSubmitting(false);
+          const parts: string[] = [];
+          if (cleared > 0)
+            parts.push(`${cleared} pending bill${cleared > 1 ? "s" : ""} cleared`);
+          if (failed > 0)
+            parts.push(`${failed} clear${failed > 1 ? "s" : ""} failed`);
+          toast({
+            title: "Balance updated",
+            description: parts.length > 0 ? parts.join(" · ") : undefined,
+            variant: failed > 0 ? "destructive" : undefined,
+          });
         },
-        onError: () =>
-          toast({ title: "Failed to update balance", variant: "destructive" }),
+        onError: () => {
+          setSubmitting(false);
+          toast({ title: "Failed to update balance", variant: "destructive" });
+        },
       },
     );
+  };
+
+  const handleSave = () => handlePreview();
+  const handleConfirmWithClears = () => {
+    if (!suggestion) return;
+    commitBalance(suggestion.newAmount, Array.from(selectedClearIds));
+  };
+  const toggleClearId = (id: number) => {
+    setSelectedClearIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   return (
@@ -1126,40 +1214,118 @@ function UpdateBalanceDialog() {
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Update Checking Balance</DialogTitle>
+          <DialogTitle>
+            {suggestion ? "Reconcile Pending Bills" : "Update Checking Balance"}
+          </DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid gap-2">
-            <Label htmlFor="amount">Current Balance</Label>
-            <Input
-              id="amount"
-              type="number"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.00"
-              className="text-2xl font-mono"
-              autoFocus
-              data-testid="input-balance-amount"
-            />
+        {suggestion ? (
+          // v8.2 — reconcile prompt: we detected paid_pending_clear bills
+          // whose sum matches the balance drop. Let the user pick which to
+          // mark cleared, then commit balance + clears atomically.
+          <div className="grid gap-4 py-4" data-testid="reconcile-prompt">
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+              <div className="flex justify-between font-mono">
+                <span>Current balance</span>
+                <span>{formatCurrency(suggestion.currentAmount)}</span>
+              </div>
+              <div className="flex justify-between font-mono">
+                <span>New balance</span>
+                <span>{formatCurrency(suggestion.newAmount)}</span>
+              </div>
+              <div className="flex justify-between font-mono font-semibold border-t border-border pt-1 mt-1">
+                <span>Change</span>
+                <span className={suggestion.delta < 0 ? "text-destructive" : "text-emerald-600"}>
+                  {suggestion.delta >= 0 ? "+" : ""}
+                  {formatCurrency(suggestion.delta)}
+                </span>
+              </div>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {suggestion.confidence === "exact"
+                ? "Detected a pending bill set whose total exactly matches this drop. Clear them?"
+                : suggestion.confidence === "close"
+                  ? `Detected a pending bill set whose total (${formatCurrency(suggestion.suggestedSum)}) is within $${suggestion.tolerance} of this drop. Clear them?`
+                  : "Pending bills detected, but none match this drop. Select any that cleared, or just update the balance."}
+            </div>
+            <div className="grid gap-1 max-h-64 overflow-y-auto">
+              {suggestion.pendingBills.map((b) => (
+                <label
+                  key={b.id}
+                  className="flex items-center justify-between gap-3 rounded border border-border px-3 py-2 cursor-pointer hover:bg-muted/40"
+                  data-testid={`reconcile-bill-${b.id}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedClearIds.has(b.id)}
+                      onChange={() => toggleClearId(b.id)}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm">{b.name}</span>
+                  </div>
+                  <span className="font-mono text-sm">{formatCurrency(b.amount)}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-between text-xs text-muted-foreground font-mono">
+              <span>Selected to clear</span>
+              <span>
+                {formatCurrency(
+                  suggestion.pendingBills
+                    .filter((b) => selectedClearIds.has(b.id))
+                    .reduce((s, b) => s + b.amount, 0),
+                )}
+              </span>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="amount">Current Balance</Label>
+              <Input
+                id="amount"
+                type="number"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="text-2xl font-mono"
+                autoFocus
+                data-testid="input-balance-amount"
+              />
+            </div>
+          </div>
+        )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>
-            Cancel
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (suggestion) {
+                setSuggestion(null);
+                setSelectedClearIds(new Set());
+              } else {
+                setOpen(false);
+              }
+            }}
+          >
+            {suggestion ? "Back" : "Cancel"}
           </Button>
           <Button
-            onClick={handleSave}
-            disabled={createBalance.isPending || !amount}
+            onClick={suggestion ? handleConfirmWithClears : handleSave}
+            disabled={submitting || createBalance.isPending || (!suggestion && !amount)}
             data-testid="button-save-balance"
           >
             <RefreshCw
               className={cn(
                 "mr-2 h-4 w-4",
-                createBalance.isPending && "animate-spin",
+                (submitting || createBalance.isPending) && "animate-spin",
               )}
             />
-            Save Balance
+            {suggestion
+              ? selectedClearIds.size > 0
+                ? `Update + Clear ${selectedClearIds.size}`
+                : "Update Balance Only"
+              : "Save Balance"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -150,7 +150,7 @@ export function deriveNextPayday(today: Date): Date {
   return engineEffectivePayday(nextNominalPayday(utcStartOfDay(today)));
 }
 
-export async function computeCycleState(): Promise<CycleState> {
+export async function computeCycleState(asOf?: Date): Promise<CycleState> {
   const alertThreshold = await getAssumption("alert_threshold", 400);
   const monthLengthDays = await getAssumption("month_length_days", 30.4);
   const variableSpendCap = await getAssumption("variable_spend_cap", 600);
@@ -165,7 +165,10 @@ export async function computeCycleState(): Promise<CycleState> {
   const checkingBalance = latestChecking ? parseFloat(latestChecking.amount) : 0;
   const lastBalanceUpdate = latestChecking ? new Date(latestChecking.asOfDate) : null;
 
-  const today = utcStartOfDay(new Date());
+  // v8.2 — optional `asOf` lets callers simulate a different calendar day
+  // (e.g. ?asOf=2026-06-22) for testing month-timing stability and verifying
+  // that the cycle math doesn't drift around paydays. Defaults to real today.
+  const today = utcStartOfDay(asOf ?? new Date());
 
   const daysSinceUpdate = lastBalanceUpdate
     ? engineDaysSinceUpdate(utcStartOfDay(lastBalanceUpdate), today)
@@ -212,18 +215,22 @@ export async function computeCycleState(): Promise<CycleState> {
     nextPaydayNominal,
   );
 
-  // v8.1 — Forward Reserve = sum of bill amounts whose next occurrence
-  // falls in the 7-day window AFTER nextPaydayNominal, PLUS 7 days of
-  // prorated variable-spend cap. Replaces the previous "days 1-7 of next
-  // calendar month" approximation, which under-counted because most real
-  // bills' due days don't land in 1-7.
+  // v8.2 — Forward Reserve covers ONE FULL NEXT PAY CYCLE (14 days).
+  // Reserve = sum of bill amounts whose next occurrence falls in the
+  // 14-day window AFTER nextPaydayNominal, PLUS 14 days of prorated
+  // variable-spend cap. Aligns with the bi-weekly pay rhythm: every
+  // paycheck must reserve enough to bridge the user to the NEXT paycheck.
   //
-  // Window: (nextPaydayNominal, nextPaydayNominal + 7 days] (exclusive on
+  // (v8.1 used a 7-day window which under-captured the second week of
+  //  the next pay cycle — bills due Jun 12-19 silently dropped.)
+  //
+  // Window: (nextPaydayNominal, nextPaydayNominal + 14 days] (exclusive on
   // the left so the payday itself doesn't double-count). For each active,
   // included monthly bill we compute the next occurrence strictly after
   // the payday and check membership in the window.
+  const forwardReserveWindowDays = 14;
   const windowStart = nextPaydayNominal; // exclusive
-  const windowEnd = new Date(nextPaydayNominal.getTime() + 7 * 86400000); // inclusive
+  const windowEnd = new Date(nextPaydayNominal.getTime() + forwardReserveWindowDays * 86400000); // inclusive
   // Use the shared engine helper for proper month-length clamping (dueDay
   // 29/30/31 in short months). Passing `windowStart + 1 day` as the
   // reference date yields the next occurrence strictly after the payday.
@@ -234,14 +241,17 @@ export async function computeCycleState(): Promise<CycleState> {
     // Skip bills already in current cycle hold (strict membership only —
     // late_unpaid stickiness must NOT suppress next month's instance).
     if (b.countsThisCycleStrict) continue;
+    // v8.2: also skip paid_pending_clear (already held via pendingBillsOwed).
+    if (b.paymentState === "paid_pending_clear") continue;
     const occ = billNextDueDate(afterPayday, b.dueDay, true);
     if (!occ) continue;
     if (occ.getTime() > windowStart.getTime() && occ.getTime() <= windowEnd.getTime()) {
       forwardReserveBillsTotal += b.amount;
     }
   }
-  const sevenDayVariableProration = (variableSpendCap / monthLengthDays) * 7;
-  const forwardReserve = forwardReserveBillsTotal + sevenDayVariableProration;
+  const forwardReserveVariableProration =
+    (variableSpendCap / monthLengthDays) * forwardReserveWindowDays;
+  const forwardReserve = forwardReserveBillsTotal + forwardReserveVariableProration;
 
   // v8.0 Final Fix — QuickSilver settlement hold. Every QS row (quicksilver=
   // true) that has NOT been marked paid-off represents a dollar that has left

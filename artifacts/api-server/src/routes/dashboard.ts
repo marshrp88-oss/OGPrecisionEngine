@@ -20,9 +20,38 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/dashboard/cycle", async (_req, res): Promise<void> => {
-  await syncBillPaymentStates(new Date());
-  const cycle = await computeCycleState();
+router.get("/dashboard/cycle", async (req, res): Promise<void> => {
+  // v8.2 — accept `?asOf=YYYY-MM-DD` to simulate a different calendar day.
+  // Lets the audit (and any future test suite) verify month-timing stability
+  // without mocking the system clock. Real today when omitted.
+  //
+  // SAFETY: when `asOf` is supplied we MUST NOT run `syncBillPaymentStates`
+  // (which mutates rows: flips paid_pending_clear→late_unpaid, rolls cycle
+  // keys, etc.) because doing so would let a read-only simulation
+  // permanently corrupt real bill state with a future/past date. The
+  // engine's read path is pure, so the cycle math itself stays correct;
+  // only the auto-state-transition side-effects are skipped under asOf.
+  const asOfRaw = typeof req.query.asOf === "string" ? req.query.asOf : null;
+  let asOf: Date | undefined;
+  if (asOfRaw) {
+    // Strict YYYY-MM-DD validation (no time, no timezone) — UTC-anchored
+    // so the same string maps to the same simulated day regardless of
+    // server locale.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(asOfRaw)) {
+      const parsed = new Date(asOfRaw + "T00:00:00.000Z");
+      if (!isNaN(parsed.getTime())) asOf = parsed;
+    }
+    if (!asOf) {
+      res.status(400).json({ error: "asOf must be YYYY-MM-DD" });
+      return;
+    }
+  }
+
+  if (!asOf) {
+    // Only run state-mutating sync on the real-clock path.
+    await syncBillPaymentStates(new Date());
+  }
+  const cycle = await computeCycleState(asOf);
   res.json(
     GetDashboardCycleResponse.parse({
       ...cycle,
