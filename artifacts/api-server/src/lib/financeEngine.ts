@@ -137,14 +137,23 @@ export async function computeCycleState(): Promise<CycleState> {
 
   const stale = daysSinceUpdate === null || isStale(utcStartOfDay(lastBalanceUpdate ?? today), today);
 
-  const nextPaydayNominal = deriveNextNominalPayday(today);
+  // v8.0 payday-morning fix: on a day that *is* a nominal payday, the naive
+  // window [today, nextPayday) is empty and bills due 23rd-31st (or 8th-21st)
+  // would not be held. Roll the cycle boundary forward to the FOLLOWING
+  // nominal payday so the new cycle [today, next-next-payday) is captured.
+  const rawNominal = deriveNextNominalPayday(today);
+  const nextPaydayNominal =
+    rawNominal.getTime() === today.getTime()
+      ? deriveNextNominalPayday(new Date(today.getTime() + 86400000))
+      : rawNominal;
   const nextPayday = engineEffectivePayday(nextPaydayNominal);
 
   const daysUntilPayday = engineDaysUntilPayday(today, nextPaydayNominal);
   const paydayRisk = paydayRiskFlag(nextPaydayNominal);
 
   // Bills in current cycle hold (engine enforces strict < effective payday).
-  const enriched = await enumerateBills(today);
+  // Pass the rolled nominal so enumerateBills' cycle membership matches.
+  const enriched = await enumerateBills(today, nextPaydayNominal);
   const billsDueBeforePayday = enriched
     .filter((b) => b.countsThisCycle)
     .reduce((s, b) => s + b.amount, 0);
@@ -186,10 +195,23 @@ export async function computeCycleState(): Promise<CycleState> {
       (b) =>
         new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
     );
+  // v8.0 payday-morning fix: when the cycle window has been rolled forward
+  // past a payday, days-1-7 bills of the next month may already be inside the
+  // cycle's Required Hold. Dedupe via currentCycleBills so Forward Reserve
+  // doesn't double-count them. IMPORTANT: use strict cycle membership only —
+  // late_unpaid stickiness must NOT suppress FR for the next month's instance
+  // of the same recurring obligation.
+  const currentCycleEngineBills = enriched
+    .filter((b) => b.countsThisCycleStrict)
+    .map(
+      (b) =>
+        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
+    );
   const forwardReserve = engineForwardReserve(
     activeEngineBills,
     variableSpendCap,
     monthLengthDays,
+    currentCycleEngineBills,
   );
 
   // Required Hold per BUILD_SPEC §4.4: bills + pending + cushion + one-time.

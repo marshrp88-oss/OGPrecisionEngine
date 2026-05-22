@@ -33,6 +33,13 @@ export interface EnrichedBill {
   countsThisMonth: boolean;
   /** v8.0 payment-state: scheduled | paid | late_unpaid | skipped_cycle. */
   paymentState: string;
+  /**
+   * Strict cycle membership — engine [today, effective payday) window only.
+   * Does NOT include late_unpaid stickiness. Use this for Forward Reserve
+   * deduplication so a past-due bill doesn't suppress next month's 1–7
+   * reservation for the same recurring obligation.
+   */
+  countsThisCycleStrict: boolean;
   /** ISO date when bill was marked paid this cycle (null if unpaid). */
   paidDate: string | null;
 }
@@ -68,9 +75,15 @@ export function deriveNextNominalPayday(today: Date): Date {
  * Cycle-membership decision delegates to @workspace/finance billsInCurrentCycle
  * (which enforces strict `< effectivePayday` per FIX_PLAN §B2).
  */
-export async function enumerateBills(today?: Date): Promise<EnrichedBill[]> {
+export async function enumerateBills(
+  today?: Date,
+  nominalOverride?: Date,
+): Promise<EnrichedBill[]> {
   const t = utcStartOfDay(today ?? new Date());
-  const nominal = nextNominalPayday(t);
+  // v8.0 payday-morning fix: callers can pass the rolled-forward nominal
+  // payday so cycle membership reflects [today, NEXT next-payday) when today
+  // is itself a payday. Default behavior is unchanged.
+  const nominal = nominalOverride ? utcStartOfDay(nominalOverride) : nextNominalPayday(t);
   const rows = await db.select().from(bills).orderBy(bills.dueDay);
 
   // Build EngineBill list aligned to rows by index, so cycle-membership can
@@ -107,7 +120,14 @@ export async function enumerateBills(today?: Date): Promise<EnrichedBill[]> {
     // the same object the engine returned), AND with isActivePeriod (engine
     // doesn't know about activeFrom/activeUntil windows — DB-only concept).
     const eb = engineBills[i]!;
-    const countsThisCycle = isActivePeriod && cycleSet.has(eb);
+    // v8.0 late-unpaid stickiness: a bill marked late_unpaid is still owed
+    // and must remain in the Required Hold regardless of where billNextDueDate
+    // rolls. Without this, a past-due bill (e.g. dueDay 18 on day 22) rolls
+    // to next month and silently drops out of the cycle window.
+    const countsThisCycleStrict = isActivePeriod && cycleSet.has(eb);
+    const isLateUnpaid =
+      b.paymentState === "late_unpaid" && b.includeInCycle && amount > 0 && isActivePeriod;
+    const countsThisCycle = countsThisCycleStrict || isLateUnpaid;
     const countsThisMonth = b.includeInCycle && amount > 0 && isActivePeriod;
 
     return {
@@ -126,6 +146,7 @@ export async function enumerateBills(today?: Date): Promise<EnrichedBill[]> {
       isActivePeriod,
       daysUntilDue,
       countsThisCycle,
+      countsThisCycleStrict,
       countsThisMonth,
       paymentState: b.paymentState,
       paidDate: b.paidDate,
