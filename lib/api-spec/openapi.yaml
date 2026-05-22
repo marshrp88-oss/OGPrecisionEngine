@@ -189,6 +189,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Bill"
+  /bills/{id}/mark-cleared:
+    post:
+      operationId: markBillCleared
+      tags: [bills]
+      summary: Stamp a paid_pending_clear bill as fully cleared
+      description: |
+        v8.1 — settles the pending-clear lifecycle for a single bill.
+        Transitions paymentState='paid_pending_clear' → 'paid' and stamps
+        cleared_date=now(). Drops the bill out of the cycle's
+        pendingBillsOwed hold dollar-for-dollar (mirrors Mark QS Paid).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bill"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /bills/{id}:
     get:
       operationId: getBill
@@ -1311,10 +1340,13 @@ components:
           format: date
         paymentState:
           type: string
-          enum: [scheduled, paid, late_unpaid, skipped_cycle]
+          enum: [scheduled, paid_pending_clear, paid, late_unpaid, skipped_cycle]
         paidDate:
           type: ["string", "null"]
           format: date
+        clearedDate:
+          type: ["string", "null"]
+          format: date-time
       required:
         - id
         - name
@@ -1390,7 +1422,7 @@ components:
           format: date
         paymentState:
           type: string
-          enum: [scheduled, paid, late_unpaid, skipped_cycle]
+          enum: [scheduled, paid_pending_clear, paid, late_unpaid, skipped_cycle]
         paidDate:
           type: ["string", "null"]
           format: date
@@ -2053,6 +2085,17 @@ components:
           type: number
         quicksilverOwed:
           type: number
+        pendingBillsOwed:
+          type: number
+          description: |
+            v8.1 — sum of bills with paymentState='paid_pending_clear'.
+            Held against checking until Mark Cleared.
+        forwardReserveBillsTotal:
+          type: number
+          description: |
+            v8.1 — sum of bill amounts whose next occurrence falls within
+            7 days AFTER nextPaydayNominal. The bill component of
+            forwardReserve (the other component is 7-day variable proration).
         safeToSpend:
           type: number
         safeToSpendPreFloor:
@@ -2087,6 +2130,8 @@ components:
         - oneTimeDueBeforePayday
         - totalRequiredHold
         - quicksilverOwed
+        - pendingBillsOwed
+        - forwardReserveBillsTotal
         - safeToSpend
         - safeToSpendPreFloor
         - overCommittedBy

@@ -14,13 +14,19 @@ export const bills = pgTable("bills", {
   notes: text("notes"),
   activeFrom: date("active_from"),
   activeUntil: date("active_until"),
-  // v8.0 payment-state engine (Part 2).
-  // 'scheduled' = not yet paid, money still expected to leave.
-  // 'paid'      = money already left the account this cycle.
-  // 'late_unpaid' = past scheduled day, manual bill, still owed.
-  // 'skipped_cycle' = excluded from THIS cycle only; auto-reverts next cycle.
+  // v8.0 payment-state engine (Part 2) + v8.1 pending-clear extension.
+  // 'scheduled'         = not yet paid, money still expected to leave.
+  // 'paid_pending_clear'= user paid the bill, but money hasn't withdrawn
+  //                       from checking yet. STILL held against checking
+  //                       (mirrors QuickSilver owed) until 'Mark Cleared'.
+  // 'paid'              = money has actually left the account this cycle.
+  // 'late_unpaid'       = past scheduled day, manual bill, still owed.
+  // 'skipped_cycle'     = excluded from THIS cycle only; auto-reverts next cycle.
   paymentState: text("payment_state").notNull().default("scheduled"),
   paidDate: date("paid_date"),
+  // v8.1 — stamped when state transitions to 'paid' (money actually
+  // withdrawn). Null while in 'paid_pending_clear'. Used for audit only.
+  clearedDate: timestamp("cleared_date", { withTimezone: true }),
   // Cycle key for skipped_cycle auto-revert. YYYY-MM string of cycle when
   // state was last set. When current cycle key != stored key, skip auto-reverts.
   paymentStateCycleKey: text("payment_state_cycle_key"),

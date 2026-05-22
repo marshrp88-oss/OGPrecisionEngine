@@ -42,6 +42,8 @@ export interface EnrichedBill {
   countsThisCycleStrict: boolean;
   /** ISO date when bill was marked paid this cycle (null if unpaid). */
   paidDate: string | null;
+  /** v8.1 — ISO timestamp stamped when 'paid_pending_clear' → 'paid'. */
+  clearedDate: string | null;
 }
 
 /** UTC midnight start-of-day for a Date (matches engine convention). */
@@ -150,6 +152,7 @@ export async function enumerateBills(
       countsThisMonth,
       paymentState: b.paymentState,
       paidDate: b.paidDate,
+      clearedDate: b.clearedDate ? b.clearedDate.toISOString() : null,
     };
   });
 }

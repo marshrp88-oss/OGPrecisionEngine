@@ -47,6 +47,7 @@ function toApi(b: EnrichedBill) {
     isActivePeriod: b.isActivePeriod,
     paymentState: b.paymentState,
     paidDate: b.paidDate,
+    clearedDate: b.clearedDate,
   };
 }
 
@@ -266,8 +267,23 @@ export function buildBillPatchUpdate(
   const updateData: Record<string, unknown> = { ...parsed, updatedAt: now };
   if (parsed.paymentState !== undefined) {
     updateData.paymentStateCycleKey = cycleKey(today);
-    if (parsed.paymentState !== "paid" && parsed.paidDate === undefined) {
-      updateData.paidDate = null;
+    const state = parsed.paymentState;
+    // v8.1 — payment-state lifecycle stamps:
+    //   paid_pending_clear → paid_date=today, cleared_date=null
+    //   paid               → cleared_date=now (paid_date stays/set by caller)
+    //   anything else      → paid_date=null, cleared_date=null
+    if (state === "paid_pending_clear") {
+      if (parsed.paidDate === undefined) {
+        updateData.paidDate = today.toISOString().split("T")[0];
+      }
+      updateData.clearedDate = null;
+    } else if (state === "paid") {
+      updateData.clearedDate = now;
+    } else {
+      if (parsed.paidDate === undefined) {
+        updateData.paidDate = null;
+      }
+      updateData.clearedDate = null;
     }
   }
   return updateData;
@@ -297,6 +313,36 @@ router.patch("/bills/:id", async (req, res): Promise<void> => {
     return;
   }
   res.json(UpdateBillResponse.parse(await enrichBillRow(row)));
+});
+
+/**
+ * v8.1 — POST /bills/:id/mark-cleared
+ * Transitions a 'paid_pending_clear' bill to 'paid', stamping cleared_date.
+ * Drops the bill out of the cycle's pendingBillsOwed hold. Idempotent: if
+ * the bill is already 'paid', just re-stamps cleared_date.
+ */
+router.post("/bills/:id/mark-cleared", async (req, res): Promise<void> => {
+  const params = GetBillParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const now = new Date();
+  const [row] = await db
+    .update(bills)
+    .set({
+      paymentState: "paid",
+      clearedDate: now,
+      paymentStateCycleKey: cycleKey(now),
+      updatedAt: now,
+    })
+    .where(eq(bills.id, params.data.id))
+    .returning();
+  if (!row) {
+    res.status(404).json({ error: "Bill not found" });
+    return;
+  }
+  res.json(GetBillResponse.parse(await enrichBillRow(row)));
 });
 
 router.delete("/bills/:id", async (req, res): Promise<void> => {
