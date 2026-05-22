@@ -1,0 +1,37 @@
+As your CFO, let me be precise about what I'm actually answering, because you're right to push on this — there are two different questions and you need the one that matches your logic.
+
+Your personal finance logic, as I understand it from the workbook: at any point in the month you want to know **what you can safely set aside as savings**, given (a) what's already left the account, (b) what still must leave before month-end, and (c) the reserve you must carry into early June before your next paycheck. That's a cash-and-forward-looking number, not a "what did the month produce on paper" number.
+
+So let me answer *that* question with your actual position right now.
+
+**Where you stand today, May 22:**
+
+- Checking: $2,017 (paychecks already in)
+- Still must leave before month-end: NG $142.18 + NF $73 + CC $278.19 = **$493.37**
+- After those clear: $2,017 − $493.37 = **$1,523.63**
+
+**Now the reserve question — and this is where your logic matters:**
+
+You need to carry money into June to cover June 1-7 bills before your June 7 paycheck lands. Those are: Car Loan $337 (June 1), Verizon $65 (June 2), Claude $21 (June 3), Rent $1,000 (June 4) = **$1,423**, plus ~$138 of early-June variable = **~$1,561 forward reserve**.
+
+- $1,523.63 − $1,561.16 = **−$37.53**
+
+**The CFO answer to "what can I save for May": essentially zero. You're about $38 short of even fully funding your June reserve.**
+
+You cannot move anything to HYSA or Roth this month. Every dollar left after your pending bills is needed — and is in fact $38 short of needed — to carry your normal reserve into June. May produced no savable surplus once you account for the June carry. The $600 variable spend is why.
+
+This is the number that matches your logic. The "$934 production" figure I mentioned is real but academic — it's what May generated on paper, but it's not what you can act on, because the June reserve claims all of it and then some.
+
+**So, $266.05 is wrong, and now I can be specific about the direction:** it's overstating what you can save by roughly $300. The app is likely not subtracting the full forward reserve, or it's counting variable as $300 instead of $600, or both.
+
+**What I need you to confirm — exactly:**
+
+1. **Open "Show engine math" on the Discretionary card and send me the full line-by-line waterfall.** I need to see every line and its value — specifically: is there a forward reserve line, what's the variable line, and is the starting point your checking balance or a month-income figure?
+
+2. **What does the app show for May variable Logged MTD** — is it $300 or $600? (If it's only counting the cash portion and ignoring the $300 QuickSilver, that alone explains most of the $300 overstatement.)
+
+3. **What does the app have as your forward reserve right now**, and is it subtracting the full amount or a partial?
+
+Those three answers will let me point at the exact broken line. My strong suspicion: variable is being counted at $300 instead of $600 (the QuickSilver-not-counted bug), which would put the app's number ~$300 too high — almost exactly the gap between its $266 and your true ~−$38.
+
+Send me the engine math breakdown.
