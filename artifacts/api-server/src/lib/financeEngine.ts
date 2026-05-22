@@ -101,6 +101,33 @@ function utcStartOfDay(date: Date): Date {
 }
 
 /**
+ * v8.0 Part 3 — exclude deferred one-time expenses from cycle math.
+ * Pure helper exposed for unit tests; used by both computeCycleState and
+ * computeMonthlySavings to map DB rows to engine-typed expenses.
+ */
+export interface OneTimeRow {
+  description: string;
+  amount: string;
+  dueDate: string | null;
+  paid: boolean;
+  deferred: boolean;
+}
+
+export function selectActiveOneTimeExpenses(rows: OneTimeRow[]): EngineOneTimeExpense[] {
+  return rows
+    .filter((o) => !o.deferred)
+    .map(
+      (o) =>
+        new EngineOneTimeExpense(
+          o.description,
+          parseFloat(o.amount),
+          o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
+          o.paid,
+        ),
+    );
+}
+
+/**
  * Re-export of engine's effectivePayday so other modules don't reach into
  * @workspace/finance directly. Returns weekend-adjusted (Sat/Sun -> Fri).
  */
@@ -166,17 +193,7 @@ export async function computeCycleState(): Promise<CycleState> {
   // One-time expenses due in cycle (engine: <= effective payday, inclusive).
   // v8.0 Part 3 — deferred items are excluded from all cycle math.
   const allOneTime = await db.select().from(oneTimeExpenses);
-  const engineOneTimes = allOneTime
-    .filter((o) => !o.deferred)
-    .map(
-      (o) =>
-        new EngineOneTimeExpense(
-          o.description,
-          parseFloat(o.amount),
-          o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
-          o.paid,
-        ),
-    );
+  const engineOneTimes = selectActiveOneTimeExpenses(allOneTime);
   const oneTimeDueBeforePayday = oneTimeExpensesDueInCycle(
     engineOneTimes,
     today,
@@ -349,17 +366,7 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
 
   // v8.0 Part 3 — deferred items excluded from monthly savings ledger too.
   const allOneTimeRows = await db.select().from(oneTimeExpenses);
-  const engineOneTimes = allOneTimeRows
-    .filter((o) => !o.deferred)
-    .map(
-      (o) =>
-        new EngineOneTimeExpense(
-          o.description,
-          parseFloat(o.amount),
-          o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
-          o.paid,
-        ),
-    );
+  const engineOneTimes = selectActiveOneTimeExpenses(allOneTimeRows);
   const knownOneTimeCosts = engineOneTimes
     .filter((o) => !o.paid)
     .reduce((s, o) => s + o.amount, 0);

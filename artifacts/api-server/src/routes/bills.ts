@@ -13,7 +13,7 @@ import {
 } from "@workspace/api-zod";
 import { enumerateBills, type EnrichedBill } from "../lib/cycleBillEngine";
 import { deriveNextPayday } from "../lib/financeEngine";
-import { syncBillPaymentStates } from "../lib/paymentState";
+import { syncBillPaymentStates, cycleKey } from "../lib/paymentState";
 import {
   BASE_NET_INCOME,
   MONTH_LENGTH_DAYS,
@@ -252,6 +252,27 @@ router.get("/bills/:id", async (req, res): Promise<void> => {
   res.json(GetBillResponse.parse(await enrichBillRow(row)));
 });
 
+/**
+ * Pure helper exposed for unit testing. v8.0 Part 2.3 — when paymentState is
+ * explicitly changed via PATCH, we must stamp paymentStateCycleKey so cycle
+ * rollover (syncBillPaymentStates) can revert non-scheduled states next month.
+ * Without this, manual Paid/Late/Skip would persist forever.
+ */
+export function buildBillPatchUpdate(
+  parsed: Partial<Record<string, unknown>>,
+  today: Date,
+  now: Date = new Date(),
+): Record<string, unknown> {
+  const updateData: Record<string, unknown> = { ...parsed, updatedAt: now };
+  if (parsed.paymentState !== undefined) {
+    updateData.paymentStateCycleKey = cycleKey(today);
+    if (parsed.paymentState !== "paid" && parsed.paidDate === undefined) {
+      updateData.paidDate = null;
+    }
+  }
+  return updateData;
+}
+
 router.patch("/bills/:id", async (req, res): Promise<void> => {
   const params = UpdateBillParams.safeParse(req.params);
   if (!params.success) {
@@ -263,18 +284,9 @@ router.patch("/bills/:id", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  // v8.0 Part 2.3 — stamp paymentStateCycleKey when paymentState is explicitly
-  // changed so cycle rollover (syncBillPaymentStates) can revert non-scheduled
-  // states next month. Without this, manual Paid/Late/Skip would persist forever.
-  const updateData: Record<string, unknown> = { ...parsed.data, updatedAt: new Date() };
-  if (parsed.data.paymentState !== undefined) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    updateData.paymentStateCycleKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
-    if (parsed.data.paymentState !== "paid" && parsed.data.paidDate === undefined) {
-      updateData.paidDate = null;
-    }
-  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const updateData = buildBillPatchUpdate(parsed.data, today);
   const [row] = await db
     .update(bills)
     .set(updateData as never)
