@@ -156,7 +156,7 @@ export default function Bills() {
 
   const handleSetPaymentState = (
     id: number,
-    next: "scheduled" | "paid" | "late_unpaid" | "skipped_cycle",
+    next: "scheduled" | "paid_pending_clear" | "paid" | "late_unpaid" | "skipped_cycle",
   ) => {
     const today = new Date().toISOString().split("T")[0];
     updateBill.mutate(
@@ -164,7 +164,7 @@ export default function Bills() {
         id,
         data: {
           paymentState: next,
-          paidDate: next === "paid" ? today : null,
+          paidDate: next === "paid" || next === "paid_pending_clear" ? today : null,
         },
       },
       {
@@ -488,11 +488,12 @@ export default function Bills() {
                 >
                   {bill.autopay ? "auto" : "manual"}
                 </button>
-                {/* v8.0 payment-state segmented control */}
+                {/* v8.1 payment-state segmented control (Sched → Pending → Paid lifecycle) */}
                 <div className="flex items-center gap-0.5 border rounded overflow-hidden text-[10px] uppercase tracking-wider">
                   {([
                     ["scheduled", "Sched"],
-                    ["paid", "Paid"],
+                    ["paid_pending_clear", "Pending"],
+                    ["paid", "Cleared"],
                     ["late_unpaid", "Late"],
                     ["skipped_cycle", "Skip"],
                   ] as const).map(([state, label]) => {
@@ -500,11 +501,13 @@ export default function Bills() {
                     const activeStyle =
                       state === "paid"
                         ? "bg-success/30 text-success"
-                        : state === "late_unpaid"
-                          ? "bg-destructive/30 text-destructive"
-                          : state === "skipped_cycle"
-                            ? "bg-muted text-muted-foreground"
-                            : "bg-primary/20 text-primary";
+                        : state === "paid_pending_clear"
+                          ? "bg-warning/30 text-warning"
+                          : state === "late_unpaid"
+                            ? "bg-destructive/30 text-destructive"
+                            : state === "skipped_cycle"
+                              ? "bg-muted text-muted-foreground"
+                              : "bg-primary/20 text-primary";
                     return (
                       <button
                         key={state}
@@ -513,7 +516,8 @@ export default function Bills() {
                         data-testid={`button-paystate-${bill.id}-${state}`}
                         title={
                           state === "scheduled" ? "Not yet paid; money still expected to leave."
-                          : state === "paid" ? "Money already left this cycle."
+                          : state === "paid_pending_clear" ? "Paid by you, but money hasn't withdrawn yet — STAYS held against checking."
+                          : state === "paid" ? "Money has cleared the account this cycle."
                           : state === "late_unpaid" ? "Past due, still owed."
                           : "Skip this cycle only — auto-reverts next cycle."
                         }

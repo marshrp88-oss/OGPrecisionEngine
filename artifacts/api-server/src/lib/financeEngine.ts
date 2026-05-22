@@ -6,6 +6,7 @@ import {
   balances,
   commissions,
   retirementPlan,
+  bills,
 } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import {
@@ -26,6 +27,7 @@ import {
   dailyRateRealtime,
   daysOfCoverage,
   forwardReserve as engineForwardReserve,
+  billNextDueDate,
   discretionaryThisMonth as engineDiscretionaryThisMonth,
   oneTimeExpensesDueInCycle,
   monthlySavingsEstimate,
@@ -188,8 +190,13 @@ export async function computeCycleState(): Promise<CycleState> {
   // Bills in current cycle hold (engine enforces strict < effective payday).
   // Pass the rolled nominal so enumerateBills' cycle membership matches.
   const enriched = await enumerateBills(today, nextPaydayNominal);
+  // v8.1 — Exclude `paid_pending_clear` here so the bill is held exactly
+  // once via `pendingBillsOwed` below instead of double-counted (bills bucket
+  // + pending bucket). The user has "paid" the bill from their perspective,
+  // so it leaves the scheduled-bills total; the hold migrates to the
+  // pendingBillsOwed lane until they call POST /bills/:id/mark-cleared.
   const billsDueBeforePayday = enriched
-    .filter((b) => b.countsThisCycle)
+    .filter((b) => b.countsThisCycle && b.paymentState !== "paid_pending_clear")
     .reduce((s, b) => s + b.amount, 0);
 
   const pendingHoldsReserve = await getAssumption("pending_holds_reserve", 0);
@@ -217,26 +224,18 @@ export async function computeCycleState(): Promise<CycleState> {
   // the payday and check membership in the window.
   const windowStart = nextPaydayNominal; // exclusive
   const windowEnd = new Date(nextPaydayNominal.getTime() + 7 * 86400000); // inclusive
-  function nextOccurrenceAfter(dueDay: number, after: Date): Date {
-    // Try the month containing (after + 1 day). If dueDay falls on/before
-    // 'after' in that month, roll to next.
-    let y = after.getUTCFullYear();
-    let m = after.getUTCMonth();
-    let candidate = new Date(Date.UTC(y, m, dueDay));
-    if (candidate.getTime() <= after.getTime()) {
-      m += 1;
-      if (m > 11) { m = 0; y += 1; }
-      candidate = new Date(Date.UTC(y, m, dueDay));
-    }
-    return candidate;
-  }
+  // Use the shared engine helper for proper month-length clamping (dueDay
+  // 29/30/31 in short months). Passing `windowStart + 1 day` as the
+  // reference date yields the next occurrence strictly after the payday.
+  const afterPayday = new Date(windowStart.getTime() + 86400000);
   let forwardReserveBillsTotal = 0;
   for (const b of enriched) {
     if (!b.isActivePeriod || !b.includeInCycle || b.amount <= 0) continue;
     // Skip bills already in current cycle hold (strict membership only —
     // late_unpaid stickiness must NOT suppress next month's instance).
     if (b.countsThisCycleStrict) continue;
-    const occ = nextOccurrenceAfter(b.dueDay, windowStart);
+    const occ = billNextDueDate(afterPayday, b.dueDay, true);
+    if (!occ) continue;
     if (occ.getTime() > windowStart.getTime() && occ.getTime() <= windowEnd.getTime()) {
       forwardReserveBillsTotal += b.amount;
     }

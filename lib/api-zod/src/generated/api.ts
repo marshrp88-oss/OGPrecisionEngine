@@ -102,8 +102,15 @@ export const GetBillsResponseItem = zod.object({
   activeUntil: zod.coerce.date().nullish(),
   countsThisCycle: zod.boolean(),
   nextDueDate: zod.coerce.date().nullish(),
-  paymentState: zod.enum(["scheduled", "paid", "late_unpaid", "skipped_cycle"]),
+  paymentState: zod.enum([
+    "scheduled",
+    "paid_pending_clear",
+    "paid",
+    "late_unpaid",
+    "skipped_cycle",
+  ]),
   paidDate: zod.coerce.date().nullish(),
+  clearedDate: zod.coerce.date().nullish(),
 });
 export const GetBillsResponse = zod.array(GetBillsResponseItem);
 
@@ -121,6 +128,43 @@ export const CreateBillBody = zod.object({
   notes: zod.string().nullish(),
   activeFrom: zod.coerce.date().nullish(),
   activeUntil: zod.coerce.date().nullish(),
+});
+
+/**
+ * v8.1 — settles the pending-clear lifecycle for a single bill.
+Transitions paymentState='paid_pending_clear' → 'paid' and stamps
+cleared_date=now(). Drops the bill out of the cycle's
+pendingBillsOwed hold dollar-for-dollar (mirrors Mark QS Paid).
+
+ * @summary Stamp a paid_pending_clear bill as fully cleared
+ */
+export const MarkBillClearedParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const MarkBillClearedResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  amount: zod.number(),
+  dueDay: zod.number(),
+  frequency: zod.string(),
+  includeInCycle: zod.boolean(),
+  category: zod.string(),
+  autopay: zod.boolean(),
+  notes: zod.string().nullish(),
+  activeFrom: zod.coerce.date().nullish(),
+  activeUntil: zod.coerce.date().nullish(),
+  countsThisCycle: zod.boolean(),
+  nextDueDate: zod.coerce.date().nullish(),
+  paymentState: zod.enum([
+    "scheduled",
+    "paid_pending_clear",
+    "paid",
+    "late_unpaid",
+    "skipped_cycle",
+  ]),
+  paidDate: zod.coerce.date().nullish(),
+  clearedDate: zod.coerce.date().nullish(),
 });
 
 /**
@@ -144,8 +188,15 @@ export const GetBillResponse = zod.object({
   activeUntil: zod.coerce.date().nullish(),
   countsThisCycle: zod.boolean(),
   nextDueDate: zod.coerce.date().nullish(),
-  paymentState: zod.enum(["scheduled", "paid", "late_unpaid", "skipped_cycle"]),
+  paymentState: zod.enum([
+    "scheduled",
+    "paid_pending_clear",
+    "paid",
+    "late_unpaid",
+    "skipped_cycle",
+  ]),
   paidDate: zod.coerce.date().nullish(),
+  clearedDate: zod.coerce.date().nullish(),
 });
 
 /**
@@ -167,7 +218,13 @@ export const UpdateBillBody = zod.object({
   activeFrom: zod.coerce.date().nullish(),
   activeUntil: zod.coerce.date().nullish(),
   paymentState: zod
-    .enum(["scheduled", "paid", "late_unpaid", "skipped_cycle"])
+    .enum([
+      "scheduled",
+      "paid_pending_clear",
+      "paid",
+      "late_unpaid",
+      "skipped_cycle",
+    ])
     .optional(),
   paidDate: zod.coerce.date().nullish(),
 });
@@ -186,8 +243,15 @@ export const UpdateBillResponse = zod.object({
   activeUntil: zod.coerce.date().nullish(),
   countsThisCycle: zod.boolean(),
   nextDueDate: zod.coerce.date().nullish(),
-  paymentState: zod.enum(["scheduled", "paid", "late_unpaid", "skipped_cycle"]),
+  paymentState: zod.enum([
+    "scheduled",
+    "paid_pending_clear",
+    "paid",
+    "late_unpaid",
+    "skipped_cycle",
+  ]),
   paidDate: zod.coerce.date().nullish(),
+  clearedDate: zod.coerce.date().nullish(),
 });
 
 /**
@@ -826,6 +890,16 @@ export const GetDashboardCycleResponse = zod.object({
   oneTimeDueBeforePayday: zod.number(),
   totalRequiredHold: zod.number(),
   quicksilverOwed: zod.number(),
+  pendingBillsOwed: zod
+    .number()
+    .describe(
+      "v8.1 — sum of bills with paymentState='paid_pending_clear'.\nHeld against checking until Mark Cleared.\n",
+    ),
+  forwardReserveBillsTotal: zod
+    .number()
+    .describe(
+      "v8.1 — sum of bill amounts whose next occurrence falls within\n7 days AFTER nextPaydayNominal. The bill component of\nforwardReserve (the other component is 7-day variable proration).\n",
+    ),
   safeToSpend: zod.number(),
   safeToSpendPreFloor: zod.number(),
   overCommittedBy: zod.number(),

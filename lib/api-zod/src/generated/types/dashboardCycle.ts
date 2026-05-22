@@ -24,6 +24,15 @@ export interface DashboardCycle {
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
   quicksilverOwed: number;
+  /** v8.1 — sum of bills with paymentState='paid_pending_clear'.
+Held against checking until Mark Cleared.
+ */
+  pendingBillsOwed: number;
+  /** v8.1 — sum of bill amounts whose next occurrence falls within
+7 days AFTER nextPaydayNominal. The bill component of
+forwardReserve (the other component is 7-day variable proration).
+ */
+  forwardReserveBillsTotal: number;
   safeToSpend: number;
   safeToSpendPreFloor: number;
   overCommittedBy: number;

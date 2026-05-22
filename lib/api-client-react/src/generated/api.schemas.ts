@@ -67,6 +67,7 @@ export type BillPaymentState =
 
 export const BillPaymentState = {
   scheduled: "scheduled",
+  paid_pending_clear: "paid_pending_clear",
   paid: "paid",
   late_unpaid: "late_unpaid",
   skipped_cycle: "skipped_cycle",
@@ -93,6 +94,8 @@ export interface Bill {
   paymentState: BillPaymentState;
   /** @nullable */
   paidDate?: string | null;
+  /** @nullable */
+  clearedDate?: string | null;
 }
 
 export type CreateBillBodyFrequency =
@@ -136,6 +139,7 @@ export type UpdateBillBodyPaymentState =
 
 export const UpdateBillBodyPaymentState = {
   scheduled: "scheduled",
+  paid_pending_clear: "paid_pending_clear",
   paid: "paid",
   late_unpaid: "late_unpaid",
   skipped_cycle: "skipped_cycle",
@@ -570,6 +574,15 @@ export interface DashboardCycle {
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
   quicksilverOwed: number;
+  /** v8.1 — sum of bills with paymentState='paid_pending_clear'.
+Held against checking until Mark Cleared.
+ */
+  pendingBillsOwed: number;
+  /** v8.1 — sum of bill amounts whose next occurrence falls within
+7 days AFTER nextPaydayNominal. The bill component of
+forwardReserve (the other component is 7-day variable proration).
+ */
+  forwardReserveBillsTotal: number;
   safeToSpend: number;
   safeToSpendPreFloor: number;
   overCommittedBy: number;

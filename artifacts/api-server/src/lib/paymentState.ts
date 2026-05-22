@@ -41,7 +41,16 @@ export function decideBillStateTransition(
   let nextKey: string | null = b.paymentStateCycleKey;
 
   // Cycle rollover — reset state set in a prior cycle back to scheduled.
-  if (b.paymentStateCycleKey && b.paymentStateCycleKey !== ck && b.paymentState !== "scheduled") {
+  // v8.1 — `paid_pending_clear` is preserved across rollover. The money is
+  // still floating out of checking (user hasn't called mark-cleared yet), so
+  // the pending hold must persist regardless of cycle boundary. Only an
+  // explicit POST /bills/:id/mark-cleared (or manual state change) releases it.
+  if (
+    b.paymentStateCycleKey &&
+    b.paymentStateCycleKey !== ck &&
+    b.paymentState !== "scheduled" &&
+    b.paymentState !== "paid_pending_clear"
+  ) {
     nextState = "scheduled";
     nextPaidDate = null;
     nextKey = ck;

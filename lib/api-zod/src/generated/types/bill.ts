@@ -28,4 +28,6 @@ export interface Bill {
   paymentState: BillPaymentState;
   /** @nullable */
   paidDate?: Date | null;
+  /** @nullable */
+  clearedDate?: Date | null;
 }

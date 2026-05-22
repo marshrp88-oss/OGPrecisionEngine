@@ -11,6 +11,7 @@ export type BillPaymentState =
 
 export const BillPaymentState = {
   scheduled: "scheduled",
+  paid_pending_clear: "paid_pending_clear",
   paid: "paid",
   late_unpaid: "late_unpaid",
   skipped_cycle: "skipped_cycle",

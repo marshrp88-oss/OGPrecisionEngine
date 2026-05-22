@@ -31,6 +31,8 @@ interface CycleData {
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
   quicksilverOwed: number;
+  pendingBillsOwed: number;
+  forwardReserveBillsTotal: number;
   safeToSpend: number;
   safeToSpendPreFloor: number;
   overCommittedBy: number;
@@ -381,6 +383,13 @@ export default function Dashboard() {
                   label="− Forward Reserve"
                   value={cycle.forwardReserve}
                   negative
+                  sublabel={`${formatCurrency(cycle.forwardReserveBillsTotal)} bills + ${formatCurrency(cycle.forwardReserve - cycle.forwardReserveBillsTotal)} variable, 7d after next payday`}
+                />
+                <Row
+                  label="− Pending Bill Payments"
+                  value={cycle.pendingBillsOwed}
+                  negative
+                  sublabel={cycle.pendingBillsOwed > 0 ? "Bills marked paid that haven't cleared checking yet — release on Bills page" : undefined}
                 />
                 <div className="flex items-center justify-between gap-3">
                   <Row
@@ -1685,22 +1694,31 @@ function Row({
   value,
   negative,
   bold,
+  sublabel,
 }: {
   label: string;
   value: number;
   negative?: boolean;
   bold?: boolean;
+  sublabel?: string;
 }) {
   return (
     <div
       className={cn(
-        "flex justify-between py-1",
+        "py-1",
         bold ? "border-t-2 border-border pt-2 font-bold" : "border-b border-border/40",
         negative ? "text-destructive" : "",
       )}
     >
-      <span className={negative ? "" : "text-muted-foreground"}>{label}</span>
-      <span>{formatCurrency(value)}</span>
+      <div className="flex justify-between">
+        <span className={negative ? "" : "text-muted-foreground"}>{label}</span>
+        <span>{formatCurrency(value)}</span>
+      </div>
+      {sublabel && (
+        <p className="text-[10px] text-muted-foreground/70 italic mt-0.5">
+          {sublabel}
+        </p>
+      )}
     </div>
   );
 }

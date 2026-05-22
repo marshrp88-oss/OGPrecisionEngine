@@ -725,6 +725,95 @@ export const useCreateBill = <
 };
 
 /**
+ * v8.1 — settles the pending-clear lifecycle for a single bill.
+Transitions paymentState='paid_pending_clear' → 'paid' and stamps
+cleared_date=now(). Drops the bill out of the cycle's
+pendingBillsOwed hold dollar-for-dollar (mirrors Mark QS Paid).
+
+ * @summary Stamp a paid_pending_clear bill as fully cleared
+ */
+export const getMarkBillClearedUrl = (id: number) => {
+  return `/api/bills/${id}/mark-cleared`;
+};
+
+export const markBillCleared = async (
+  id: number,
+  options?: RequestInit,
+): Promise<Bill> => {
+  return customFetch<Bill>(getMarkBillClearedUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getMarkBillClearedMutationOptions = <
+  TError = ErrorType<ApiError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markBillCleared>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof markBillCleared>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["markBillCleared"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof markBillCleared>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return markBillCleared(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MarkBillClearedMutationResult = NonNullable<
+  Awaited<ReturnType<typeof markBillCleared>>
+>;
+
+export type MarkBillClearedMutationError = ErrorType<ApiError>;
+
+/**
+ * @summary Stamp a paid_pending_clear bill as fully cleared
+ */
+export const useMarkBillCleared = <
+  TError = ErrorType<ApiError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markBillCleared>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof markBillCleared>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getMarkBillClearedMutationOptions(options));
+};
+
+/**
  * @summary Get a single bill
  */
 export const getGetBillUrl = (id: number) => {
