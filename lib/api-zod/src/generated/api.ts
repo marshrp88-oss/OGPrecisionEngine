@@ -900,3 +900,64 @@ export const SendAnthropicMessageParams = zod.object({
 export const SendAnthropicMessageBody = zod.object({
   content: zod.string(),
 });
+
+/**
+ * @summary Whether Plaid is configured server-side
+ */
+export const GetPlaidStatusResponse = zod.object({
+  configured: zod.boolean(),
+  env: zod.string(),
+});
+
+/**
+ * @summary Create a Plaid Link token
+ */
+export const CreatePlaidLinkTokenResponse = zod.object({
+  linkToken: zod.string(),
+});
+
+/**
+ * @summary Exchange a Link public_token for an access_token + persist item
+ */
+export const ExchangePlaidPublicTokenBody = zod.object({
+  publicToken: zod.string(),
+});
+
+/**
+ * @summary List linked Plaid items
+ */
+export const GetPlaidItemsResponseItem = zod.object({
+  id: zod.number(),
+  institutionId: zod.string().nullish(),
+  institutionName: zod.string().nullish(),
+  accounts: zod.array(
+    zod.object({
+      accountId: zod.string(),
+      name: zod.string(),
+      officialName: zod.string().nullish(),
+      mask: zod.string().nullish(),
+      type: zod.string(),
+      subtype: zod.string().nullish(),
+      mappedAccountType: zod.string().nullish(),
+    }),
+  ),
+  lastSyncedAt: zod.coerce.date().nullish(),
+  lastSyncError: zod.string().nullish(),
+  createdAt: zod.coerce.date(),
+});
+export const GetPlaidItemsResponse = zod.array(GetPlaidItemsResponseItem);
+
+/**
+ * @summary Disconnect a linked institution
+ */
+export const DeletePlaidItemParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Pull fresh balances for every linked item now
+ */
+export const RefreshPlaidBalancesResponse = zod.object({
+  ok: zod.number(),
+  failed: zod.number(),
+});

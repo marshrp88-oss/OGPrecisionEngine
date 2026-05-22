@@ -38,6 +38,8 @@ tags:
     description: Dashboard cycle computation
   - name: anthropic
     description: Anthropic AI advisor
+  - name: plaid
+    description: Plaid bank-linking and automatic balance refresh
 
 paths:
   /healthz:
@@ -1073,6 +1075,96 @@ paths:
           content:
             text/event-stream: {}
 
+  # ─── Plaid ─────────────────────────────────────────────────────────────────
+  /plaid/status:
+    get:
+      operationId: getPlaidStatus
+      tags: [plaid]
+      summary: Whether Plaid is configured server-side
+      responses:
+        "200":
+          description: Plaid status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaidStatusResponse"
+  /plaid/link-token:
+    post:
+      operationId: createPlaidLinkToken
+      tags: [plaid]
+      summary: Create a Plaid Link token
+      responses:
+        "200":
+          description: Link token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateLinkTokenResponse"
+        "503":
+          description: Not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /plaid/exchange-public-token:
+    post:
+      operationId: exchangePlaidPublicToken
+      tags: [plaid]
+      summary: Exchange a Link public_token for an access_token + persist item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExchangePublicTokenBody"
+      responses:
+        "201":
+          description: Linked item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaidItem"
+  /plaid/items:
+    get:
+      operationId: getPlaidItems
+      tags: [plaid]
+      summary: List linked Plaid items
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlaidItem"
+  /plaid/items/{id}:
+    delete:
+      operationId: deletePlaidItem
+      tags: [plaid]
+      summary: Disconnect a linked institution
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Removed
+  /plaid/refresh:
+    post:
+      operationId: refreshPlaidBalances
+      tags: [plaid]
+      summary: Pull fresh balances for every linked item now
+      responses:
+        "200":
+          description: Refresh result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshPlaidResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -2058,3 +2150,90 @@ components:
           type: string
       required:
         - error
+
+    # ─── Plaid ────────────────────────────────────────────────────────────────
+    PlaidStatusResponse:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        env:
+          type: string
+      required:
+        - configured
+        - env
+
+    CreateLinkTokenResponse:
+      type: object
+      properties:
+        linkToken:
+          type: string
+      required:
+        - linkToken
+
+    ExchangePublicTokenBody:
+      type: object
+      properties:
+        publicToken:
+          type: string
+      required:
+        - publicToken
+
+    PlaidAccountMeta:
+      type: object
+      properties:
+        accountId:
+          type: string
+        name:
+          type: string
+        officialName:
+          type: ["string", "null"]
+        mask:
+          type: ["string", "null"]
+        type:
+          type: string
+        subtype:
+          type: ["string", "null"]
+        mappedAccountType:
+          type: ["string", "null"]
+      required:
+        - accountId
+        - name
+        - type
+
+    PlaidItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        institutionId:
+          type: ["string", "null"]
+        institutionName:
+          type: ["string", "null"]
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlaidAccountMeta"
+        lastSyncedAt:
+          type: ["string", "null"]
+          format: date-time
+        lastSyncError:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - accounts
+        - createdAt
+
+    RefreshPlaidResponse:
+      type: object
+      properties:
+        ok:
+          type: integer
+        failed:
+          type: integer
+      required:
+        - ok
+        - failed

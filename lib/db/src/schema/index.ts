@@ -13,3 +13,4 @@ export * from "./playbook";
 export * from "./integrity_log";
 export * from "./conversations";
 export * from "./messages";
+export * from "./plaid_items";

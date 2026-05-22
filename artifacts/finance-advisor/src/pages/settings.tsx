@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { Save } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+import { BankConnections } from "@/components/BankConnections";
 
 interface AssumptionMeta {
   label: string;
@@ -153,6 +154,8 @@ export default function Settings() {
           Standing financial assumptions that drive every calculation in Reserve. Grouped by what they govern.
         </p>
       </div>
+
+      <BankConnections />
 
       {GROUPS.map((group) => {
         const presentKeys = group.keys.filter((k) => allAssumptions.some((a) => a.key === k));

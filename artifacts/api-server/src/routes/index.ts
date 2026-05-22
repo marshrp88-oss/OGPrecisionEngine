@@ -14,6 +14,7 @@ import playbookRouter from "./playbook";
 import integrityRouter from "./integrity";
 import dashboardRouter from "./dashboard";
 import anthropicRouter from "./anthropic";
+import plaidRouter from "./plaid";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(playbookRouter);
 router.use(integrityRouter);
 router.use(dashboardRouter);
 router.use(anthropicRouter);
+router.use(plaidRouter);
 
 export default router;

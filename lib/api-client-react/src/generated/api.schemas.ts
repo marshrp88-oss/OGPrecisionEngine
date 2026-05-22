@@ -615,6 +615,52 @@ export interface AnthropicError {
   error: string;
 }
 
+export interface PlaidStatusResponse {
+  configured: boolean;
+  env: string;
+}
+
+export interface CreateLinkTokenResponse {
+  linkToken: string;
+}
+
+export interface ExchangePublicTokenBody {
+  publicToken: string;
+}
+
+export interface PlaidAccountMeta {
+  accountId: string;
+  name: string;
+  /** @nullable */
+  officialName?: string | null;
+  /** @nullable */
+  mask?: string | null;
+  type: string;
+  /** @nullable */
+  subtype?: string | null;
+  /** @nullable */
+  mappedAccountType?: string | null;
+}
+
+export interface PlaidItem {
+  id: number;
+  /** @nullable */
+  institutionId?: string | null;
+  /** @nullable */
+  institutionName?: string | null;
+  accounts: PlaidAccountMeta[];
+  /** @nullable */
+  lastSyncedAt?: string | null;
+  /** @nullable */
+  lastSyncError?: string | null;
+  createdAt: string;
+}
+
+export interface RefreshPlaidResponse {
+  ok: number;
+  failed: number;
+}
+
 export type GetBalanceHistoryParams = {
   account_type?: string;
   days?: number;
