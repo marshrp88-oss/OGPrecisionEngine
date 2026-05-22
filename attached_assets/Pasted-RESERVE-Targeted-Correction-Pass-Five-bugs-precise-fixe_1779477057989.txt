@@ -1,0 +1,113 @@
+RESERVE — Targeted Correction Pass. Five bugs, precise fixes. Do not refactor 
+beyond what's specified. Reference the code map: engine.ts (pure primitives), 
+financeEngine.ts (computeCycleState), dashboard.ts (/discretionary route), 
+paymentState.ts, cycleBillEngine.ts.
+
+Before coding, confirm you've read these five fixes back to me and show the 
+expected output table at the bottom. Do not start until I approve.
+
+────────────────────────────────────────
+FIX 1 — QuickSilver double-count (highest priority)
+────────────────────────────────────────
+PROBLEM: A "Capital One QuickSilver" bill ($250) is counted as a fixed bill 
+AND the same card spending ($300 QS-tagged) is counted as variable. The card 
+payment is the settlement of variable spend already logged — counting both 
+double-charges the month.
+
+FIX: The Capital One QuickSilver bill row must be include=FALSE (informational 
+only). Card consumption is captured by the variable spend log; the bill payment 
+is just the settlement of money already counted. After this, QuickSilver appears 
+ONLY as: (a) variable spend entries, and (b) an informational "QuickSilver Owed" 
+figure = sum of unpaid QS-tagged variable this statement period. It is NEVER 
+separately subtracted in Discretionary or as a fixed bill.
+
+VERIFY: Discretionary outgo no longer includes the $250 Capital One line. 
+QuickSilver Owed remains displayed as informational only.
+
+────────────────────────────────────────
+FIX 2 — Variable inflated past cap by trailing-rate projection
+────────────────────────────────────────
+PROBLEM: In dashboard.ts the month variable = variableLoggedThisMonth + 
+variableExpectedRemaining (trailing rate), producing $845 when logged is $600 
+on a $600 cap. This violates the stated principle that logging spend must not 
+move Discretionary, and contradicts the "$600 of $600" shown in the UI.
+
+FIX: Replace the trailing-rate projection for the MONTH flow number with:
+  monthVariableObligation = plannedVariableRemainingOverride (if numeric)
+                            else MAX(variableCap, variableLoggedThisMonth)
+So logging within cap does NOT change the number (stays at cap $600); only 
+genuine overspend past cap moves it. Remove variableExpectedRemainingTrailing 
+from the discretionary headline path. (Trailing rate may remain for display 
+analytics only, never feeding the headline.)
+
+VERIFY: With $600 logged on $600 cap, monthVariableObligation = $600 exactly. 
+Logging another $50 within an unchanged cap leaves Discretionary unchanged.
+
+────────────────────────────────────────
+FIX 3 — Per-paycheck income override (Playbook Part 8)
+────────────────────────────────────────
+PROBLEM: Income uses base $1,610 × 2 = $3,220 flat. Real May income was 
+$1,610 + $1,722.61 (overtime) + $35.71 commission. Override isn't wired, 
+losing ~$148 of real income.
+
+FIX: Add an expected_income_override field per pay cycle, distinct from 
+base_net_income. In the /discretionary income loop, for each payday in the 
+month use override[payday] if set, else baseNetIncome/2. Editable from the 
+Update Balance modal and inline on the income line of the Discretionary 
+breakdown. When unset, fall back to base and let balance update reconcile.
+
+VERIFY: Setting May 22 paycheck override to $1,722.61 raises monthIncome to 
+$3,368.32 (with $35.71 commission) and does NOT persist into June.
+
+────────────────────────────────────────
+FIX 4 — Headline reframe (product decision: APPROVED)
+────────────────────────────────────────
+PROBLEM: "Discretionary This Month" (month-flow production) is displayed as the 
+headline, but the number the user makes decisions from is reserve-aware cash — 
+which is Safe to Spend. The user reads the wrong number as "what can I save."
+
+FIX:
+- Make Safe to Spend the PRIMARY headline, relabeled "AVAILABLE TO SAVE / SPEND".
+- When the pre-floor value is negative, display $0 with a sublabel 
+  "over-committed by $X.XX" (do NOT just show $0 silently). Surface the 
+  pre-floor number in the engine math.
+- Demote "Discretionary This Month" to a SECONDARY metric, relabeled 
+  "MONTH PRODUCTION (savings rate)" with subtitle "what this month generated — 
+  not what's free to move today." Keep it accurate (Fixes 1-3) but it is no 
+  longer the decision number.
+
+VERIFY: Dashboard leads with Available to Save/Spend. On May 22 it shows $0.00 
+with "over-committed by $19.16". Month Production shows secondary.
+
+────────────────────────────────────────
+FIX 5 — UI = engine cross-validation tests (prevents regression)
+────────────────────────────────────────
+PROBLEM: The UI showed "Variable $600 of $600" while the engine internally used 
+$845. No test asserts displayed values equal engine outputs.
+
+FIX: Add a test category asserting, for a fixed fixture state, that each rendered 
+dashboard card value === the corresponding engine call:
+  displayed(AvailableToSave) === computeCycleState(fixture).safeToSpend
+  displayed(MonthProduction) === /discretionary(fixture).discretionaryHeadline
+  displayed(VariableRemaining) === engine variable figure used in the headline
+  displayed(ForwardReserve) === computeCycleState(fixture).forwardReserve
+No card may compute its own value locally. If any does, route it through the 
+engine output.
+
+────────────────────────────────────────
+EXPECTED OUTPUT after all five fixes (today = May 22, checking $2,017,
+NG $142.18 + CC settled-as-variable + NF $73 pending, May variable logged $600):
+────────────────────────────────────────
+AVAILABLE TO SAVE/SPEND (Safe to Spend): $0.00  (sublabel: over-committed by $19.16)
+  Required Hold $2,036.16 (3 pending May bills + EZ-Pass + June 1-4 bills + 
+  7-day variable buffer); Forward Reserve component intact.
+
+MONTH PRODUCTION (Discretionary, secondary):
+  with income override set:  ~$934.37  (3,368.32 income − 1,833.95 bills − 600 variable)
+  base income only:          ~$786.05  (3,220 − 1,833.95 − 600)
+  NOT $266.05. The $266 was QS double-count (~$250) + variable inflation 
+  (~$245) + income understatement (~$148) netting against each other wrongly.
+
+Confirm the five fixes and the expected output table back to me before coding.
+A note as your CFO on what this changes in practice: once Fix 4 lands, the number you glance at every day — "Available to Save/Spend" — is the honest, reserve-aware figure. Today it correctly reads $0, over-committed by $19, which is your real position. Month Production becomes a secondary "how productive was this month" gauge for tracking your savings rate over time, not a daily decision number. That separation is the whole point: one number for "can I move money today," one for "how did the month go." They were fighting each other inside a single mislabeled headline, and that's most of why this felt broken for a month.
+The QuickSilver fix (Fix 1) is the one most likely to trip up the Agent — make sure it sets the Capital One bill to include=FALSE rather than deleting it, so you keep the record but stop the double-count. If the Agent proposes deleting the row or zeroing the amount instead, that's fine too, but include=FALSE is cleanest because it preserves the history.
