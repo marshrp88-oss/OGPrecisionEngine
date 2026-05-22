@@ -813,6 +813,8 @@ export const GetDashboardCycleResponse = zod.object({
   oneTimeDueBeforePayday: zod.number(),
   totalRequiredHold: zod.number(),
   safeToSpend: zod.number(),
+  safeToSpendPreFloor: zod.number(),
+  overCommittedBy: zod.number(),
   dailyRateFromUpdate: zod.number(),
   dailyRateRealTime: zod.number(),
   daysOfCoverage: zod.number().nullish(),

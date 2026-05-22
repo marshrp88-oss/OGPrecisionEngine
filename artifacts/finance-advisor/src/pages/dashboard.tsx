@@ -30,6 +30,8 @@ interface CycleData {
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
   safeToSpend: number;
+  safeToSpendPreFloor: number;
+  overCommittedBy: number;
   dailyRateFromUpdate: number;
   dailyRateRealTime: number;
   daysOfCoverage?: number | null;
@@ -88,6 +90,13 @@ interface DiscretionaryResp {
   paychecksReceivedThisMonth: number;
   paychecksReceivedCount: number;
   expectedRemainingPaychecks: number;
+  paycheckBreakdown: {
+    paydayDate: string;
+    baseAmount: number;
+    overrideAmount: number | null;
+    appliedAmount: number;
+    received: boolean;
+  }[];
   commissionPaidThisMonth: number;
   commissionPendingThisMonth: number;
   totalMonthIncome: number;
@@ -562,10 +571,10 @@ function SituationBlock({
       data-status={status}
     >
       <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border">
-        {/* LEFT — Safe to Spend */}
+        {/* LEFT — PRIMARY: Available to Save / Spend (Correction Playbook v8.0 Fix 4) */}
         <div className="p-6 md:p-8">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
-            Safe to Spend
+            Available to Save / Spend
           </p>
           <h2
             className={cn(
@@ -576,22 +585,39 @@ function SituationBlock({
           >
             {formatCurrency(cycle.safeToSpend)}
           </h2>
+          {cycle.overCommittedBy > 0 ? (
+            <p
+              className="text-xs text-destructive font-mono mt-2 font-medium"
+              data-testid="text-over-committed"
+            >
+              over-committed by {formatCurrency(cycle.overCommittedBy)}
+            </p>
+          ) : null}
           <p className="text-xs text-muted-foreground font-mono mt-3">
             {formatCurrency(cycle.dailyRateRealTime)}/day · {paydayLabel}
           </p>
+          <p className="text-[10px] text-muted-foreground/70 mt-1">
+            Reserve-aware cash position — your daily decision number.
+          </p>
         </div>
 
-        {/* RIGHT — Discretionary This Month */}
+        {/* RIGHT — SECONDARY: Month Production (savings rate) */}
         <div className="p-6 md:p-8">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
-            Discretionary This Month
+            Month Production <span className="text-muted-foreground/70 normal-case">(savings rate)</span>
           </p>
           <h3
-            className="text-3xl md:text-4xl font-bold tracking-tighter font-mono"
+            className={cn(
+              "text-3xl md:text-4xl font-bold tracking-tighter font-mono",
+              discretionary && discretionary.discretionaryThisMonth < 0 && "text-destructive",
+            )}
             data-testid="text-discretionary-month"
           >
             {discretionary ? formatCurrency(discretionary.discretionaryThisMonth) : "—"}
           </h3>
+          <p className="text-[10px] text-muted-foreground/70 mt-1">
+            What this month generated — not what's free to move today.
+          </p>
           {discretionary && (
             <div className="mt-3 space-y-1.5 text-xs font-mono">
               <InlineAssumptionEditor

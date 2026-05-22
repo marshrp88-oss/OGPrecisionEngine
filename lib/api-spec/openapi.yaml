@@ -2030,6 +2030,10 @@ components:
           type: number
         safeToSpend:
           type: number
+        safeToSpendPreFloor:
+          type: number
+        overCommittedBy:
+          type: number
         dailyRateFromUpdate:
           type: number
         dailyRateRealTime:
@@ -2058,6 +2062,8 @@ components:
         - oneTimeDueBeforePayday
         - totalRequiredHold
         - safeToSpend
+        - safeToSpendPreFloor
+        - overCommittedBy
         - dailyRateFromUpdate
         - dailyRateRealTime
         - variableSpendUntilPayday

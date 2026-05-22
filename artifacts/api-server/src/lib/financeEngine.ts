@@ -60,6 +60,8 @@ export interface CycleState {
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
   safeToSpend: number;
+  safeToSpendPreFloor: number;
+  overCommittedBy: number;
   dailyRateFromUpdate: number;
   dailyRateRealTime: number;
   daysOfCoverage: number | null;
@@ -233,6 +235,17 @@ export async function computeCycleState(): Promise<CycleState> {
     forwardReserveAmount: forwardReserve,
     includeForwardReserveInSts: true,
   });
+  // v8.0 Fix 4 — surface the PRE-FLOOR Safe to Spend so the UI can render
+  // "$0.00 — over-committed by $X.XX" instead of silently flooring at $0.
+  // Required Hold here already includes Forward Reserve (§1.1).
+  const safeToSpendPreFloor =
+    checkingBalance -
+    (billsDueBeforePayday +
+      pendingHoldsReserve +
+      minimumCushion +
+      oneTimeDueBeforePayday +
+      forwardReserve);
+  const overCommittedBy = safeToSpendPreFloor < 0 ? -safeToSpendPreFloor : 0;
 
   const lastUpdateDate = lastBalanceUpdate ? utcStartOfDay(lastBalanceUpdate) : today;
 
@@ -274,6 +287,8 @@ export async function computeCycleState(): Promise<CycleState> {
     oneTimeDueBeforePayday,
     totalRequiredHold,
     safeToSpend: sts,
+    safeToSpendPreFloor,
+    overCommittedBy,
     dailyRateFromUpdate,
     dailyRateRealTime,
     daysOfCoverage: coverage,

@@ -1555,3 +1555,41 @@ export function variableProrated(
 ): number {
   return days * (variableCap / monthLengthDays);
 }
+
+// ---------------------------------------------------------------------------
+// 19. MONTH-FLOW VARIABLE OBLIGATION  (Correction Playbook v8.0 — Fix 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Month-headline variable obligation. Used by the /dashboard/discretionary
+ * route as the variable-spend line in the month-anchored flow (Part 0/1).
+ *
+ * Formula:
+ *   if plannedRemainingOverride is a finite number:
+ *       return logged + max(0, override)
+ *   else:
+ *       return max(cap, logged)
+ *
+ * Rationale (Correction Playbook v8.0 Fix 2): the old "logged + trailing rate
+ * projection" inflated the month flow past cap (e.g. $600 logged on a $600
+ * cap projected to $845). That violated the principle that logging spend
+ * within cap MUST NOT move Discretionary, and contradicted the "X of $cap"
+ * shown to the user. Replacing the trailing projection with MAX(cap, logged)
+ * pins the obligation at cap until genuine overspend pushes it higher.
+ *
+ * Trailing daily rate is still allowed for display analytics (burn pace,
+ * pacing labels) but must not feed this number or any headline downstream.
+ *
+ * Source: Correction Playbook v8.0 Fix 2.
+ */
+export function monthVariableObligationHeadline(
+  variableLoggedThisMonth: number,
+  variableCap: number,
+  plannedRemainingOverride: number | null,
+): number {
+  const logged = Math.max(0, variableLoggedThisMonth);
+  if (plannedRemainingOverride !== null && Number.isFinite(plannedRemainingOverride)) {
+    return logged + Math.max(0, plannedRemainingOverride);
+  }
+  return Math.max(variableCap, logged);
+}

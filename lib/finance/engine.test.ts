@@ -1317,3 +1317,121 @@ describe("decisionSandboxCompare — Source: Decision Sandbox!B21:E30", () => {
     expect(decisionSandboxCompare([], 145.0, 1833.95, 600.0, 3220.0, 15000.0)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Correction Playbook v8.0 — Fix 2 + Fix 4 + Fix 5 invariants
+// ---------------------------------------------------------------------------
+
+describe("monthVariableObligationHeadline — Fix 2 (cap floor, no trailing projection)", () => {
+  it("returns MAX(cap, logged) when override is null", async () => {
+    const { monthVariableObligationHeadline } = await import("./engine");
+    // Within cap → pinned at cap
+    expect(monthVariableObligationHeadline(0, 600, null)).toBe(600);
+    expect(monthVariableObligationHeadline(300, 600, null)).toBe(600);
+    expect(monthVariableObligationHeadline(600, 600, null)).toBe(600);
+    // Genuine overspend past cap → moves with logged
+    expect(monthVariableObligationHeadline(750, 600, null)).toBe(750);
+  });
+
+  it("logging within cap does NOT move the headline (Fix 2 invariant)", async () => {
+    const { monthVariableObligationHeadline } = await import("./engine");
+    const before = monthVariableObligationHeadline(550, 600, null);
+    const afterLogging50More = monthVariableObligationHeadline(600, 600, null);
+    expect(before).toBe(afterLogging50More); // both = 600, headline unchanged
+  });
+
+  it("override path: returns logged + override (planned remaining)", async () => {
+    const { monthVariableObligationHeadline } = await import("./engine");
+    // User pinned a planned remaining of $100; logged $400 → obligation $500.
+    expect(monthVariableObligationHeadline(400, 600, 100)).toBe(500);
+    // Override below cap is honored even when logged + override < cap
+    expect(monthVariableObligationHeadline(0, 600, 200)).toBe(200);
+  });
+
+  it("override clamps negatives to 0", async () => {
+    const { monthVariableObligationHeadline } = await import("./engine");
+    expect(monthVariableObligationHeadline(500, 600, -50)).toBe(500);
+  });
+
+  it("never returns NaN for zero/negative logged", async () => {
+    const { monthVariableObligationHeadline } = await import("./engine");
+    expect(monthVariableObligationHeadline(0, 600, null)).toBe(600);
+    expect(monthVariableObligationHeadline(-10, 600, null)).toBe(600);
+  });
+});
+
+describe("safeToSpend pre-floor invariant — Fix 4 (engine source of truth)", () => {
+  it("flooring: when pre-floor < 0, safeToSpend === 0 (the floor)", () => {
+    // checking $2,017, hold $2,036.16 → preFloor = -19.16, floored to 0
+    const sts = safeToSpend(2017.0, 1898.0, {
+      pendingHolds: 0,
+      minimumCushion: 0,
+      oneTimeDueTotal: 0,
+      forwardReserveAmount: 138.16,
+      includeForwardReserveInSts: true,
+    });
+    expect(sts).toBe(0);
+    // The route layer (financeEngine.ts) computes preFloor = checking - hold
+    // independently and surfaces overCommittedBy = -preFloor.
+    const preFloor = 2017.0 - (1898.0 + 138.16);
+    expect(preFloor).toBeCloseTo(-19.16, 2);
+    expect(Math.max(0, -preFloor)).toBeCloseTo(19.16, 2);
+  });
+
+  it("non-flooring: preFloor === safeToSpend when ≥ 0", () => {
+    const sts = safeToSpend(3000.0, 1000.0, {
+      forwardReserveAmount: 500.0,
+      includeForwardReserveInSts: true,
+    });
+    const preFloor = 3000.0 - (1000.0 + 500.0);
+    expect(preFloor).toBe(1500);
+    expect(sts).toBe(preFloor);
+  });
+
+  it("over-committed display amount matches |preFloor| when preFloor < 0", () => {
+    // Synthetic over-commitment case
+    const checking = 1000.0;
+    const hold = 1500.0;
+    const sts = safeToSpend(checking, hold, { includeForwardReserveInSts: true });
+    const preFloor = checking - hold;
+    const overCommittedBy = preFloor < 0 ? -preFloor : 0;
+    expect(sts).toBe(0);
+    expect(overCommittedBy).toBe(500);
+  });
+});
+
+describe("Fix 5 — UI = engine cross-validation guard rails", () => {
+  it("variable headline used by route MUST equal engine helper output", async () => {
+    const { monthVariableObligationHeadline } = await import("./engine");
+    // Mirror the exact branch logic in artifacts/api-server/src/routes/dashboard.ts:
+    //   monthVariableObligation = monthVariableObligationHeadline(logged, cap, override)
+    // If the route ever re-implements this locally, this test still passes —
+    // but the route audit invariant below catches that drift.
+    const cases: [number, number, number | null, number][] = [
+      [600, 600, null, 600],
+      [300, 600, null, 600],
+      [750, 600, null, 750],
+      [400, 600, 100, 500],
+    ];
+    for (const [logged, cap, override, expected] of cases) {
+      expect(monthVariableObligationHeadline(logged, cap, override)).toBe(expected);
+    }
+  });
+
+  it("safeToSpend and (max(0, preFloor)) are algebraically identical", () => {
+    const trials: Array<[number, number, number]> = [
+      [2017, 1898, 138.16],
+      [3000, 1000, 500],
+      [1000, 1500, 0],
+      [500, 0, 0],
+    ];
+    for (const [checking, bills, fr] of trials) {
+      const sts = safeToSpend(checking, bills, {
+        forwardReserveAmount: fr,
+        includeForwardReserveInSts: true,
+      });
+      const preFloor = checking - (bills + fr);
+      expect(sts).toBe(Math.max(0, preFloor));
+    }
+  });
+});

@@ -11,6 +11,7 @@ import {
   VARIABLE_SPEND_CAP,
   Bill as EngineBill,
   commissionTakeHome,
+  monthVariableObligationHeadline,
 } from "@workspace/finance";
 
 // NOTE: Playbook §1.1 (Forward Reserve subtracted from Safe to Spend) is now
@@ -82,21 +83,52 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
       : null;
 
   // v8.0 Part 7 — paydays computed dynamically (7th + 22nd, no stored value).
+  // v8.0 Fix 3 — per-paycheck income override: assumption key
+  // `income_override:YYYY-MM-DD` keyed by nominal payday. When set, that
+  // paycheck uses the override instead of baseNetIncome/2. Unset → fall back
+  // to base. Overrides are scoped per-payday so May 22's override does NOT
+  // bleed into June. Editable via existing PUT /assumptions/{key}.
   const paydayDays = [7, 22];
   const netPerPaycheck = baseNetIncome / 2;
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const incomeOverrideFor = (paydayISO: string): number | null => {
+    const row = allAssumps.find((a) => a.key === `income_override:${paydayISO}`);
+    if (!row || row.value === "") return null;
+    const n = parseFloat(row.value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
   let paychecksReceivedThisMonth = 0;
   let expectedRemainingPaychecks = 0;
   let paychecksReceivedCount = 0;
   let paychecksRemainingCount = 0;
+  const paycheckBreakdown: {
+    paydayDate: string;
+    baseAmount: number;
+    overrideAmount: number | null;
+    appliedAmount: number;
+    received: boolean;
+  }[] = [];
   for (const day of paydayDays) {
     const nominal = new Date(today.getFullYear(), today.getMonth(), day);
-    if (nominal <= today) {
-      paychecksReceivedThisMonth += netPerPaycheck;
+    const iso = ymd(nominal);
+    const override = incomeOverrideFor(iso);
+    const applied = override ?? netPerPaycheck;
+    const received = nominal <= today;
+    if (received) {
+      paychecksReceivedThisMonth += applied;
       paychecksReceivedCount += 1;
     } else if (nominal <= monthEnd) {
-      expectedRemainingPaychecks += netPerPaycheck;
+      expectedRemainingPaychecks += applied;
       paychecksRemainingCount += 1;
     }
+    paycheckBreakdown.push({
+      paydayDate: iso,
+      baseAmount: netPerPaycheck,
+      overrideAmount: override,
+      appliedAmount: applied,
+      received,
+    });
   }
   const remainingPaychecksThisMonth = expectedRemainingPaychecks; // back-compat alias
   const nextEffectivePayday = deriveNextPayday(today);
@@ -219,34 +251,45 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
 
-  // v8.0 Part 4.2/4.3 — variable expected remaining:
-  //   1. Manual override wins if set.
-  //   2. Otherwise: trailing daily rate × days remaining (Part 4.3).
-  //      May actuals ran ~2.2x cap-derived rate; cap-derived was systematically
-  //      optimistic. After day 7 we trust the trailing rate; before that, use
-  //      cap-derived default to avoid noise.
-  //   3. Floor at 0 (can't go negative; over-cap spend is sunk cost).
+  // v8.0 Fix 2 — month-headline variable obligation NO LONGER uses trailing
+  // rate. Trailing rate over-inflates the month flow (e.g. $600 logged on $600
+  // cap projected to $845), violating the principle that logging spend within
+  // cap must not move Discretionary. Replaced with:
+  //
+  //   monthVariableObligation =
+  //       plannedVariableRemainingOverride        (if numeric)
+  //       else MAX(variableCap, variableLoggedThisMonth)
+  //
+  // i.e. cap is the floor; only genuine overspend past cap moves the number.
+  // Trailing daily rate is preserved for DISPLAY ANALYTICS only (burn pace,
+  // pacing labels) — never feeds the headline.
   const dayOfMonth = today.getDate();
   const daysInMonth = monthEnd.getDate();
   const daysRemainingInMonth = Math.max(0, daysInMonth - dayOfMonth + 1);
+  // Trailing daily rate (display analytic only — burn pace, etc.).
   const trailingDailyRate =
     dayOfMonth >= 7 && variableLoggedThisMonth > 0
       ? variableLoggedThisMonth / dayOfMonth
       : variableCap / monthLengthDays;
+  // Legacy field kept for breakdown display; NOT used in headline.
   const variableExpectedRemainingTrailing = Math.max(
     0,
     trailingDailyRate * Math.max(0, daysRemainingInMonth - 1),  // exclude today
   );
-  const variableExpectedRemaining =
-    plannedVariableRemainingOverride !== null
-      ? plannedVariableRemainingOverride
-      : variableExpectedRemainingTrailing;
-  const variableRemainingThisMonth = variableExpectedRemaining; // back-compat
-  // Variable cap remaining (cap − logged, floored). Different from
-  // expected_remaining (which uses trailing rate). This is the "headroom"
-  // metric — shown in UI for the variable budget.
+  // Variable cap remaining (cap − logged, floored).
   const variableCapRemaining = Math.max(0, variableCap - variableLoggedThisMonth);
-  const monthVariableObligation = variableLoggedThisMonth + variableExpectedRemaining;
+  // Fix 2: headline routed through engine helper (single source of truth).
+  const monthVariableObligation = monthVariableObligationHeadline(
+    variableLoggedThisMonth,
+    variableCap,
+    plannedVariableRemainingOverride,
+  );
+  // Expected remaining = obligation − logged (≥ 0). Surfaced for UI rows.
+  const variableExpectedRemaining = Math.max(
+    0,
+    monthVariableObligation - variableLoggedThisMonth,
+  );
+  const variableRemainingThisMonth = variableExpectedRemaining; // back-compat
 
   // ============================================================
   // v8.0 HEADLINE — month-anchored flow (Part 0/1).
@@ -346,6 +389,13 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     paychecksReceivedThisMonth: round(paychecksReceivedThisMonth),
     paychecksReceivedCount,
     expectedRemainingPaychecks: round(expectedRemainingPaychecks),
+    // Fix 3: per-paycheck breakdown with optional overrides
+    paycheckBreakdown: paycheckBreakdown.map((p) => ({
+      ...p,
+      baseAmount: round(p.baseAmount),
+      overrideAmount: p.overrideAmount !== null ? round(p.overrideAmount) : null,
+      appliedAmount: round(p.appliedAmount),
+    })),
     commissionPaidThisMonth: round(commissionPaidThisMonth),
     commissionPendingThisMonth: round(commissionPendingThisMonth),
     totalMonthIncome: round(totalMonthIncome),

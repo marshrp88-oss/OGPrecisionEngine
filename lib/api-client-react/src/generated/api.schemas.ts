@@ -570,6 +570,8 @@ export interface DashboardCycle {
   oneTimeDueBeforePayday: number;
   totalRequiredHold: number;
   safeToSpend: number;
+  safeToSpendPreFloor: number;
+  overCommittedBy: number;
   dailyRateFromUpdate: number;
   dailyRateRealTime: number;
   /** @nullable */
