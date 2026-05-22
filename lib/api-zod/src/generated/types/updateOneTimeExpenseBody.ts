@@ -12,6 +12,7 @@ export interface UpdateOneTimeExpenseBody {
   /** @nullable */
   dueDate?: Date | null;
   paid?: boolean;
+  deferred?: boolean;
   /** @nullable */
   notes?: string | null;
 }

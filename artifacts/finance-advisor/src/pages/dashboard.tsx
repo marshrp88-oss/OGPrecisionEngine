@@ -92,11 +92,23 @@ interface DiscretionaryResp {
   commissionPendingThisMonth: number;
   totalMonthIncome: number;
   billsThisMonth: number;
+  billsPaidThisMonth: number;
+  billsLateUnpaidThisMonth: number;
+  billsSkippedThisMonth: number;
   variableLoggedThisMonth: number;
   variableExpectedRemaining: number;
+  variableExpectedRemainingTrailing: number;
+  variableCapRemaining: number;
+  monthVariableObligation: number;
+  trailingDailyRate: number;
   plannedVariableRemainingOverride: number | null;
   oneTimeThisMonth: number;
+  oneTimeMonthObligated: number;
+  oneTimePaidThisMonth: number;
+  oneTimeDeferredTotal: number;
+  oneTimeDetail: { id: number; description: string; amount: number; dueDate: string | null; paid: boolean; deferred: boolean }[];
   totalMonthOutgo: number;
+  nextEffectivePayday: string;
   forwardReserve: number;
   proratedVariableRemainingThisMonth: number;
   daysRemainingInMonth: number;
@@ -366,61 +378,61 @@ export default function Dashboard() {
                   className="space-y-3 font-mono text-sm pt-4"
                 >
                   <p className="text-xs text-muted-foreground italic pb-1">
-                    Cash-anchored: cash you have <em>right now</em> + income still coming this month, minus every obligation between today and {formatDate(discretionary.monthEnd)}, minus the Forward Reserve savings goal. Negative = this month consumes reserves.
+                    Month-anchored flow (v8.0): full-month income vs. full-month obligations through {formatDate(discretionary.monthEnd)}. Paid bills still count (the money already left this month); only <em>skipped this cycle</em> and <em>deferred</em> items are excluded. Forward Reserve and current checking are NOT part of this formula — Forward Reserve is a timing buffer, not a flow item.
                   </p>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Cash + Income</p>
-                  <Row label="Checking balance (today)" value={discretionary.checking} />
+
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Month income</p>
                   <Row
-                    label={`+ Remaining paychecks this month (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
+                    label={`Paychecks received (${discretionary.paychecksReceivedCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
+                    value={discretionary.paychecksReceivedThisMonth}
+                  />
+                  <Row
+                    label={`+ Paychecks remaining (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
                     value={discretionary.expectedRemainingPaychecks}
                   />
+                  <Row label="+ Commission paid" value={discretionary.commissionPaidThisMonth} />
                   <Row label="+ Commission pending" value={discretionary.commissionPendingThisMonth} />
-                  <Row
-                    label="= Total cash + income"
-                    value={discretionary.checking + discretionary.expectedRemainingPaychecks + discretionary.commissionPendingThisMonth}
-                    bold
-                  />
+                  <Row label="= Total month income" value={discretionary.totalMonthIncome} bold />
 
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">Subtractions (today → month end)</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">Month obligations</p>
                   <Row
-                    label={`− Bills remaining (due ${new Date().getDate()}–${new Date(discretionary.monthEnd).getDate()})`}
-                    value={discretionary.billsRemainingThisMonth}
+                    label={`− Bills this month (${formatCurrency(discretionary.billsPaidThisMonth)} paid · ${formatCurrency(discretionary.billsLateUnpaidThisMonth)} late · skipped ${formatCurrency(discretionary.billsSkippedThisMonth)} excluded)`}
+                    value={discretionary.billsThisMonth}
+                    negative
+                  />
+                  <Row
+                    label={`− Variable logged so far`}
+                    value={discretionary.variableLoggedThisMonth}
                     negative
                   />
                   <EditableOutgoRow
-                    label="− Variable expected (remaining of cap)"
+                    label={`− Variable expected remaining${discretionary.plannedVariableRemainingOverride !== null ? "" : ` (trailing $${discretionary.trailingDailyRate?.toFixed(2) ?? "—"}/day × ${Math.max(0, discretionary.daysRemainingInMonth - 1)} days)`}`}
                     assumptionKey="planned_variable_remaining_override"
                     value={discretionary.variableExpectedRemaining}
-                    fallback={Math.max(0, discretionary.variableCap - discretionary.variableLoggedThisMonth)}
+                    fallback={discretionary.variableExpectedRemainingTrailing ?? 0}
                     isOverridden={discretionary.plannedVariableRemainingOverride !== null}
-                    hint={`Default = max(0, cap ${formatCurrency(discretionary.variableCap)} − logged ${formatCurrency(discretionary.variableLoggedThisMonth)}) = ${formatCurrency(Math.max(0, discretionary.variableCap - discretionary.variableLoggedThisMonth))}. Override anytime.`}
+                    hint={`Default = trailing daily rate × days remaining. Trailing = logged ${formatCurrency(discretionary.variableLoggedThisMonth)} ÷ day-of-month. Override anytime to pin a planned figure.`}
                   />
                   <Row
-                    label="− One-time remaining (dated today–month-end + undated)"
-                    value={discretionary.oneTimeDatedThisMonth + discretionary.oneTimeUndatedAdvisory}
+                    label={`− One-time this month (${formatCurrency(discretionary.oneTimePaidThisMonth)} paid; ${formatCurrency(discretionary.oneTimeDeferredTotal)} deferred excluded)`}
+                    value={discretionary.oneTimeMonthObligated}
                     negative
                   />
-                  <EditableOutgoRow
-                    label="− Extra CC balance owed (beyond CC bills)"
-                    assumptionKey="quicksilver_balance_owed"
-                    value={discretionary.quicksilverBalanceOwed}
-                    fallback={0}
-                    isOverridden={discretionary.quicksilverBalanceOwed > 0}
-                    hint="Use only if you owe MORE on the card than what's already in your bills list. Don't double-count the QuickSilver bill — it's already subtracted above."
-                  />
-                  <Row
-                    label="− Forward Reserve (savings goal contribution)"
-                    value={discretionary.forwardReserve}
-                    negative
-                  />
+                  <Row label="= Total month outgo" value={discretionary.totalMonthOutgo} bold />
 
                   <Row
                     label="= Discretionary This Month"
                     value={discretionary.discretionaryThisMonth}
                     bold
+                    negative={discretionary.discretionaryThisMonth < 0}
                   />
+                  {discretionary.discretionaryThisMonth < 0 && (
+                    <p className="text-xs text-destructive italic pt-2">
+                      Negative = the month is running a real deficit. Obligations exceed income by {formatCurrency(Math.abs(discretionary.discretionaryThisMonth))}. Cut variable, defer one-times, or skip a bill to this cycle.
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground italic pt-2">
-                    What's truly safe to spend on top of bills, planned variable, and savings. Distinct from Safe to Spend (current pay cycle only, no Forward Reserve subtracted).
+                    Forward Reserve ({formatCurrency(discretionary.forwardReserve)}) shown for reference — feeds Safe to Spend, not Discretionary. Distinct from Safe to Spend (current pay cycle, checking-anchored).
                   </p>
                 </TabsContent>
               )}

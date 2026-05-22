@@ -13,6 +13,7 @@ import {
 } from "@workspace/api-zod";
 import { enumerateBills, type EnrichedBill } from "../lib/cycleBillEngine";
 import { deriveNextPayday } from "../lib/financeEngine";
+import { syncBillPaymentStates } from "../lib/paymentState";
 import {
   BASE_NET_INCOME,
   MONTH_LENGTH_DAYS,
@@ -44,6 +45,8 @@ function toApi(b: EnrichedBill) {
     nextDueDate: isoDate(b.nextDueDate),
     daysUntilDue: b.daysUntilDue,
     isActivePeriod: b.isActivePeriod,
+    paymentState: b.paymentState,
+    paidDate: b.paidDate,
   };
 }
 
@@ -62,6 +65,7 @@ async function enrichBillRow(bill: typeof bills.$inferSelect) {
 }
 
 router.get("/bills", async (_req, res): Promise<void> => {
+  await syncBillPaymentStates(new Date());
   const all = await enumerateBills();
   res.json(GetBillsResponse.parse(all.map(toApi)));
 });
@@ -259,9 +263,21 @@ router.patch("/bills/:id", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  // v8.0 Part 2.3 — stamp paymentStateCycleKey when paymentState is explicitly
+  // changed so cycle rollover (syncBillPaymentStates) can revert non-scheduled
+  // states next month. Without this, manual Paid/Late/Skip would persist forever.
+  const updateData: Record<string, unknown> = { ...parsed.data, updatedAt: new Date() };
+  if (parsed.data.paymentState !== undefined) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    updateData.paymentStateCycleKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+    if (parsed.data.paymentState !== "paid" && parsed.data.paidDate === undefined) {
+      updateData.paidDate = null;
+    }
+  }
   const [row] = await db
     .update(bills)
-    .set({ ...parsed.data, updatedAt: new Date() } as never)
+    .set(updateData as never)
     .where(eq(bills.id, params.data.id))
     .returning();
   if (!row) {

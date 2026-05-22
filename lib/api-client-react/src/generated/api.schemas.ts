@@ -62,6 +62,16 @@ export interface CreateBalanceBody {
   notes?: string | null;
 }
 
+export type BillPaymentState =
+  (typeof BillPaymentState)[keyof typeof BillPaymentState];
+
+export const BillPaymentState = {
+  scheduled: "scheduled",
+  paid: "paid",
+  late_unpaid: "late_unpaid",
+  skipped_cycle: "skipped_cycle",
+} as const;
+
 export interface Bill {
   id: number;
   name: string;
@@ -80,6 +90,9 @@ export interface Bill {
   countsThisCycle: boolean;
   /** @nullable */
   nextDueDate?: string | null;
+  paymentState: BillPaymentState;
+  /** @nullable */
+  paidDate?: string | null;
 }
 
 export type CreateBillBodyFrequency =
@@ -118,6 +131,16 @@ export interface CreateBillBody {
   activeUntil?: string | null;
 }
 
+export type UpdateBillBodyPaymentState =
+  (typeof UpdateBillBodyPaymentState)[keyof typeof UpdateBillBodyPaymentState];
+
+export const UpdateBillBodyPaymentState = {
+  scheduled: "scheduled",
+  paid: "paid",
+  late_unpaid: "late_unpaid",
+  skipped_cycle: "skipped_cycle",
+} as const;
+
 export interface UpdateBillBody {
   name?: string;
   amount?: number;
@@ -132,6 +155,9 @@ export interface UpdateBillBody {
   activeFrom?: string | null;
   /** @nullable */
   activeUntil?: string | null;
+  paymentState?: UpdateBillBodyPaymentState;
+  /** @nullable */
+  paidDate?: string | null;
 }
 
 export interface OneTimeExpense {
@@ -141,6 +167,7 @@ export interface OneTimeExpense {
   /** @nullable */
   dueDate?: string | null;
   paid: boolean;
+  deferred?: boolean;
   /** @nullable */
   notes?: string | null;
   countsThisCycle: boolean;
@@ -152,6 +179,7 @@ export interface CreateOneTimeExpenseBody {
   /** @nullable */
   dueDate?: string | null;
   paid: boolean;
+  deferred?: boolean;
   /** @nullable */
   notes?: string | null;
 }
@@ -162,6 +190,7 @@ export interface UpdateOneTimeExpenseBody {
   /** @nullable */
   dueDate?: string | null;
   paid?: boolean;
+  deferred?: boolean;
   /** @nullable */
   notes?: string | null;
 }

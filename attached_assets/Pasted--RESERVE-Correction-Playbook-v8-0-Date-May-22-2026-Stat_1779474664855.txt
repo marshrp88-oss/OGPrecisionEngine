@@ -1,0 +1,352 @@
+# RESERVE — Correction Playbook v8.0
+
+**Date:** May 22, 2026
+**Status:** Definitive. Supersedes all prior plan documents (BUILD_SPEC, FIX_PLAN, PART_K, APRIL_30, MASTER_PLAN).
+**Context:** Written after one month of live use and a full reconciliation session that exposed the central defect. This playbook is honest about prior errors, including decisions Claude previously endorsed.
+
+---
+
+## PART 0 — The Central Correction (read before anything else)
+
+### 0.1 The single most important fix
+
+**Forward Reserve must be removed from the Discretionary This Month calculation.**
+
+Discretionary is a **flow** measure — "what did this month produce that I can save or invest?" Forward Reserve is a **timing buffer**, not a monthly expense. When the formula already counts all of a month's bills, subtracting Forward Reserve double-charges for the same obligations and produces false catastrophic negatives.
+
+**Evidence (May 22 live screenshot):** Discretionary displayed **−$1,547.16**. The engine computed Checking $324 − Forward Reserve $1,561.16 − Variable $300 ≈ −$1,547. It charged a depleted pre-payday checking balance for next month's full buffer while failing to count the ~$1,722 paycheck landing that same day. The number is meaningless.
+
+**The correction:**
+- **Discretionary This Month** = month income − month bills − month variable − month one-time. **No forward reserve. No current-checking anchor.**
+- **Safe to Spend** = current checking − required hold − forward reserve. **Forward reserve stays here only.**
+
+### 0.2 Honest gap acknowledgment
+
+The main thread resolved Discretionary as "cash-anchored including forward_reserve." This thread previously agreed cash-anchored was correct. **Both were wrong.** The error is twofold: (1) anchoring a "what did the month produce" number to current checking makes it swing violently between pre- and post-payday; (2) subtracting a stock concept (forward reserve) from a flow measure is a category error. This playbook fixes both.
+
+---
+
+## PART 1 — The Three Numbers (canonical definitions)
+
+The app surfaces three numbers. Each answers a distinct question. They are almost always different values; that is correct.
+
+### 1.1 Safe to Spend — cycle / stock / defensive
+**Question:** "Can I spend today without missing a bill before my next paycheck?"
+
+```
+safeToSpend = MAX(0,
+    currentChecking
+  − billsDueBeforeNextPayday          // unpaid bills, dueDate < nextEffectivePayday (strict)
+  − pendingHolds
+  − minimumCushion
+  − oneTimeDueBeforeNextPayday        // unpaid, non-deferred
+  − forwardReserve                    // forward reserve LIVES here
+)
+```
+Anchored to current checking. Includes forward reserve. Swings across the cycle — expected and correct.
+
+### 1.2 Discretionary This Month — month / flow / production — THE HEADLINE
+**Question:** "What is this calendar month producing that I can move to savings or investing?"
+
+```
+discretionaryThisMonth =
+    monthIncome
+  − monthBillsObligated
+  − monthVariable
+  − monthOneTimeObligated
+  // NO forward reserve. NO current-checking anchor.
+
+monthIncome =
+    SUM(net paychecks with payDate in [monthStart, monthEnd])    // received + upcoming, STABLE
+  + commissionTakeHome posted or confirmed-pending this month
+
+monthBillsObligated =
+    SUM(include=TRUE bills with dueDate in this month)           // full month, paid or not — see Part 2
+
+monthVariable =
+    variableLoggedThisMonth + variableExpectedRemaining          // see Part 4 (trailing rate)
+
+monthOneTimeObligated =
+    SUM(non-deferred one-time expenses dated this month)         // see Part 3
+```
+
+Anchored to the **calendar month**, not to checking. It is **stable** across the month — it drifts gently as variable accrues, never swings at payday. It converges to the actual amount saved as the month closes. It MAY be negative; a negative means the month is running a real deficit (overspending), and that truth must be shown (Part 5).
+
+### 1.3 Monthly Savings Estimate — forward / paycheck-cycle
+**Question:** "What will the current paycheck cycle leave behind at next payday?"
+
+```
+monthlySavingsEstimate =
+    paycheckCycleIncome
+  − billsDueThisCycle
+  − variableProratedThisCycle
+  − oneTimeDueThisCycle
+  − forwardReserve                    // forward reserve belongs here too (cycle hold)
+```
+Cycle-anchored, forward-looking. Distinct from Discretionary (month) and Safe to Spend (today). Display as tertiary.
+
+---
+
+## PART 2 — Bill Payment-State Engine (new core capability)
+
+This is the capability requested: utility bills (and all bills) carry a payment state that auto-updates the savings logic on a schedule, with manual override that auto-feeds projections.
+
+### 2.1 Concept
+
+Every bill has a **scheduled pay date** and a **payment state**. The engine treats a bill as paid or unpaid based on state, and that state drives whether the bill still counts as an upcoming obligation in Safe to Spend and the cycle math. Discretionary (month flow) counts the bill regardless of paid/unpaid because it represents a real month obligation — but the *timing* views (Safe to Spend, Monthly Savings cycle) respond to payment state.
+
+### 2.2 Bill schema additions
+
+```
+bills (
+  ...existing fields...
+  scheduled_pay_day        int          // day of month the bill is set to be paid
+  auto_pay                 boolean       // true = posts automatically on scheduled day
+  payment_state            enum          // 'scheduled' | 'paid' | 'late_unpaid' | 'skipped_cycle'
+  paid_date                date nullable // actual date paid (manual or auto)
+  seasonal_amounts         jsonb nullable// month→amount map for utilities (Part 6)
+)
+```
+
+### 2.3 Auto-update behavior
+
+On every dashboard load and every advisor turn:
+
+1. For each `auto_pay = TRUE` bill whose `scheduled_pay_day` ≤ today and `payment_state = 'scheduled'`: auto-flip to `'paid'`, set `paid_date = scheduled day`. This removes it from upcoming obligations automatically (it left the account).
+
+2. For each `auto_pay = FALSE` bill (manual — e.g., National Grid, National Fuel) whose `scheduled_pay_day` < today and `payment_state = 'scheduled'`: flip to `'late_unpaid'` and surface a prompt. It STILL counts as an obligation (you owe it) but is flagged as past its scheduled date.
+
+3. A bill marked `'paid'` is removed from Safe to Spend's upcoming-bills subtraction and from the cycle hold, because the money already left.
+
+### 2.4 Manual override (the requested toggle)
+
+Each bill row has a payment-state control directly in the UI:
+- A toggle / segmented control: **Scheduled · Paid · Late · Skip this cycle**
+- Flipping it instantly recalculates Safe to Spend, Monthly Savings, and the cycle hold — and the change is visible in the dashboard numbers within the same render.
+- **Paid** → removed from upcoming obligations.
+- **Late** → still owed, flagged, still in obligations, escalation badge if >3 days late.
+- **Skip this cycle** → excluded from THIS cycle's hold only; auto-reverts next cycle; still counts in month Discretionary (you'll pay it, just not this cycle).
+
+### 2.5 How payment state feeds each number
+
+| Number | Treats a "paid" bill as… | Treats a "late/unpaid" bill as… | Treats "skip this cycle" as… |
+|---|---|---|---|
+| Safe to Spend | removed (money gone) | still held (you owe it) | removed from this cycle |
+| Discretionary This Month | counted (real month obligation) | counted | counted (you'll still pay) |
+| Monthly Savings (cycle) | removed | held | removed this cycle |
+
+**Worked example — National Grid paid late:** NG $142.18 scheduled day 16, you pay it day 24. Before paying: state `late_unpaid`, still subtracted from Safe to Spend, flagged with amber "Late 8d" badge. The moment you flip it to Paid: it drops out of Safe to Spend (Safe to Spend rises by $142.18), Discretionary is unchanged (it was always counted as a May obligation). This is exactly the behavior you asked for — manual switch, auto-feeds projections.
+
+---
+
+## PART 3 — One-Time & Unexpected Expenses (state-driven, same model)
+
+### 3.1 Schema
+
+```
+one_time_expenses (
+  id, name, amount, due_date nullable,
+  payment_state    enum,    // 'scheduled' | 'paid' | 'overdue_unpaid' | 'deferred'
+  deferred         boolean,  // explicit defer (excluded from all math, tracked separately)
+  paid_date        date nullable,
+  notes
+)
+```
+
+### 3.2 Behavior
+
+- **scheduled** + due_date this month → counts in Discretionary; counts in Safe to Spend if due before next payday.
+- **paid** → removed from Safe to Spend; still counted in Discretionary as a month obligation that occurred.
+- **overdue_unpaid** (auto-flagged when due_date < today and not paid/deferred) → counts everywhere, tiered escalation: 0-7d amber, 8-30d red dashboard widget, 30+d blocks dashboard dismissal until resolved.
+- **deferred** (manual toggle) → excluded from ALL math, listed in a "Deferred Obligations" panel with a running footer total so it's never forgotten.
+
+### 3.3 The requested manual control
+
+Each one-time item has the same state control as bills: **Scheduled · Paid · Defer**. Toggling Defer pulls it out of Discretionary and Safe to Spend instantly and moves it to the Deferred panel. Toggling back re-arms it. Marking Paid removes it from liquidity views but preserves it in the month flow.
+
+**Current deferred stack to seed (Part B situational):** PPG $189 (deferred indefinitely, escalation-risk flag), NY State taxes ~$354 (defer to August), Mimi $1,000 (defer to July lump sum). Sister's hotel $187.32 — PAID 5/14 via Hotel.com.
+
+---
+
+## PART 4 — Variable Spend Methodology (corrected)
+
+### 4.1 The defect
+
+The screenshot shows the contradiction: "Variable remaining $300 of $600" while "Variable pace 141%" and "Logged MTD $600." The engine is counting only the non-QuickSilver portion ($300 cash) against the cap and treating the $300 QuickSilver spend as separate — so the cap looks half-used while pace shows 141% over. Both can't be true.
+
+### 4.2 The correction
+
+1. **All variable spend counts against the cap, regardless of payment method.** QuickSilver groceries are still groceries. `variableLoggedThisMonth` = SUM of all variable entries (cash + QS).
+2. **Variable remaining** = MAX(0, cap − variableLoggedThisMonth). With $600 logged on a $600 cap, remaining = $0. Manual override wins when set.
+3. **Variable expected remaining** (for Discretionary's forward portion) defaults to **trailing actual daily rate × days left**, NOT cap-derived rate. May ran ~$43/day vs the $19.74/day cap assumption — a 2.2x miss. The cap-derived default is systematically optimistic. Use `trailing30dayDailyRate` as the default; allow manual override.
+4. **Logging spend does not change Discretionary** beyond shifting expected→actual (sunk cost). Only the override or a balance/income change moves the headline.
+
+### 4.3 QuickSilver Owed — one coherent definition (resolves the three-label mess)
+
+QuickSilver Owed = SUM of variable entries with method=QuickSilver in the current statement period that have not yet been paid off via the scheduled QuickSilver bill payment. It represents card spend that overstates checking (money spent but not yet withdrawn). One label everywhere: **"QuickSilver Owed."** Delete "CC Balance Owed" and "QS Blind Spot" strings entirely. The scheduled CC payment is a bill row; to avoid double-count, the standalone QuickSilver Owed figure is informational (shows the blind spot) and is NOT separately subtracted in Discretionary — the bill row already captures the outflow.
+
+---
+
+## PART 5 — Display of Negative / Floor (corrected)
+
+- **Discretionary This Month** displays its **true signed value**, including negatives. A negative is real information ("you're running a deficit this month"). Style: positive green, zero neutral, negative red with label "running a deficit this month." Never clamp Discretionary to $0 — clamping hides the truth.
+- **Safe to Spend** floors at $0 (you cannot safely spend negative). When the pre-floor value is negative, show a "$0 — over-committed by $X" sublabel so $0 isn't misread as breakeven.
+- **Monthly Savings Estimate** floors at $0 for the headline but surfaces the pre-clamp value with a "running at floor / deficit of $X" warning (resolved item D).
+
+---
+
+## PART 6 — Seasonal Utility Model (restored)
+
+National Grid and National Fuel are flat in the current app; the OG workbook used a 12-month table. Flat values drift Forward Reserve and Monthly Savings by $30–80+/mo seasonally (worse in Buffalo winter).
+
+- Add `seasonal_amounts` JSONB to bills (month→amount).
+- When present, the bill's effective amount = `seasonal_amounts[currentMonth] ?? amount`.
+- UI: a "Seasonal" toggle in the bill edit modal exposing 12 month inputs.
+- Seed NG and NF from last winter's actual statements (ask Marshall for the numbers).
+
+---
+
+## PART 7 — Payday Auto-Advance (corrected)
+
+The header shows "payday today (May 21)" when today is May 22 — stale payday silently corrupts cycle math and income counting.
+
+- Compute `nextNominalPayday` and `nextEffectivePayday` dynamically on every dashboard load and advisor turn — never store a static payday.
+- Logic: dayOfMonth < 7 → the 7th this month; < 22 → the 22nd this month; else → the 7th next month. Weekend-adjust to prior Friday.
+- Delete any stored `next_payday_date` field.
+- This fixes income counting for Discretionary (correct number of remaining-month paychecks) and fixes Safe to Spend's cycle boundary simultaneously.
+
+---
+
+## PART 8 — Per-Paycheck Income Override
+
+Engine assumes static base net; real paychecks vary (overtime, partial commission, deduction changes — e.g., the $1,722.61 vs assumed $1,610).
+
+- Add a per-cycle `expected_income_override` field, distinct from Base Net Income.
+- When set, it feeds Discretionary's `monthIncome` and forward projection for that cycle.
+- When unset, fall back to Base Net Income and let the post-payday balance update reconcile.
+- UI: editable on the Update Balance modal and inline on the income line of the Discretionary breakdown.
+
+---
+
+## PART 9 — Data Trust Layer (the root problem, finally addressed)
+
+Every forecast confusion this month traced to stale or ambiguous data, not bad math. This section addresses the root cause. **Decision required from Marshall on 9.1.**
+
+### 9.1 Live bank integration — DECISION REQUIRED
+Manual balance entry is the foundational weakness. Options:
+- **(A) Integrate Plaid/Teller** — eliminates manual balance and variable-log staleness; ~$30-50/yr cost; biggest single value-add in the project.
+- **(B) Stay manual + enforce discipline** via the Session-Start Checklist (9.3) as the compensating control.
+
+Recommendation: commit to (A) for v9; ship (B) now as the bridge. This playbook builds (B); leave a clean integration seam for (A).
+
+### 9.2 Available vs Posted balance (the May 22 confusion)
+The bank shows two balances (Available $2,027 / Posted $345); the app models one. Specify:
+- The Update Balance modal captures **Posted (settled)** balance and a separate **pending net** (sum of pending deposits and debits).
+- Safe to Spend uses Posted + pending-debits-not-yet-cleared logic; the UI shows both "settled" and "available" so the user never again confuses the two.
+- Label the dashboard checking figure explicitly as "Posted" or "Available."
+
+### 9.3 Session-Start Checklist (the highest-leverage anti-staleness ritual)
+Fires once per day on first load. Five items, each <10 seconds: confirm balance, log variable spend since last session, review overdue/upcoming one-time items, update commission pipeline, confirm auto-advanced payday. Cannot be permanently dismissed; returns next day. This is the behavioral mechanism that keeps every other number honest.
+
+### 9.4 Staleness enforcement
+- Balance >3 days old → dashboard banner + advisor refuses cycle-level analysis.
+- Variable log >7 days since last entry → integrity warning; flags Discretionary as "may be overstated."
+
+---
+
+## PART 10 — Advisor Corrections
+
+- Confirm model string is `claude-opus-4-7` (was `claude-opus-4-5`).
+- Data Context expandable on every message showing the per-turn snapshot.
+- Per-turn snapshot refresh + hypothetical overlay (no DB write; advisor recommends, user actuates).
+- Staleness refusal active per 9.4.
+- Add `advisor_memories` table (foundation for cross-session persistence) + Save-as-Decision flow writing to a Decisions log surfaced on the dashboard.
+
+---
+
+## PART 11 — Surfacing Engine Features Already Built
+
+- **Multi-cycle Forward Projection:** dashboard panel exposing 2-cycle (extensible to 6) ending balances and the first payday where forward reserve can't be covered.
+- **Commission pipeline vs history:** closed/paid (history → drives drought flag) vs probability-weighted in-flight deals (pipeline → scenarios only, never baseline). Reaffirm commission-as-zero in baseline.
+- **Income Replacement Floor:** surface the minimum base salary sustaining $0-commission breakeven (negotiation floor).
+- **Tax Planning:** surface per-paycheck fed/state reserve and commission 43.5% set-aside.
+
+---
+
+## PART 12 — Drought Flag Fix
+Implementation checks all history; display says "0 of last 3." Make the display string match the all-history consecutive-months logic. Add a tooltip stating the threshold and definition.
+
+---
+
+## PART 13 — UI Specification (Overview page)
+
+Three-zone layout, professional grade:
+
+**Zone 1 — Headline (top):** Discretionary This Month as the largest element, left. Safe to Spend secondary, right. Each with a one-line "what this answers" subtitle. Monthly Savings as a smaller tertiary stat in the strip below.
+
+**Zone 2 — Status strip:** Fixed/Income %, Variable Pace % (corrected to count all spend), Savings Rate %, day N/31, payday countdown (auto-advanced). Integrity banner here when failing, with a Details expander listing exactly which checks failed.
+
+**Zone 3 — Working area (tabbed + columns):**
+- **Bills in Cycle** column: each bill with its payment-state control (Scheduled/Paid/Late/Skip) inline; flipping recalculates live.
+- **One-Time This Month** column: each item with Scheduled/Paid/Defer control; deferred items collapse into a "Deferred Obligations" subsection with footer total.
+- **Variable Spend Log** column: entries with method tags; Logged MTD; QuickSilver Owed (single coherent figure); a one-tap "Log" affordance.
+- **Show engine math** accordion: full waterfall for each of the three numbers, every line labeled, so any displayed value is auditable against the engine.
+
+**Editability:** every user-owned value editable inline or via modal, no AI agent required. This is a hard requirement across all pages.
+
+**Action row:** Update Balance · Log Spend · One-Time · Ask Advisor — all ghost-style, one tap each.
+
+---
+
+## PART 14 — Test Specification
+
+### 14.1 Engine unit tests (existing 170+ retained)
+Keep all. Add tests for the corrected Discretionary (no forward reserve, month-anchored) and the payment-state engine.
+
+### 14.2 UI-vs-engine cross-validation (NEW category — root cause of the original defect)
+For each dashboard card, a test that asserts the displayed value equals the engine call output for a given fixture state. The original Discretionary defect existed because unit tests verified the engine in isolation but never that the card matched the engine. This category closes that gap permanently.
+
+### 14.3 Month-timing stability suite (NEW — proves the central fix)
+Assert Discretionary This Month is **stable** across the month for a fixed scenario (income, bills, variable held constant). Compute at day 1, day 7, day 15, day 22 (pre- and post-payday), day 28, day 31. Assert it does not swing more than the variable-accrual delta between checkpoints. This directly prevents the −$1,547 regression.
+
+### 14.4 Payment-state propagation suite (NEW)
+Assert: flipping a bill to Paid raises Safe to Spend by the bill amount and leaves Discretionary unchanged. Flipping to Late keeps it in Safe to Spend with an escalation flag. Skip-this-cycle removes from cycle hold but keeps in month Discretionary. Same matrix for one-time Defer.
+
+---
+
+## PART 15 — Build Order
+
+1. **Part 0 / Part 1** — Rewrite Discretionary: remove forward reserve, re-anchor to month. Add the stability test suite (14.3) first; make it pass. This is the headline fix — do it before anything else.
+2. **Part 7** — Payday auto-advance (unblocks correct income counting).
+3. **Part 2** — Bill payment-state engine + inline controls.
+4. **Part 3** — One-time state engine + Defer controls.
+5. **Part 4** — Variable methodology (all-spend-counts, trailing rate, QuickSilver Owed unification).
+6. **Part 5** — Negative/floor display.
+7. **Part 9.2 / 9.3 / 9.4** — Available-vs-Posted, Session-Start Checklist, staleness enforcement.
+8. **Part 8** — Per-paycheck income override.
+9. **Part 6** — Seasonal utilities.
+10. **Part 13** — UI three-zone implementation with inline state controls.
+11. **Part 10 / 11 / 12** — Advisor, hidden features, drought flag.
+12. **Part 14** — Complete the test suite (cross-validation, propagation).
+13. **Part 9.1** — Plaid decision and integration seam.
+
+**Stopping rule:** if credits run low, ship through step 5 minimum — that delivers a correct headline number and the payment-state engine, which is the core of what was requested. Leave the repo compilable.
+
+---
+
+## PART 16 — Acceptance Criteria
+
+1. Discretionary This Month is stable across the month (14.3 passes); never shows a forward-reserve-driven false negative.
+2. The −$1,547 scenario, re-run, shows a sensible figure (~+$900 in a clean month, true deficit only when variable genuinely exceeds production).
+3. Every bill and one-time item has an inline payment-state control that recalculates all three numbers live.
+4. Marking a utility paid/late/scheduled feeds the correct number in each of Safe to Spend, Discretionary, and Monthly Savings per the Part 2.5 matrix.
+5. Variable pace and variable remaining are mutually consistent (all spend counts).
+6. QuickSilver appears under one label with one value.
+7. Payday auto-advances; no stale payday.
+8. Available vs Posted balances are distinct and labeled.
+9. Every dashboard card matches its engine value (14.2 passes).
+10. App deployed and usable on phone independent of the workspace.
+
+---
+
+*End of Playbook v8.0. This is the source of truth. Do not modify without explicit approval.*

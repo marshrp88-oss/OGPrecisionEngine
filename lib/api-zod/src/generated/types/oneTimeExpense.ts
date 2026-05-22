@@ -13,6 +13,7 @@ export interface OneTimeExpense {
   /** @nullable */
   dueDate?: Date | null;
   paid: boolean;
+  deferred?: boolean;
   /** @nullable */
   notes?: string | null;
   countsThisCycle: boolean;

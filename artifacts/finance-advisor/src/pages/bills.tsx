@@ -154,6 +154,37 @@ export default function Bills() {
     );
   };
 
+  const handleSetPaymentState = (
+    id: number,
+    next: "scheduled" | "paid" | "late_unpaid" | "skipped_cycle",
+  ) => {
+    const today = new Date().toISOString().split("T")[0];
+    updateBill.mutate(
+      {
+        id,
+        data: {
+          paymentState: next,
+          paidDate: next === "paid" ? today : null,
+        },
+      },
+      {
+        onSuccess: () => {
+          refresh();
+          toast({
+            title:
+              next === "paid"
+                ? "Marked paid"
+                : next === "skipped_cycle"
+                  ? "Skipped this cycle"
+                  : next === "late_unpaid"
+                    ? "Marked late"
+                    : "Reset to scheduled",
+          });
+        },
+      },
+    );
+  };
+
   const handleDelete = (id: number, name: string) => {
     if (!confirm(`Delete "${name}"?`)) return;
     deleteBill.mutate({ id }, { onSuccess: () => { refresh(); toast({ title: "Bill deleted" }); } });
@@ -457,14 +488,40 @@ export default function Bills() {
                 >
                   {bill.autopay ? "auto" : "manual"}
                 </button>
-                <div className="w-24 text-right">
-                  {bill.countsThisCycle ? (
-                    <Badge className="bg-destructive/20 text-destructive border-destructive/40 text-[10px]" variant="outline">In cycle</Badge>
-                  ) : bill.includeInCycle ? (
-                    <Badge variant="outline" className="text-[10px]">Future</Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-[10px]">Excluded</Badge>
-                  )}
+                {/* v8.0 payment-state segmented control */}
+                <div className="flex items-center gap-0.5 border rounded overflow-hidden text-[10px] uppercase tracking-wider">
+                  {([
+                    ["scheduled", "Sched"],
+                    ["paid", "Paid"],
+                    ["late_unpaid", "Late"],
+                    ["skipped_cycle", "Skip"],
+                  ] as const).map(([state, label]) => {
+                    const active = bill.paymentState === state;
+                    const activeStyle =
+                      state === "paid"
+                        ? "bg-success/30 text-success"
+                        : state === "late_unpaid"
+                          ? "bg-destructive/30 text-destructive"
+                          : state === "skipped_cycle"
+                            ? "bg-muted text-muted-foreground"
+                            : "bg-primary/20 text-primary";
+                    return (
+                      <button
+                        key={state}
+                        onClick={() => handleSetPaymentState(bill.id, state)}
+                        className={`px-1.5 py-0.5 hover-elevate ${active ? activeStyle : "text-muted-foreground"}`}
+                        data-testid={`button-paystate-${bill.id}-${state}`}
+                        title={
+                          state === "scheduled" ? "Not yet paid; money still expected to leave."
+                          : state === "paid" ? "Money already left this cycle."
+                          : state === "late_unpaid" ? "Past due, still owed."
+                          : "Skip this cycle only — auto-reverts next cycle."
+                        }
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
                 <Button variant="ghost" size="icon" onClick={() => openEdit(bill)} data-testid={`button-edit-bill-${bill.id}`}>
                   <Pencil className="h-3.5 w-3.5" />

@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
 import { GetDashboardCycleResponse } from "@workspace/api-zod";
-import { computeCycleState } from "../lib/financeEngine";
+import { computeCycleState, deriveNextPayday } from "../lib/financeEngine";
 import { billsThisMonth } from "../lib/cycleBillEngine";
+import { syncBillPaymentStates } from "../lib/paymentState";
 import { db, oneTimeExpenses, variableSpend, bills, assumptions, commissions, balances } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import {
@@ -10,12 +11,12 @@ import {
   VARIABLE_SPEND_CAP,
   Bill as EngineBill,
   commissionTakeHome,
-  nextNominalPayday,
 } from "@workspace/finance";
 
 const router: IRouter = Router();
 
 router.get("/dashboard/cycle", async (_req, res): Promise<void> => {
+  await syncBillPaymentStates(new Date());
   const cycle = await computeCycleState();
   res.json(
     GetDashboardCycleResponse.parse({
@@ -26,11 +27,18 @@ router.get("/dashboard/cycle", async (_req, res): Promise<void> => {
   );
 });
 
-// Discretionary THIS MONTH — month-frame view of remaining spend capability.
-// All monetary math delegates to @workspace/finance helpers; this route only
-// loads DB rows, projects future paychecks via engine `nextNominalPayday`,
-// and uses engine `monthlySavingsEstimate` for the cycle-frame parity number.
+// Discretionary THIS MONTH — v8.0 MONTH-ANCHORED FLOW (Playbook Part 0/1).
+//
+//   discretionary = monthIncome − monthBillsObligated − monthVariable − monthOneTimeObligated
+//
+// NO Forward Reserve (it's a stock/timing buffer, not a flow item — subtracting
+// it from a flow measure produces false catastrophic negatives).
+// NO current-checking anchor (causes pre/post-payday swings).
+//
+// Result CAN be negative. Negative = the month is actually running a deficit.
+// Do not floor; surface as red "running a deficit" per Part 5.
 router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
+  await syncBillPaymentStates(new Date());
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -69,8 +77,7 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
       ? parseFloat(overrideRow.value)
       : null;
 
-  // §1.2: paychecksReceivedThisMonth + expectedRemainingPaychecks.
-  // Paydays: 7th and 22nd of month (engine convention).
+  // v8.0 Part 7 — paydays computed dynamically (7th + 22nd, no stored value).
   const paydayDays = [7, 22];
   const netPerPaycheck = baseNetIncome / 2;
   let paychecksReceivedThisMonth = 0;
@@ -79,11 +86,6 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   let paychecksRemainingCount = 0;
   for (const day of paydayDays) {
     const nominal = new Date(today.getFullYear(), today.getMonth(), day);
-    const effective = nextNominalPayday(
-      new Date(Date.UTC(today.getFullYear(), today.getMonth(), day - 1)),
-      paydayDays,
-    );
-    void effective;
     if (nominal <= today) {
       paychecksReceivedThisMonth += netPerPaycheck;
       paychecksReceivedCount += 1;
@@ -93,6 +95,7 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     }
   }
   const remainingPaychecksThisMonth = expectedRemainingPaychecks; // back-compat alias
+  const nextEffectivePayday = deriveNextPayday(today);
 
   // §1.2: commissionPaid (status=paid, payoutDate in [monthStart, today]) and
   // commissionPending (status=pending, payoutDate in (today, monthEnd]).
@@ -123,51 +126,84 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const confirmedCommissionUnreceived = commissionPendingThisMonth;
   const confirmedCommissionTotal = commissionPaidThisMonth + commissionPendingThisMonth;
 
-  // §1.2: bills due THIS MONTH (include=TRUE, dueDay in [1, monthEnd.day]).
-  // NOT just remaining — all of the month, paid or not. The income side already
-  // accounts for paychecks received, so the outgo side must mirror the same
-  // calendar-month frame.
+  // v8.0 Part 1.2 — monthBillsObligated = SUM(include=TRUE bills dueDay in
+  // this month, payment_state != 'skipped_cycle'). Paid OR unpaid both count
+  // (they're real month obligations). Skipped_cycle excluded — user explicitly
+  // deferred to next cycle.
   const allBills = await db.select().from(bills);
   let billsThisMonthTotal = 0;
   let billsRemainingThisMonth = 0;
-  const billsThisMonthDetail: { id: number; name: string; amount: number; dueDay: number }[] = [];
-  const billsRemainingDetail: { id: number; name: string; amount: number; dueDay: number }[] = [];
+  let billsLateUnpaidThisMonth = 0;
+  let billsPaidThisMonth = 0;
+  let billsSkippedThisMonth = 0;
+  const billsThisMonthDetail: { id: number; name: string; amount: number; dueDay: number; paymentState: string }[] = [];
+  const billsRemainingDetail: { id: number; name: string; amount: number; dueDay: number; paymentState: string }[] = [];
   for (const b of allBills) {
     if (!b.includeInCycle) continue;
     const amt = parseFloat(b.amount);
     if (amt <= 0) continue;
     if (b.dueDay >= 1 && b.dueDay <= monthEnd.getDate()) {
-      billsThisMonthTotal += amt;
-      billsThisMonthDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay });
+      if (b.paymentState === "skipped_cycle") {
+        billsSkippedThisMonth += amt;
+      } else {
+        billsThisMonthTotal += amt;
+        billsThisMonthDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay, paymentState: b.paymentState });
+        if (b.paymentState === "paid") billsPaidThisMonth += amt;
+        else if (b.paymentState === "late_unpaid") billsLateUnpaidThisMonth += amt;
+      }
     }
-    if (b.dueDay >= today.getDate() && b.dueDay <= monthEnd.getDate()) {
+    // billsRemaining = obligation still expected to leave checking before
+    // month-end. Paid bills don't (money already gone). Skipped don't.
+    if (
+      b.dueDay >= today.getDate() &&
+      b.dueDay <= monthEnd.getDate() &&
+      b.paymentState !== "paid" &&
+      b.paymentState !== "skipped_cycle"
+    ) {
       billsRemainingThisMonth += amt;
-      billsRemainingDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay });
+      billsRemainingDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay, paymentState: b.paymentState });
     }
   }
 
-  // §1.2: one-time = paid=false AND (dueDate IS NULL OR dueDate <= monthEnd).
-  // Includes undated unpaid items (no longer "advisory only").
-  const oteRows = await db.select().from(oneTimeExpenses).where(eq(oneTimeExpenses.paid, false));
-  let oneTimeThisMonth = 0;
-  let oneTimeDatedThisMonth = 0;
-  let oneTimeUndated = 0;
+  // v8.0 Part 3 — one-time obligations.
+  // Discretionary subtracts: non-deferred items dated this month (paid or not),
+  // plus non-deferred undated unpaid items. Paid items are still month
+  // obligations (the money already left this month). Deferred excluded entirely.
+  const oteRows = await db.select().from(oneTimeExpenses);
+  let oneTimeMonthObligated = 0;
+  let oneTimeRemainingFromToday = 0;
+  let oneTimeDeferredTotal = 0;
+  let oneTimePaidThisMonth = 0;
+  const oneTimeDetail: { id: number; description: string; amount: number; dueDate: string | null; paid: boolean; deferred: boolean }[] = [];
   for (const o of oteRows) {
     const amt = parseFloat(o.amount);
-    if (!o.dueDate) {
-      oneTimeUndated += amt;
-      oneTimeThisMonth += amt; // §1.2 includes undated
+    if (o.deferred) {
+      oneTimeDeferredTotal += amt;
       continue;
     }
-    const dd = new Date(o.dueDate);
-    if (dd <= monthEnd) {
-      oneTimeThisMonth += amt;
-      if (dd >= today) oneTimeDatedThisMonth += amt;
+    const dd = o.dueDate ? new Date(o.dueDate) : null;
+    const isThisMonth = dd === null
+      ? !o.paid                                  // undated unpaid → this month
+      : dd >= monthStart && dd <= monthEnd;
+    if (!isThisMonth) continue;
+
+    oneTimeMonthObligated += amt;
+    oneTimeDetail.push({ id: o.id, description: o.description, amount: amt, dueDate: o.dueDate, paid: o.paid, deferred: o.deferred });
+    if (o.paid) {
+      oneTimePaidThisMonth += amt;
+    } else if (dd === null || dd >= today) {
+      oneTimeRemainingFromToday += amt;
+    } else {
+      // Overdue unpaid: still in monthObligated (real obligation).
+      oneTimeRemainingFromToday += amt;
     }
   }
+  // Back-compat aliases for legacy fields:
+  const oneTimeThisMonth = oneTimeMonthObligated;
+  const oneTimeDatedThisMonth = oneTimeRemainingFromToday;
+  const oneTimeUndated = 0;
 
-  // Variable spent this month — full month window (entries can be future-dated
-  // weeks too; spec says monthStart..monthEnd).
+  // v8.0 Part 4 — variable: ALL spend counts against cap (cash + QuickSilver).
   const allVs = await db.select().from(variableSpend);
   const monthVs = allVs.filter((v) => {
     const w = new Date(v.weekOf);
@@ -178,17 +214,46 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const quicksilverAccruedThisMonth = monthVs
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
-  // Per user direction (2026-05-15, REVISED): variable expected auto-decrements
-  // from logged spend by default (cap − logged, floored at 0). Override lets
-  // the user pin a specific planned amount. Logged spend reduces the remaining
-  // because money already gone is no longer discretionary headroom.
+
+  // v8.0 Part 4.2/4.3 — variable expected remaining:
+  //   1. Manual override wins if set.
+  //   2. Otherwise: trailing daily rate × days remaining (Part 4.3).
+  //      May actuals ran ~2.2x cap-derived rate; cap-derived was systematically
+  //      optimistic. After day 7 we trust the trailing rate; before that, use
+  //      cap-derived default to avoid noise.
+  //   3. Floor at 0 (can't go negative; over-cap spend is sunk cost).
+  const dayOfMonth = today.getDate();
+  const daysInMonth = monthEnd.getDate();
+  const daysRemainingInMonth = Math.max(0, daysInMonth - dayOfMonth + 1);
+  const trailingDailyRate =
+    dayOfMonth >= 7 && variableLoggedThisMonth > 0
+      ? variableLoggedThisMonth / dayOfMonth
+      : variableCap / monthLengthDays;
+  const variableExpectedRemainingTrailing = Math.max(
+    0,
+    trailingDailyRate * Math.max(0, daysRemainingInMonth - 1),  // exclude today
+  );
   const variableExpectedRemaining =
     plannedVariableRemainingOverride !== null
       ? plannedVariableRemainingOverride
-      : Math.max(0, variableCap - variableLoggedThisMonth);
-  const variableRemainingThisMonth = variableExpectedRemaining; // back-compat alias
+      : variableExpectedRemainingTrailing;
+  const variableRemainingThisMonth = variableExpectedRemaining; // back-compat
+  // Variable cap remaining (cap − logged, floored). Different from
+  // expected_remaining (which uses trailing rate). This is the "headroom"
+  // metric — shown in UI for the variable budget.
+  const variableCapRemaining = Math.max(0, variableCap - variableLoggedThisMonth);
+  const monthVariableObligation = variableLoggedThisMonth + variableExpectedRemaining;
 
-  // §1.2 income-anchored ledger (back-compat for breakdown UI / tests).
+  // ============================================================
+  // v8.0 HEADLINE — month-anchored flow (Part 0/1).
+  //
+  //   discretionary = monthIncome
+  //                 − monthBillsObligated
+  //                 − monthVariable (logged + expected_remaining)
+  //                 − monthOneTimeObligated
+  //
+  // NO forward reserve. NO checking anchor. Can be negative.
+  // ============================================================
   const totalMonthIncome =
     paychecksReceivedThisMonth +
     expectedRemainingPaychecks +
@@ -196,44 +261,16 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     commissionPendingThisMonth;
   const totalMonthOutgo =
     billsThisMonthTotal +
-    variableExpectedRemaining +
-    oneTimeThisMonth +
-    quicksilverBalanceOwed;
+    monthVariableObligation +
+    oneTimeMonthObligated;
+  const discretionaryHeadline = totalMonthIncome - totalMonthOutgo;
 
-  // ---- HEADLINE: cash-anchored Discretionary (2026-05-15 user direction) ----
-  // "What's actually safe to spend above bills + planned variable + savings goal,
-  //  using the cash I have today plus income still coming this month."
-  //
-  //   Discretionary = Cash on hand
-  //                 + Income still coming before month-end (paychecks + pending commission)
-  //                 − Bills remaining (due today → month-end, include=TRUE)
-  //                 − Variable expected (override OR max(0, cap − logged))
-  //                 − One-time remaining (dated today→monthEnd OR undated)
-  //                 − QuickSilver / CC balance to pay (separate from any CC bill)
-  //                 − Forward Reserve (savings goal contribution)
-  //
-  // Result CAN be negative. Do not floor.
-  const oneTimeRemaining = oneTimeDatedThisMonth + oneTimeUndated;
-  const cashAnchoredIncome =
-    checking + expectedRemainingPaychecks + commissionPendingThisMonth;
-  const cashAnchoredOutgo =
-    billsRemainingThisMonth +
-    variableExpectedRemaining +
-    oneTimeRemaining +
-    quicksilverBalanceOwed;
+  // Cycle (Safe to Spend) still uses the FROZEN engine for back-compat.
   const cycle = await computeCycleState();
-  const forwardReserveDeduction = cycle.forwardReserve;
-  const discretionaryHeadline =
-    cashAnchoredIncome - cashAnchoredOutgo - forwardReserveDeduction;
 
-  // Back-compat aliases for older UI pieces still referencing inflows/outflows.
-  const inflows = cashAnchoredIncome;
-  const outflows =
-    billsRemainingThisMonth +
-    oneTimeRemaining +
-    variableExpectedRemaining +
-    quicksilverBalanceOwed +
-    minimumCushion;
+  // Back-compat aliases for legacy UI still referencing the old field names.
+  const inflows = totalMonthIncome;
+  const outflows = totalMonthOutgo;
 
   const round = (n: number) => Math.round(n * 100) / 100;
 
@@ -252,15 +289,11 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const engineSavings = Math.max(0, discretionaryHeadline - 100);
   const savingsRate = baseNetIncome > 0 ? engineSavings / (baseNetIncome + confirmedCommissionTotal) : 0;
 
-  // Match the engine's prorated_variable_remaining for the breakdown row so
-  // the displayed math reconciles to the headline.
-  const lastDay = monthEnd.getDate();
-  const daysRemainingInMonth = Math.max(0, lastDay - today.getDate() + 1);
+  // Cap-derived prorated remaining (legacy breakdown row). Distinct from the
+  // trailing-rate-derived variableExpectedRemaining used in the headline.
   const proratedVariableRemainingForBreakdown =
     daysRemainingInMonth * (variableCap / monthLengthDays);
 
-  const dayOfMonth = today.getDate();
-  const daysInMonth = monthEnd.getDate();
   const expectedVarByNow = (variableCap * dayOfMonth) / daysInMonth;
   const variableBurnPace =
     expectedVarByNow > 0 ? variableSpentThisMonth / expectedVarByNow : 0;
@@ -293,20 +326,19 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   };
 
   res.json({
-    // Headline — engine-sourced per Playbook §2.1 (Forward Reserve Rule).
+    // v8.0 HEADLINE — month-anchored flow. No forward reserve, no checking anchor.
     discretionaryThisMonth: round(discretionaryHeadline),
-    // Monthly Savings — engine-sourced (engineSavings, computed above
-    // from discretionaryHeadline per Playbook B62 placeholder rule).
     monthlySavings: round(engineSavings),
     monthEnd: monthEnd.toISOString().split("T")[0],
+    nextEffectivePayday: nextEffectivePayday.toISOString().split("T")[0],
 
-    // Forward Reserve subtracted from the headline per §2.1. Surfaced so the
-    // UI breakdown can show the full chain of subtractions.
+    // Forward Reserve surfaced for cross-reference ONLY (Safe to Spend uses it).
+    // NOT subtracted from Discretionary headline per Part 0/1.
     forwardReserve: round(cycle.forwardReserve),
     proratedVariableRemainingThisMonth: round(proratedVariableRemainingForBreakdown),
     daysRemainingInMonth,
 
-    // §1.2 Income ledger
+    // Income ledger (full month, stable)
     paychecksReceivedThisMonth: round(paychecksReceivedThisMonth),
     paychecksReceivedCount,
     expectedRemainingPaychecks: round(expectedRemainingPaychecks),
@@ -314,16 +346,27 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     commissionPendingThisMonth: round(commissionPendingThisMonth),
     totalMonthIncome: round(totalMonthIncome),
 
-    // §1.2 Outgo ledger
+    // Outgo ledger (month-obligated)
     billsThisMonth: round(billsThisMonthTotal),
     billsThisMonthDetail,
+    billsLateUnpaidThisMonth: round(billsLateUnpaidThisMonth),
+    billsPaidThisMonth: round(billsPaidThisMonth),
+    billsSkippedThisMonth: round(billsSkippedThisMonth),
     variableLoggedThisMonth: round(variableLoggedThisMonth),
     variableExpectedRemaining: round(variableExpectedRemaining),
+    variableExpectedRemainingTrailing: round(variableExpectedRemainingTrailing),
+    variableCapRemaining: round(variableCapRemaining),
+    monthVariableObligation: round(monthVariableObligation),
+    trailingDailyRate: round(trailingDailyRate),
     plannedVariableRemainingOverride,
     oneTimeThisMonth: round(oneTimeThisMonth),
+    oneTimeMonthObligated: round(oneTimeMonthObligated),
+    oneTimePaidThisMonth: round(oneTimePaidThisMonth),
+    oneTimeDeferredTotal: round(oneTimeDeferredTotal),
+    oneTimeDetail,
     totalMonthOutgo: round(totalMonthOutgo),
 
-    // Inflows (back-compat aliases)
+    // Back-compat aliases
     checking: round(checking),
     remainingPaychecksThisMonth,
     paychecksRemainingCount,
@@ -331,8 +374,6 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     confirmedCommissionUnreceived: round(confirmedCommissionUnreceived),
     confirmedCommissionAlready: round(confirmedCommissionAlready),
     totalInflowsAvailable: round(inflows),
-
-    // Outflows (back-compat aliases)
     billsRemainingThisMonth: round(billsRemainingThisMonth),
     billsRemainingDetail,
     oneTimeDatedThisMonth: round(oneTimeDatedThisMonth),
@@ -345,11 +386,8 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     minimumCushion: round(minimumCushion),
     totalReservationsRequired: round(outflows),
 
-    // Cycle parity
     safeToSpend: cycle.safeToSpend,
     cycleStatus: cycle.status,
-
-    // Discipline (Playbook spend discipline)
     discipline,
   });
 });

@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, oneTimeExpenses, assumptions } from "@workspace/db";
+import { db, oneTimeExpenses } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import {
   GetOneTimeExpensesResponse,
@@ -9,33 +9,38 @@ import {
   UpdateOneTimeExpenseResponse,
   DeleteOneTimeExpenseParams,
 } from "@workspace/api-zod";
+import { deriveNextPayday } from "../lib/financeEngine";
 
 const router: IRouter = Router();
 
-async function enrichExpense(ote: typeof oneTimeExpenses.$inferSelect) {
+function enrichExpense(ote: typeof oneTimeExpenses.$inferSelect) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
-  const [payRow] = await db.select().from(assumptions).where(eq(assumptions.key, "next_payday_date"));
-  const nextPayday = payRow ? new Date(payRow.value) : null;
+  // v8.0 Part 7 — payday derived dynamically.
+  const nextPayday = deriveNextPayday(today);
 
   let countsThisCycle = false;
-  if (ote.dueDate && !ote.paid) {
+  // Deferred items NEVER count toward cycle math (Part 3).
+  if (ote.dueDate && !ote.paid && !ote.deferred) {
     const dueDate = new Date(ote.dueDate);
     const amount = parseFloat(ote.amount);
     countsThisCycle =
       amount > 0 &&
       dueDate >= today &&
-      nextPayday !== null &&
       dueDate <= nextPayday;
   }
 
-  return { ...ote, amount: parseFloat(ote.amount), countsThisCycle };
+  return {
+    ...ote,
+    amount: parseFloat(ote.amount),
+    deferred: ote.deferred,
+    countsThisCycle,
+  };
 }
 
 router.get("/one-time-expenses", async (_req, res): Promise<void> => {
   const rows = await db.select().from(oneTimeExpenses).orderBy(oneTimeExpenses.dueDate);
-  const enriched = await Promise.all(rows.map(enrichExpense));
+  const enriched = rows.map(enrichExpense);
   res.json(GetOneTimeExpensesResponse.parse(enriched));
 });
 
@@ -50,7 +55,7 @@ router.post("/one-time-expenses", async (req, res): Promise<void> => {
     res.status(500).json({ error: "Failed to create expense" });
     return;
   }
-  res.status(201).json(await enrichExpense(row));
+  res.status(201).json(enrichExpense(row));
 });
 
 router.patch("/one-time-expenses/:id", async (req, res): Promise<void> => {
@@ -73,7 +78,7 @@ router.patch("/one-time-expenses/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Expense not found" });
     return;
   }
-  res.json(UpdateOneTimeExpenseResponse.parse(await enrichExpense(row)));
+  res.json(UpdateOneTimeExpenseResponse.parse(enrichExpense(row)));
 });
 
 router.delete("/one-time-expenses/:id", async (req, res): Promise<void> => {

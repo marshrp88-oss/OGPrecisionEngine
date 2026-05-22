@@ -5,6 +5,7 @@
  * Personal Finance Advisor API
  * OpenAPI spec version: 0.1.0
  */
+import type { UpdateBillBodyPaymentState } from "./updateBillBodyPaymentState";
 
 export interface UpdateBillBody {
   name?: string;
@@ -20,4 +21,7 @@ export interface UpdateBillBody {
   activeFrom?: Date | null;
   /** @nullable */
   activeUntil?: Date | null;
+  paymentState?: UpdateBillBodyPaymentState;
+  /** @nullable */
+  paidDate?: Date | null;
 }

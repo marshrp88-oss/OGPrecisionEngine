@@ -102,6 +102,8 @@ export const GetBillsResponseItem = zod.object({
   activeUntil: zod.coerce.date().nullish(),
   countsThisCycle: zod.boolean(),
   nextDueDate: zod.coerce.date().nullish(),
+  paymentState: zod.enum(["scheduled", "paid", "late_unpaid", "skipped_cycle"]),
+  paidDate: zod.coerce.date().nullish(),
 });
 export const GetBillsResponse = zod.array(GetBillsResponseItem);
 
@@ -142,6 +144,8 @@ export const GetBillResponse = zod.object({
   activeUntil: zod.coerce.date().nullish(),
   countsThisCycle: zod.boolean(),
   nextDueDate: zod.coerce.date().nullish(),
+  paymentState: zod.enum(["scheduled", "paid", "late_unpaid", "skipped_cycle"]),
+  paidDate: zod.coerce.date().nullish(),
 });
 
 /**
@@ -162,6 +166,10 @@ export const UpdateBillBody = zod.object({
   notes: zod.string().nullish(),
   activeFrom: zod.coerce.date().nullish(),
   activeUntil: zod.coerce.date().nullish(),
+  paymentState: zod
+    .enum(["scheduled", "paid", "late_unpaid", "skipped_cycle"])
+    .optional(),
+  paidDate: zod.coerce.date().nullish(),
 });
 
 export const UpdateBillResponse = zod.object({
@@ -178,6 +186,8 @@ export const UpdateBillResponse = zod.object({
   activeUntil: zod.coerce.date().nullish(),
   countsThisCycle: zod.boolean(),
   nextDueDate: zod.coerce.date().nullish(),
+  paymentState: zod.enum(["scheduled", "paid", "late_unpaid", "skipped_cycle"]),
+  paidDate: zod.coerce.date().nullish(),
 });
 
 /**
@@ -196,6 +206,7 @@ export const GetOneTimeExpensesResponseItem = zod.object({
   amount: zod.number(),
   dueDate: zod.coerce.date().nullish(),
   paid: zod.boolean(),
+  deferred: zod.boolean().optional(),
   notes: zod.string().nullish(),
   countsThisCycle: zod.boolean(),
 });
@@ -211,6 +222,7 @@ export const CreateOneTimeExpenseBody = zod.object({
   amount: zod.number(),
   dueDate: zod.coerce.date().nullish(),
   paid: zod.boolean(),
+  deferred: zod.boolean().optional(),
   notes: zod.string().nullish(),
 });
 
@@ -226,6 +238,7 @@ export const UpdateOneTimeExpenseBody = zod.object({
   amount: zod.number().optional(),
   dueDate: zod.coerce.date().nullish(),
   paid: zod.boolean().optional(),
+  deferred: zod.boolean().optional(),
   notes: zod.string().nullish(),
 });
 
@@ -235,6 +248,7 @@ export const UpdateOneTimeExpenseResponse = zod.object({
   amount: zod.number(),
   dueDate: zod.coerce.date().nullish(),
   paid: zod.boolean(),
+  deferred: zod.boolean().optional(),
   notes: zod.string().nullish(),
   countsThisCycle: zod.boolean(),
 });

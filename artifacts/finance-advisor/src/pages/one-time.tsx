@@ -24,10 +24,11 @@ interface FormState {
   amount: string;
   dueDate: string;
   paid: boolean;
+  deferred: boolean;
   notes: string;
 }
 
-const EMPTY: FormState = { description: "", amount: "", dueDate: "", paid: false, notes: "" };
+const EMPTY: FormState = { description: "", amount: "", dueDate: "", paid: false, deferred: false, notes: "" };
 
 export default function OneTimeExpenses() {
   const { data: items, isLoading } = useGetOneTimeExpenses({ query: { queryKey: getGetOneTimeExpensesQueryKey() } });
@@ -52,8 +53,10 @@ export default function OneTimeExpenses() {
   }
 
   const all = items ?? [];
-  const unpaid = all.filter((i) => !i.paid);
-  const paid = all.filter((i) => i.paid);
+  // v8.0 Part 3 — deferred items shown separately, excluded from active math.
+  const deferred = all.filter((i) => i.deferred);
+  const unpaid = all.filter((i) => !i.paid && !i.deferred);
+  const paid = all.filter((i) => i.paid && !i.deferred);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -71,6 +74,7 @@ export default function OneTimeExpenses() {
       amount: String(i.amount),
       dueDate: i.dueDate ? new Date(i.dueDate).toISOString().split("T")[0] : "",
       paid: i.paid,
+      deferred: i.deferred ?? false,
       notes: i.notes ?? "",
     });
     setOpen(true);
@@ -78,6 +82,13 @@ export default function OneTimeExpenses() {
 
   const handleTogglePaid = (id: number, current: boolean) => {
     updateMut.mutate({ id, data: { paid: !current } }, { onSuccess: () => { refresh(); toast({ title: current ? "Marked unpaid" : "Marked paid" }); } });
+  };
+
+  const handleToggleDeferred = (id: number, current: boolean) => {
+    updateMut.mutate(
+      { id, data: { deferred: !current } },
+      { onSuccess: () => { refresh(); toast({ title: current ? "Un-deferred" : "Deferred — excluded from month math" }); } },
+    );
   };
 
   const handleDelete = (id: number, name: string) => {
@@ -96,6 +107,7 @@ export default function OneTimeExpenses() {
       amount,
       dueDate: form.dueDate || null,
       paid: form.paid,
+      deferred: form.deferred,
       notes: form.notes.trim() || null,
     };
     const onSuccess = () => {
@@ -128,7 +140,9 @@ export default function OneTimeExpenses() {
           <div className="flex items-center gap-3 flex-shrink-0">
             <p className="font-bold font-mono text-right">{formatCurrency(i.amount)}</p>
             <div className="w-24 text-right">
-              {i.paid ? (
+              {i.deferred ? (
+                <Badge variant="outline" className="bg-muted/40 text-muted-foreground">Deferred</Badge>
+              ) : i.paid ? (
                 <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3" />Paid</Badge>
               ) : isOverdue ? (
                 <Badge className="bg-destructive text-destructive-foreground hover:bg-destructive">Overdue</Badge>
@@ -138,6 +152,15 @@ export default function OneTimeExpenses() {
                 <Badge variant="outline">Undated</Badge>
               )}
             </div>
+            {/* v8.0 Part 3 — defer button */}
+            <button
+              onClick={() => handleToggleDeferred(i.id, i.deferred ?? false)}
+              className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border hover-elevate ${i.deferred ? "bg-muted text-muted-foreground border-muted-foreground/40" : "bg-background text-muted-foreground border-border"}`}
+              data-testid={`button-defer-onetime-${i.id}`}
+              title="Defer = exclude from month math but keep visible. Useful for postponable purchases."
+            >
+              {i.deferred ? "Un-defer" : "Defer"}
+            </button>
             <Button variant="ghost" size="icon" onClick={() => openEdit(i)} data-testid={`button-edit-onetime-${i.id}`}>
               <Pencil className="h-4 w-4" />
             </Button>
@@ -178,6 +201,16 @@ export default function OneTimeExpenses() {
         </CardContent>
       </Card>
 
+      {deferred.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-muted-foreground">Deferred Obligations</CardTitle>
+            <p className="text-xs text-muted-foreground">Excluded from all month math. Un-defer to bring back into Discretionary.</p>
+          </CardHeader>
+          <CardContent className="grid gap-3">{deferred.map(renderRow)}</CardContent>
+        </Card>
+      )}
+
       {paid.length > 0 && (
         <Card>
           <CardHeader><CardTitle className="text-muted-foreground">Paid History</CardTitle></CardHeader>
@@ -195,8 +228,12 @@ export default function OneTimeExpenses() {
               <div className="grid gap-2"><Label>Due Date (optional)</Label><Input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} data-testid="input-onetime-duedate" /></div>
             </div>
             <div className="flex items-center justify-between rounded border p-3">
-              <div><Label>Marked Paid</Label><p className="text-xs text-muted-foreground">Excluded from cycle hold and totals.</p></div>
+              <div><Label>Marked Paid</Label><p className="text-xs text-muted-foreground">Money already left this month. Still counted as a month obligation.</p></div>
               <Switch checked={form.paid} onCheckedChange={(v) => setForm({ ...form, paid: v })} />
+            </div>
+            <div className="flex items-center justify-between rounded border p-3">
+              <div><Label>Deferred</Label><p className="text-xs text-muted-foreground">v8.0: excluded from Discretionary math entirely. Use for postponable purchases.</p></div>
+              <Switch checked={form.deferred} onCheckedChange={(v) => setForm({ ...form, deferred: v })} />
             </div>
             <div className="grid gap-2"><Label>Notes</Label><Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
             <p className="text-xs text-muted-foreground">

@@ -5,6 +5,7 @@
  * Personal Finance Advisor API
  * OpenAPI spec version: 0.1.0
  */
+import type { BillPaymentState } from "./billPaymentState";
 
 export interface Bill {
   id: number;
@@ -24,4 +25,7 @@ export interface Bill {
   countsThisCycle: boolean;
   /** @nullable */
   nextDueDate?: Date | null;
+  paymentState: BillPaymentState;
+  /** @nullable */
+  paidDate?: Date | null;
 }

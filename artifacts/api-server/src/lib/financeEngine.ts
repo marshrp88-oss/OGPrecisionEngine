@@ -153,16 +153,19 @@ export async function computeCycleState(): Promise<CycleState> {
   const minimumCushion = await getAssumption("minimum_cushion", 0);
 
   // One-time expenses due in cycle (engine: <= effective payday, inclusive).
+  // v8.0 Part 3 — deferred items are excluded from all cycle math.
   const allOneTime = await db.select().from(oneTimeExpenses);
-  const engineOneTimes = allOneTime.map(
-    (o) =>
-      new EngineOneTimeExpense(
-        o.description,
-        parseFloat(o.amount),
-        o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
-        o.paid,
-      ),
-  );
+  const engineOneTimes = allOneTime
+    .filter((o) => !o.deferred)
+    .map(
+      (o) =>
+        new EngineOneTimeExpense(
+          o.description,
+          parseFloat(o.amount),
+          o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
+          o.paid,
+        ),
+    );
   const oneTimeDueBeforePayday = oneTimeExpensesDueInCycle(
     engineOneTimes,
     today,
@@ -302,16 +305,19 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
 
   const fullMonthFixedBills = includedEngineBills.reduce((s, b) => s + b.amount, 0);
 
+  // v8.0 Part 3 — deferred items excluded from monthly savings ledger too.
   const allOneTimeRows = await db.select().from(oneTimeExpenses);
-  const engineOneTimes = allOneTimeRows.map(
-    (o) =>
-      new EngineOneTimeExpense(
-        o.description,
-        parseFloat(o.amount),
-        o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
-        o.paid,
-      ),
-  );
+  const engineOneTimes = allOneTimeRows
+    .filter((o) => !o.deferred)
+    .map(
+      (o) =>
+        new EngineOneTimeExpense(
+          o.description,
+          parseFloat(o.amount),
+          o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
+          o.paid,
+        ),
+    );
   const knownOneTimeCosts = engineOneTimes
     .filter((o) => !o.paid)
     .reduce((s, o) => s + o.amount, 0);

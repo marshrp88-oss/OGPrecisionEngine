@@ -8,6 +8,9 @@ export const oneTimeExpenses = pgTable("one_time_expenses", {
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
   dueDate: date("due_date"),
   paid: boolean("paid").notNull().default(false),
+  // v8.0 Part 3: deferred items excluded from ALL math but kept visible
+  // in a separate "Deferred Obligations" panel. Manual toggle.
+  deferred: boolean("deferred").notNull().default(false),
   notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

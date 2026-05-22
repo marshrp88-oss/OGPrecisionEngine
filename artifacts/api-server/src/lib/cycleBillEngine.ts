@@ -31,6 +31,10 @@ export interface EnrichedBill {
   countsThisCycle: boolean;
   /** True if this bill counts toward full-month fixed (Include=TRUE, $>0, active period). */
   countsThisMonth: boolean;
+  /** v8.0 payment-state: scheduled | paid | late_unpaid | skipped_cycle. */
+  paymentState: string;
+  /** ISO date when bill was marked paid this cycle (null if unpaid). */
+  paidDate: string | null;
 }
 
 /** UTC midnight start-of-day for a Date (matches engine convention). */
@@ -123,6 +127,8 @@ export async function enumerateBills(today?: Date): Promise<EnrichedBill[]> {
       daysUntilDue,
       countsThisCycle,
       countsThisMonth,
+      paymentState: b.paymentState,
+      paidDate: b.paidDate,
     };
   });
 }

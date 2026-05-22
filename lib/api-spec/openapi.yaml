@@ -1194,6 +1194,12 @@ components:
         nextDueDate:
           type: ["string", "null"]
           format: date
+        paymentState:
+          type: string
+          enum: [scheduled, paid, late_unpaid, skipped_cycle]
+        paidDate:
+          type: ["string", "null"]
+          format: date
       required:
         - id
         - name
@@ -1204,6 +1210,7 @@ components:
         - category
         - autopay
         - countsThisCycle
+        - paymentState
 
     CreateBillBody:
       type: object
@@ -1266,6 +1273,12 @@ components:
         activeUntil:
           type: ["string", "null"]
           format: date
+        paymentState:
+          type: string
+          enum: [scheduled, paid, late_unpaid, skipped_cycle]
+        paidDate:
+          type: ["string", "null"]
+          format: date
 
     # ─── One-Time Expenses ────────────────────────────────────────────────────
     OneTimeExpense:
@@ -1281,6 +1294,8 @@ components:
           type: ["string", "null"]
           format: date
         paid:
+          type: boolean
+        deferred:
           type: boolean
         notes:
           type: ["string", "null"]
@@ -1305,6 +1320,8 @@ components:
           format: date
         paid:
           type: boolean
+        deferred:
+          type: boolean
         notes:
           type: ["string", "null"]
       required:
@@ -1323,6 +1340,8 @@ components:
           type: ["string", "null"]
           format: date
         paid:
+          type: boolean
+        deferred:
           type: boolean
         notes:
           type: ["string", "null"]
