@@ -1557,39 +1557,44 @@ export function variableProrated(
 }
 
 // ---------------------------------------------------------------------------
-// 19. MONTH-FLOW VARIABLE OBLIGATION  (Correction Playbook v8.0 — Fix 2)
+// 19. MONTH-FLOW VARIABLE OBLIGATION  (v10 — total-month estimate model)
 // ---------------------------------------------------------------------------
 
 /**
- * Month-headline variable obligation. Used by the /dashboard/discretionary
- * route as the variable-spend line in the month-anchored flow (Part 0/1).
+ * Month-headline variable obligation = max(logged, E), where E is the user's
+ * TOTAL month variable estimate.
+ *
+ * NAMING CAVEAT (v10): the assumption key is `planned_variable_remaining_override`
+ * for backwards-compat (no migration), but its meaning is now "month total
+ * estimate," NOT "remaining." When set, the user is telling us their planned
+ * total spend for the month; when unset, we default to `variable_spend_cap`.
+ * Future-you: don't be fooled by the "_remaining_" in the name.
  *
  * Formula:
- *   if plannedRemainingOverride is a finite number:
- *       return logged + max(0, override)
- *   else:
- *       return max(cap, logged)
+ *   E          = max(0, override) if finite, else variableCap
+ *   obligation = max(logged, E)
  *
- * Rationale (Correction Playbook v8.0 Fix 2): the old "logged + trailing rate
- * projection" inflated the month flow past cap (e.g. $600 logged on a $600
- * cap projected to $845). That violated the principle that logging spend
- * within cap MUST NOT move Discretionary, and contradicted the "X of $cap"
- * shown to the user. Replacing the trailing projection with MAX(cap, logged)
- * pins the obligation at cap until genuine overspend pushes it higher.
+ * Downstream uses the derived F = max(0, E − logged) (= obligation − logged).
+ * F is the "estimated future variable still to spend." F subtracts from
+ * Available-to-Save and from Projected EOM checking, but NEVER enters the
+ * cycle's totalRequiredHold.
  *
- * Trailing daily rate is still allowed for display analytics (burn pace,
- * pacing labels) but must not feed this number or any headline downstream.
- *
- * Source: Correction Playbook v8.0 Fix 2.
+ * NO-DOUBLE-COUNT INVARIANT: F is unlogged by construction; the cycle's
+ * quicksilverOwed is logged-only (rows where quicksilver=true AND paidOffAt
+ * IS NULL). The two sets are disjoint — a dollar physically cannot be in
+ * both. This is the seam the v10 cash math relies on; do not collapse F
+ * into the hold.
  */
 export function monthVariableObligationHeadline(
   variableLoggedThisMonth: number,
   variableCap: number,
-  plannedRemainingOverride: number | null,
+  plannedMonthTotalOverride: number | null,
 ): number {
   const logged = Math.max(0, variableLoggedThisMonth);
-  if (plannedRemainingOverride !== null && Number.isFinite(plannedRemainingOverride)) {
-    return logged + Math.max(0, plannedRemainingOverride);
-  }
-  return Math.max(variableCap, logged);
+  const E =
+    plannedMonthTotalOverride !== null &&
+    Number.isFinite(plannedMonthTotalOverride)
+      ? Math.max(0, plannedMonthTotalOverride)
+      : variableCap;
+  return Math.max(logged, E);
 }

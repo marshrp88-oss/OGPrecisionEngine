@@ -344,9 +344,11 @@ export const GetVariableSpendResponse = zod.array(GetVariableSpendResponseItem);
 /**
  * @summary Log variable spend for a week
  */
+export const createVariableSpendEntryBodyAmountExclusiveMin = 0;
+
 export const CreateVariableSpendEntryBody = zod.object({
   weekOf: zod.coerce.date(),
-  amount: zod.number(),
+  amount: zod.number().gt(createVariableSpendEntryBodyAmountExclusiveMin),
   category: zod.string().nullish(),
   quicksilver: zod.boolean(),
   notes: zod.string().nullish(),
@@ -372,9 +374,14 @@ export const UpdateVariableSpendEntryParams = zod.object({
   id: zod.coerce.number(),
 });
 
+export const updateVariableSpendEntryBodyAmountExclusiveMin = 0;
+
 export const UpdateVariableSpendEntryBody = zod.object({
   weekOf: zod.coerce.date().optional(),
-  amount: zod.number().optional(),
+  amount: zod
+    .number()
+    .gt(updateVariableSpendEntryBodyAmountExclusiveMin)
+    .optional(),
   category: zod.string().nullish(),
   quicksilver: zod.boolean().optional(),
   notes: zod.string().nullish(),

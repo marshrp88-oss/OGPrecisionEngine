@@ -8,6 +8,7 @@
 
 export interface CreateVariableSpendBody {
   weekOf: Date;
+  /** @exclusiveMinimum 0 */
   amount: number;
   /** @nullable */
   category?: string | null;

@@ -7,6 +7,8 @@ import {
   useGetVariableSpend,
   getGetVariableSpendQueryKey,
   useCreateVariableSpendEntry,
+  useUpdateVariableSpendEntry,
+  useDeleteVariableSpendEntry,
   useMarkQuicksilverPaid,
   useGetOneTimeExpenses,
   getGetOneTimeExpensesQueryKey,
@@ -59,6 +61,8 @@ import {
   CalendarPlus,
   MessageSquare,
   ChevronDown,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -441,14 +445,17 @@ export default function Dashboard() {
                     value={discretionary.variableLoggedThisMonth}
                     negative
                   />
-                  <EditableOutgoRow
-                    label={`− Variable expected remaining${discretionary.plannedVariableRemainingOverride !== null ? "" : ` (trailing $${discretionary.trailingDailyRate?.toFixed(2) ?? "—"}/day × ${Math.max(0, discretionary.daysRemainingInMonth - 1)} days)`}`}
-                    assumptionKey="planned_variable_remaining_override"
+                  {/* v10 — single editor on Overview pill. This row is now
+                      read-only; tap the "Variable remaining" pill in the
+                      Safe-to-Spend block above to change the month estimate. */}
+                  <Row
+                    label={`− Variable expected remaining (F = max(0, E − logged))`}
                     value={discretionary.variableExpectedRemaining}
-                    fallback={discretionary.variableExpectedRemainingTrailing ?? 0}
-                    isOverridden={discretionary.plannedVariableRemainingOverride !== null}
-                    hint={`Default = trailing daily rate × days remaining. Trailing = logged ${formatCurrency(discretionary.variableLoggedThisMonth)} ÷ day-of-month. Override anytime to pin a planned figure.`}
+                    negative
                   />
+                  <p className="text-[10px] text-muted-foreground/70 italic -mt-1 pl-2">
+                    Edit E (month estimate) via the &ldquo;Variable remaining&rdquo; pill above. F recomputes live.
+                  </p>
                   <Row
                     label={`− One-time this month (${formatCurrency(discretionary.oneTimePaidThisMonth)} paid; ${formatCurrency(discretionary.oneTimeDeferredTotal)} deferred excluded)`}
                     value={discretionary.oneTimeMonthObligated}
@@ -539,23 +546,23 @@ function SituationBlock({
           </p>
           {discretionary && (
             <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 text-xs font-mono">
-              {/* v9 Fix 4 — variable remaining now reflects ACTUAL logged
-                  spend against the cap (cap − logged, floored at 0). With
-                  $600 logged this reads "$0 of $600", not "$600 of $600".
-                  All variable spend counts — cash and QuickSilver charges
-                  alike. QuickSilver Owed is held separately against
-                  checking until the statement is paid. */}
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Variable remaining</span>
-                <span>
-                  <span className="text-foreground font-medium">
-                    {formatCurrency(discretionary.variableCapRemaining)}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {" "}of {formatCurrency(discretionary.variableCap)}
-                  </span>
-                </span>
-              </div>
+              {/* v10 — editable month-total estimate E. Pill shows "F of E"
+                  where F = max(0, E − loggedMTD). Tap E to edit; F recomputes
+                  live. Reset clears the override row → E falls back to
+                  variable_spend_cap ($600 default). E never enters the cash
+                  hold; F is a projection input only. See the no-double-count
+                  comment in engine.ts:monthVariableObligationHeadline. */}
+              <VariableEstimateEditor
+                E={
+                  discretionary.plannedVariableRemainingOverride ??
+                  discretionary.variableCap
+                }
+                logged={discretionary.variableLoggedThisMonth}
+                isOverridden={
+                  discretionary.plannedVariableRemainingOverride !== null
+                }
+                fallbackCap={discretionary.variableCap}
+              />
             </div>
           )}
         </div>
@@ -907,6 +914,222 @@ function OneTimeColumn() {
   );
 }
 
+// v10 — Variable Spend Log row. Display mode renders date/category/amount + a
+// pencil and trash icon. Pencil → inline-edit form (date, amount, category,
+// QS toggle). Trash → confirm prompt, then DELETE. Both mutations invalidate
+// the same query keys the LogSpendDialog invalidates so headlines refresh.
+function VariableSpendRow({
+  row,
+}: {
+  row: {
+    id: number;
+    weekOf: string;
+    amount: number;
+    category: string | null;
+    quicksilver: boolean;
+    notes: string | null;
+  };
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const updateMut = useUpdateVariableSpendEntry();
+  const deleteMut = useDeleteVariableSpendEntry();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    weekOf:
+      typeof row.weekOf === "string"
+        ? row.weekOf.slice(0, 10)
+        : new Date(row.weekOf).toISOString().slice(0, 10),
+    amount: row.amount.toFixed(2),
+    category: row.category ?? "other",
+    quicksilver: row.quicksilver,
+  });
+
+  const refreshAll = () => {
+    queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+    queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+  };
+
+  const save = () => {
+    const amt = parseFloat(form.amount);
+    if (isNaN(amt) || amt <= 0) {
+      toast({ title: "Amount must be greater than 0", variant: "destructive" });
+      return;
+    }
+    updateMut.mutate(
+      {
+        id: row.id,
+        data: {
+          weekOf: form.weekOf,
+          amount: amt,
+          category: form.category || null,
+          quicksilver: form.quicksilver,
+        },
+      },
+      {
+        onSuccess: () => {
+          refreshAll();
+          setEditing(false);
+          toast({ title: "Entry updated" });
+        },
+        onError: () => toast({ title: "Update failed", variant: "destructive" }),
+      },
+    );
+  };
+
+  const del = () => {
+    if (
+      !window.confirm(
+        `Delete this variable spend entry?\n\n${formatDate(row.weekOf)} · ${row.category ?? "—"} · ${formatCurrency(row.amount)}${row.quicksilver ? " (QS)" : ""}\n\nThis cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    deleteMut.mutate(
+      { id: row.id },
+      {
+        onSuccess: () => {
+          refreshAll();
+          toast({ title: "Entry deleted" });
+        },
+        onError: () => toast({ title: "Delete failed", variant: "destructive" }),
+      },
+    );
+  };
+
+  if (editing) {
+    return (
+      <tr data-testid={`row-variable-${row.id}-editing`} className="bg-muted/30">
+        <td className="py-1">
+          <input
+            type="date"
+            value={form.weekOf}
+            onChange={(e) => setForm({ ...form, weekOf: e.target.value })}
+            className="w-full bg-background border border-border rounded px-1.5 py-0.5 text-xs font-mono"
+            data-testid={`input-edit-date-${row.id}`}
+          />
+        </td>
+        <td className="py-1">
+          <div className="flex items-center gap-1">
+            <select
+              value={form.category}
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+              className="flex-1 bg-background border border-border rounded px-1 py-0.5 text-xs"
+              data-testid={`input-edit-category-${row.id}`}
+            >
+              <option value="groceries">Groceries</option>
+              <option value="dining">Dining</option>
+              <option value="fuel">Fuel</option>
+              <option value="household">Household</option>
+              <option value="entertainment">Entertainment</option>
+              <option value="other">Other</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, quicksilver: !form.quicksilver })}
+              className={cn(
+                "text-[10px] font-mono uppercase tracking-wider px-1 py-0.5 rounded border",
+                form.quicksilver
+                  ? "bg-warning/15 text-warning border-warning/30"
+                  : "border-border text-muted-foreground",
+              )}
+              title="Toggle QuickSilver"
+              data-testid={`toggle-edit-qs-${row.id}`}
+            >
+              QS
+            </button>
+          </div>
+        </td>
+        <td className="py-1 text-right">
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            value={form.amount}
+            onChange={(e) => setForm({ ...form, amount: e.target.value })}
+            className="w-20 text-right bg-background border border-border rounded px-1.5 py-0.5 text-xs font-mono"
+            data-testid={`input-edit-amount-${row.id}`}
+          />
+        </td>
+        <td className="py-1 text-right">
+          <div className="inline-flex gap-1">
+            <button
+              type="button"
+              onClick={save}
+              disabled={updateMut.isPending}
+              className="text-[10px] font-medium uppercase tracking-wider text-success hover:underline disabled:opacity-50"
+              data-testid={`button-save-${row.id}`}
+            >
+              save
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setForm({
+                  weekOf:
+                    typeof row.weekOf === "string"
+                      ? row.weekOf.slice(0, 10)
+                      : new Date(row.weekOf).toISOString().slice(0, 10),
+                  amount: row.amount.toFixed(2),
+                  category: row.category ?? "other",
+                  quicksilver: row.quicksilver,
+                });
+              }}
+              className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+              data-testid={`button-cancel-${row.id}`}
+            >
+              cancel
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr data-testid={`row-variable-${row.id}`} className="group">
+      <td className="py-1 text-muted-foreground">{formatDate(row.weekOf)}</td>
+      <td className="py-1 capitalize">
+        <span className="inline-flex items-center gap-1.5">
+          {row.category ?? ""}
+          {row.quicksilver && (
+            <span className="text-xs font-mono uppercase tracking-wider px-1 py-0 rounded bg-warning/15 text-warning border border-warning/30">
+              QS
+            </span>
+          )}
+        </span>
+      </td>
+      <td className="py-1 text-right">{formatCurrency(row.amount)}</td>
+      <td className="py-1 text-right">
+        <div className="inline-flex gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="text-muted-foreground hover:text-foreground"
+            title="Edit"
+            data-testid={`button-edit-${row.id}`}
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={del}
+            disabled={deleteMut.isPending}
+            className="text-muted-foreground hover:text-destructive disabled:opacity-50"
+            title="Delete"
+            data-testid={`button-delete-${row.id}`}
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function VariableSpendColumn() {
   const { data: vs } = useGetVariableSpend(undefined, {
     query: { queryKey: getGetVariableSpendQueryKey() },
@@ -950,29 +1173,25 @@ function VariableSpendColumn() {
               <th className="text-left py-1 font-normal">Date</th>
               <th className="text-left py-1 font-normal">Category</th>
               <th className="text-right py-1 font-normal">Amount</th>
+              <th className="text-right py-1 font-normal w-16"></th>
             </tr>
           </thead>
           <tbody>
             {recent.map((v) => (
-              <tr key={v.id} data-testid={`row-variable-${v.id}`}>
-                <td className="py-1 text-muted-foreground">
-                  {formatDate(v.weekOf as unknown as string)}
-                </td>
-                <td className="py-1 capitalize">
-                  <span className="inline-flex items-center gap-1.5">
-                    {v.category ?? ""}
-                    {v.quicksilver && (
-                      <span className="text-xs font-mono uppercase tracking-wider px-1 py-0 rounded bg-warning/15 text-warning border border-warning/30">
-                        QS
-                      </span>
-                    )}
-                  </span>
-                </td>
-                <td className="py-1 text-right">{formatCurrency(v.amount)}</td>
-              </tr>
+              <VariableSpendRow
+                key={v.id}
+                row={{
+                  id: v.id,
+                  weekOf: v.weekOf as unknown as string,
+                  amount: v.amount,
+                  category: v.category ?? null,
+                  quicksilver: v.quicksilver,
+                  notes: v.notes ?? null,
+                }}
+              />
             ))}
             <tr className="border-t border-border/60">
-              <td colSpan={2} className="pt-2 text-sm font-semibold">
+              <td colSpan={3} className="pt-2 text-sm font-semibold">
                 Logged MTD
               </td>
               <td className="pt-2 text-right text-sm font-semibold">
@@ -980,7 +1199,7 @@ function VariableSpendColumn() {
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="text-xs text-muted-foreground">
+              <td colSpan={3} className="text-xs text-muted-foreground">
                 QuickSilver Owed
               </td>
               <td className="text-right text-xs text-muted-foreground">
@@ -1522,31 +1741,35 @@ function OneTimeQuickAddDialog() {
 // Shared math row (used by Zone 3 tabs)
 // ---------------------------------------------------------------------------
 
-function InlineAssumptionEditor({
-  label,
-  assumptionKey,
-  value,
-  fallback,
+// v10 — Variable remaining pill on Overview. Tap the right-hand number ($E)
+// to edit the month total estimate. F (left-hand number) = max(0, E − logged)
+// is derived and read-only. When L > E the pill surfaces "spent $L" in red so
+// overspend is visible without polluting F. Reset clears the override → E
+// falls back to variable_spend_cap.
+function VariableEstimateEditor({
+  E,
+  logged,
   isOverridden,
-  suffix,
+  fallbackCap,
 }: {
-  label: string;
-  assumptionKey: string;
-  value: number;
-  fallback: number;
+  E: number;
+  logged: number;
   isOverridden: boolean;
-  suffix?: string;
+  fallbackCap: number;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value.toFixed(2));
+  const [draft, setDraft] = useState(E.toFixed(2));
   const committedRef = useRef(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const updateMut = useUpdateAssumption();
 
   useEffect(() => {
-    if (!editing) setDraft(value.toFixed(2));
-  }, [value, editing]);
+    if (!editing) setDraft(E.toFixed(2));
+  }, [E, editing]);
+
+  const F = Math.max(0, E - logged);
+  const overBy = Math.max(0, logged - E);
 
   const commit = () => {
     if (committedRef.current) return;
@@ -1554,22 +1777,29 @@ function InlineAssumptionEditor({
     const trimmed = draft.trim();
     const parsed = trimmed === "" ? null : parseFloat(trimmed);
     if (trimmed !== "" && (parsed === null || isNaN(parsed) || parsed < 0)) {
-      toast({ title: "Enter a non-negative number or leave blank to reset", variant: "destructive" });
-      setDraft(value.toFixed(2));
+      toast({
+        title: "Enter a non-negative number or leave blank to reset",
+        variant: "destructive",
+      });
+      setDraft(E.toFixed(2));
       setEditing(false);
       return;
     }
     updateMut.mutate(
-      { key: assumptionKey, data: { value: trimmed === "" ? "" : String(parsed) } },
+      {
+        key: "planned_variable_remaining_override",
+        data: { value: trimmed === "" ? "" : String(parsed) },
+      },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
           queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
           setEditing(false);
         },
         onError: () => {
           toast({ title: "Update failed", variant: "destructive" });
-          setDraft(value.toFixed(2));
+          setDraft(E.toFixed(2));
           setEditing(false);
         },
       },
@@ -1578,12 +1808,16 @@ function InlineAssumptionEditor({
 
   const reset = () => {
     updateMut.mutate(
-      { key: assumptionKey, data: { value: "" } },
+      {
+        key: "planned_variable_remaining_override",
+        data: { value: "" },
+      },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
           queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-          toast({ title: `Reset to default (${formatCurrency(fallback)})` });
+          toast({ title: `Reset to cap (${formatCurrency(fallbackCap)})` });
         },
       },
     );
@@ -1591,8 +1825,12 @@ function InlineAssumptionEditor({
 
   return (
     <div className="flex justify-between items-center gap-2">
-      <span className="text-muted-foreground">{label}</span>
+      <span className="text-muted-foreground">Variable remaining</span>
       <span className="flex items-center gap-1.5">
+        <span className="text-foreground font-medium" data-testid="text-variable-F">
+          {formatCurrency(F)}
+        </span>
+        <span className="text-muted-foreground">of</span>
         {editing ? (
           <input
             type="number"
@@ -1612,32 +1850,38 @@ function InlineAssumptionEditor({
               }
               if (e.key === "Escape") {
                 committedRef.current = true;
-                setDraft(value.toFixed(2));
+                setDraft(E.toFixed(2));
                 setEditing(false);
               }
             }}
             className="w-24 text-right font-mono bg-background border border-border rounded px-2 py-0.5 text-xs"
-            data-testid={`inline-input-${assumptionKey}`}
+            data-testid="input-variable-E"
           />
         ) : (
           <button
             type="button"
             onClick={() => setEditing(true)}
             className="font-mono hover:underline decoration-dotted underline-offset-4 text-foreground"
-            data-testid={`inline-edit-${assumptionKey}`}
+            data-testid="button-edit-variable-E"
+            title="Tap to edit your month total variable estimate"
           >
-            {formatCurrency(value)}
+            {formatCurrency(E)}
           </button>
         )}
-        {suffix && !editing && (
-          <span className="text-muted-foreground">{suffix}</span>
+        {overBy > 0 && !editing && (
+          <span
+            className="text-destructive font-mono text-[10px] ml-1"
+            data-testid="text-variable-overspend"
+          >
+            (spent {formatCurrency(logged)})
+          </span>
         )}
         {isOverridden && !editing && (
           <button
             type="button"
             onClick={reset}
             className="text-[9px] text-muted-foreground hover:text-foreground uppercase tracking-wider ml-1"
-            data-testid={`inline-reset-${assumptionKey}`}
+            data-testid="button-reset-variable-E"
           >
             reset
           </button>
@@ -1647,133 +1891,6 @@ function InlineAssumptionEditor({
   );
 }
 
-function EditableOutgoRow({
-  label,
-  assumptionKey,
-  value,
-  fallback,
-  isOverridden,
-  hint,
-}: {
-  label: string;
-  assumptionKey: string;
-  value: number;
-  fallback: number;
-  isOverridden: boolean;
-  hint?: string;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value.toFixed(2));
-  const committedRef = useRef(false);
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const updateMut = useUpdateAssumption();
-
-  useEffect(() => {
-    if (!editing) setDraft(value.toFixed(2));
-  }, [value, editing]);
-
-  const commit = () => {
-    if (committedRef.current) return;
-    committedRef.current = true;
-    const trimmed = draft.trim();
-    const parsed = trimmed === "" ? null : parseFloat(trimmed);
-    if (trimmed !== "" && (parsed === null || isNaN(parsed) || parsed < 0)) {
-      toast({ title: "Enter a non-negative number or leave blank", variant: "destructive" });
-      setDraft(value.toFixed(2));
-      setEditing(false);
-      return;
-    }
-    updateMut.mutate(
-      { key: assumptionKey, data: { value: trimmed === "" ? "" : String(parsed) } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-          setEditing(false);
-          toast({ title: "Updated" });
-        },
-        onError: () => {
-          toast({ title: "Update failed", variant: "destructive" });
-          setDraft(value.toFixed(2));
-          setEditing(false);
-        },
-      },
-    );
-  };
-
-  const reset = () => {
-    updateMut.mutate(
-      { key: assumptionKey, data: { value: "" } },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-          toast({ title: `Reset to default (${formatCurrency(fallback)})` });
-        },
-      },
-    );
-  };
-
-  return (
-    <div className="border-b border-border/40 py-1.5">
-      <div className="flex justify-between items-center gap-2 text-destructive">
-        <span className="flex-1">{label}</span>
-        {editing ? (
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onFocus={() => {
-              committedRef.current = false;
-            }}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                (e.target as HTMLInputElement).blur();
-              }
-              if (e.key === "Escape") {
-                committedRef.current = true;
-                setDraft(value.toFixed(2));
-                setEditing(false);
-              }
-            }}
-            className="w-28 text-right font-mono bg-background border border-border rounded px-2 py-0.5 text-sm"
-            data-testid={`input-${assumptionKey}`}
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="font-mono hover:underline decoration-dotted underline-offset-4"
-            data-testid={`edit-${assumptionKey}`}
-          >
-            {formatCurrency(value)}
-          </button>
-        )}
-      </div>
-      <div className="flex justify-between items-center gap-2 mt-0.5">
-        {hint ? (
-          <span className="text-[11px] text-muted-foreground/80 italic flex-1">{hint}</span>
-        ) : (
-          <span className="flex-1" />
-        )}
-        {isOverridden && !editing && (
-          <button
-            type="button"
-            onClick={reset}
-            className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-wider"
-            data-testid={`reset-${assumptionKey}`}
-          >
-            reset
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function Row({
   label,
@@ -1839,6 +1956,7 @@ interface CashPositionResp {
   oneTimeStillToPayDetail: { id: number; description: string; amount: number; dueDate: string | null }[];
   commitmentOutflowsRemaining: number;
   commitmentBalance: number;
+  availableToInvest: number;
   totalCashOutflowsRemaining: number;
   projectedEndOfMonthChecking: number;
   isDeficit: boolean;
@@ -1911,9 +2029,12 @@ function CashPositionCard() {
     return <Skeleton className="h-48 w-full rounded-xl" />;
   }
 
-  // Headline = commitmentBalance (what you owe right now vs what you have).
-  // Future variable spend is shown as a secondary "if you also burn the plan" line.
-  const head = data.commitmentBalance;
+  // v10 — Headline = availableToInvest = commitmentBalance − F.
+  // F (estimated future variable, full) is folded into the save-decision
+  // number. F never enters totalRequiredHold; the cycle's quicksilverOwed
+  // carries the hold side. Projected EOM still uses F_cash only — it's a
+  // cash-trajectory number, not a save-decision number.
+  const head = data.availableToInvest;
   const eom = data.projectedEndOfMonthChecking;
   const headColor = head < 0 ? "text-destructive" : head < 100 ? "text-warning" : "text-success";
   const eomColor = eom < 0 ? "text-destructive" : eom < 100 ? "text-warning" : "text-success";
@@ -1934,7 +2055,7 @@ function CashPositionCard() {
               Available to Move to HYSA / Investments
             </p>
             <p className="text-[10px] text-muted-foreground/70 mt-1">
-              The dollar amount you can safely sweep to savings or brokerage right now without bouncing a known obligation. Checking − bills not yet debited − one-time + income still arriving. Future variable spend shown separately below.
+              The dollar amount you can safely sweep to savings or brokerage right now without bouncing a known obligation AND while still funding the planned variable spend for the rest of the month.
             </p>
           </div>
           <div className="text-right">
@@ -1976,6 +2097,10 @@ function CashPositionCard() {
             <span>− One-time expenses still to pay</span>
             <span>−{formatCurrency(data.oneTimeStillToPay)}</span>
           </div>
+          <div className="flex justify-between text-destructive">
+            <span>− Estimated future variable spend (full)</span>
+            <span>−{formatCurrency(data.variableExpectedRemaining)}</span>
+          </div>
           <div className={cn("flex justify-between font-bold border-t border-border/30 pt-2 mt-1", headColor)}>
             <span>= Available to move to HYSA / investments</span>
             <span>{formatCurrency(head)}</span>
@@ -2004,7 +2129,7 @@ function CashPositionCard() {
               <span>{formatCurrency(eom)}</span>
             </div>
             <p className="text-[10px] text-muted-foreground/70 italic">
-              Variable plan editable in Settings (planned_variable_remaining_override) or via "Variable remaining" pill above.
+              Variable estimate (E) editable via the &ldquo;Variable remaining&rdquo; pill on the Overview headline above. F (estimated future variable) updates live as you log spend.
             </p>
           </div>
         )}

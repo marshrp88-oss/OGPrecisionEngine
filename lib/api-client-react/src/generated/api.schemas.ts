@@ -212,6 +212,7 @@ export interface VariableSpendEntry {
 
 export interface CreateVariableSpendBody {
   weekOf: string;
+  /** @exclusiveMinimum 0 */
   amount: number;
   /** @nullable */
   category?: string | null;
@@ -222,6 +223,7 @@ export interface CreateVariableSpendBody {
 
 export interface UpdateVariableSpendBody {
   weekOf?: string;
+  /** @exclusiveMinimum 0 */
   amount?: number;
   /** @nullable */
   category?: string | null;

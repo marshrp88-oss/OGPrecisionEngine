@@ -347,18 +347,18 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
 
-  // v8.0 Fix 2 — month-headline variable obligation NO LONGER uses trailing
-  // rate. Trailing rate over-inflates the month flow (e.g. $600 logged on $600
-  // cap projected to $845), violating the principle that logging spend within
-  // cap must not move Discretionary. Replaced with:
-  //
-  //   monthVariableObligation =
-  //       plannedVariableRemainingOverride        (if numeric)
-  //       else MAX(variableCap, variableLoggedThisMonth)
-  //
-  // i.e. cap is the floor; only genuine overspend past cap moves the number.
-  // Trailing daily rate is preserved for DISPLAY ANALYTICS only (burn pace,
-  // pacing labels) — never feeds the headline.
+  // v10 — variable model:
+  //   E = planned_variable_remaining_override (legacy key name; current
+  //       meaning = TOTAL month estimate) if set, else variable_spend_cap.
+  //   L = variableLoggedThisMonth (sum of variable_spend rows this month).
+  //   monthVariableObligation = max(L, E)            — via engine helper.
+  //   F (future variable still to spend) = max(0, E − L) = obligation − L.
+  // F is what the projection layer subtracts from Available-to-Save and
+  // Projected EOM. F is NEVER added to totalRequiredHold; quicksilverOwed
+  // (logged-only) carries the hold side. F and quicksilverOwed are disjoint
+  // by construction — see engine.ts:monthVariableObligationHeadline for the
+  // no-double-count proof. Trailing daily rate is preserved for display
+  // analytics (burn pace) only — never feeds the headline.
   const dayOfMonth = today.getDate();
   const daysInMonth = monthEnd.getDate();
   const daysRemainingInMonth = Math.max(0, daysInMonth - dayOfMonth + 1);
@@ -781,6 +781,15 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   // making the headline far more negative than the user's actual position.
   const commitmentOutflowsRemaining = billsNotYetDebited + oneTimeStillToPay;
   const commitmentBalance = currentChecking - cycle.totalRequiredHold;
+  // v10 — Available to Save subtracts FULL F (estimated future variable),
+  // not just F_cash. Rationale: this is the savings-decision headline;
+  // conservatism wins. The QS portion of F will eventually settle from
+  // checking via a statement payment, so we don't want to tempt a sweep
+  // that we'd then have to claw back from HYSA. Projected EOM keeps F_cash
+  // only because it's a cash-trajectory number, not a save-decision one.
+  // F never enters totalRequiredHold — it's unlogged future spend, disjoint
+  // from quicksilverOwed (logged-only). See engine helper for the proof.
+  const availableToInvest = commitmentBalance - variableExpectedRemaining;
   const totalCashOutflowsRemaining =
     commitmentOutflowsRemaining + variableExpectedRemainingCash;
   const projectedEndOfMonthChecking =
@@ -822,18 +831,19 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     oneTimeStillToPayDetail,
     // Totals
     commitmentOutflowsRemaining: round(commitmentOutflowsRemaining),
+    // Raw "checking − hold" — diagnostic only. The headline number the UI
+    // shows is availableToInvest, which additionally subtracts F.
     commitmentBalance: round(commitmentBalance),
-    // availableToInvest is the canonical, user-facing name for the headline:
-    // the literal dollar amount you could safely sweep to HYSA / brokerage
-    // right now without bouncing a known obligation. Same value as
-    // commitmentBalance — kept as an alias so the API reads cleanly in code
-    // and the UI label matches the field name.
-    availableToInvest: round(commitmentBalance),
+    // v10 canonical user-facing headline = commitmentBalance − F. The dollar
+    // amount you can safely sweep to HYSA / brokerage right now without
+    // bouncing a known obligation AND while still funding the planned
+    // variable spend for the rest of the month (full F, per design Q1).
+    availableToInvest: round(availableToInvest),
     totalCashOutflowsRemaining: round(totalCashOutflowsRemaining),
     projectedEndOfMonthChecking: round(projectedEndOfMonthChecking),
-    // Status flags — based on availableToInvest (the headline number)
-    isDeficit: commitmentBalance < 0,
-    isTight: commitmentBalance >= 0 && commitmentBalance < 100,
+    // Status flags — track the headline (availableToInvest), not the raw.
+    isDeficit: availableToInvest < 0,
+    isTight: availableToInvest >= 0 && availableToInvest < 100,
   });
 });
 

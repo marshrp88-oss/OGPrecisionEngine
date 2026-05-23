@@ -1524,6 +1524,7 @@ components:
           format: date
         amount:
           type: number
+          exclusiveMinimum: 0
         category:
           type: ["string", "null"]
         quicksilver:
@@ -1543,6 +1544,7 @@ components:
           format: date
         amount:
           type: number
+          exclusiveMinimum: 0
         category:
           type: ["string", "null"]
         quicksilver:

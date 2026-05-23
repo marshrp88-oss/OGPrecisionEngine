@@ -1322,10 +1322,10 @@ describe("decisionSandboxCompare — Source: Decision Sandbox!B21:E30", () => {
 // Correction Playbook v8.0 — Fix 2 + Fix 4 + Fix 5 invariants
 // ---------------------------------------------------------------------------
 
-describe("monthVariableObligationHeadline — Fix 2 (cap floor, no trailing projection)", () => {
-  it("returns MAX(cap, logged) when override is null", async () => {
+describe("monthVariableObligationHeadline — v10 (max(L, E) total-estimate model)", () => {
+  it("returns MAX(cap, logged) when override is null (cap is default E)", async () => {
     const { monthVariableObligationHeadline } = await import("./engine");
-    // Within cap → pinned at cap
+    // Within cap → pinned at cap (E defaults to cap)
     expect(monthVariableObligationHeadline(0, 600, null)).toBe(600);
     expect(monthVariableObligationHeadline(300, 600, null)).toBe(600);
     expect(monthVariableObligationHeadline(600, 600, null)).toBe(600);
@@ -1333,23 +1333,28 @@ describe("monthVariableObligationHeadline — Fix 2 (cap floor, no trailing proj
     expect(monthVariableObligationHeadline(750, 600, null)).toBe(750);
   });
 
-  it("logging within cap does NOT move the headline (Fix 2 invariant)", async () => {
+  it("logging within cap does NOT move the headline (within-budget invariant)", async () => {
     const { monthVariableObligationHeadline } = await import("./engine");
     const before = monthVariableObligationHeadline(550, 600, null);
     const afterLogging50More = monthVariableObligationHeadline(600, 600, null);
     expect(before).toBe(afterLogging50More); // both = 600, headline unchanged
   });
 
-  it("override path: returns logged + override (planned remaining)", async () => {
+  it("override path: obligation = max(logged, E), where E = override (month total)", async () => {
     const { monthVariableObligationHeadline } = await import("./engine");
-    // User pinned a planned remaining of $100; logged $400 → obligation $500.
-    expect(monthVariableObligationHeadline(400, 600, 100)).toBe(500);
-    // Override below cap is honored even when logged + override < cap
+    // E=$100 (user budgeted tight), L=$400 → already over plan; obligation = L = 400
+    expect(monthVariableObligationHeadline(400, 600, 100)).toBe(400);
+    // E=$200, L=$0 → obligation = E = 200 (under cap honored)
     expect(monthVariableObligationHeadline(0, 600, 200)).toBe(200);
+    // E=$800 (user planned more than cap), L=$400 → obligation = E = 800
+    expect(monthVariableObligationHeadline(400, 600, 800)).toBe(800);
+    // E=$800, L=$0 → obligation = 800; F downstream = 800
+    expect(monthVariableObligationHeadline(0, 600, 800)).toBe(800);
   });
 
   it("override clamps negatives to 0", async () => {
     const { monthVariableObligationHeadline } = await import("./engine");
+    // E = max(0, -50) = 0; max(L=500, E=0) = 500
     expect(monthVariableObligationHeadline(500, 600, -50)).toBe(500);
   });
 
@@ -1357,6 +1362,61 @@ describe("monthVariableObligationHeadline — Fix 2 (cap floor, no trailing proj
     const { monthVariableObligationHeadline } = await import("./engine");
     expect(monthVariableObligationHeadline(0, 600, null)).toBe(600);
     expect(monthVariableObligationHeadline(-10, 600, null)).toBe(600);
+  });
+});
+
+describe("F ⊥ QO invariant — future-variable estimate vs cash hold disjointness", () => {
+  // F = max(0, E − logged) is unlogged future variable.
+  // QO (quicksilverOwed) is the sum of LOGGED quicksilver-flagged rows where
+  // paid_off_at IS NULL. The two sets are disjoint by construction:
+  //   - F depends on (E, L); a dollar in F is unlogged.
+  //   - QO depends on L (filtered subset); a dollar in QO is logged.
+  // Therefore: when a dollar moves from "planned" to "logged + on QS card,"
+  // F drops by the row amount and QO grows by the row amount — net zero on
+  // Available-to-Save. This test exercises that property purely in math:
+  // no DB, no I/O.
+  it("logging a planned QS dollar shifts F → QO with net-zero effect on (F + QO)", async () => {
+    const { monthVariableObligationHeadline } = await import("./engine");
+    const cap = 600;
+    const E_override = 600;
+
+    // Before logging: L=0 → F = E − L = 600. QO = 0 (nothing logged).
+    const obligationBefore = monthVariableObligationHeadline(0, cap, E_override);
+    const F_before = obligationBefore - 0;
+    const QO_before = 0;
+
+    // Log a $150 QS row (unpaid). L now = 150; QS card carries $150.
+    const obligationAfter = monthVariableObligationHeadline(150, cap, E_override);
+    const F_after = obligationAfter - 150;
+    const QO_after = 150;
+
+    // Invariant: the sum (F + QO) is preserved when a planned dollar is
+    // logged on QS. Net effect on Available-to-Save (= checking − hold − F,
+    // where QO is in hold) is zero before any balance change.
+    expect(F_before + QO_before).toBe(F_after + QO_after);
+    // And neither side is double-counted: F dropped by exactly the amount QO
+    // grew by.
+    expect(F_before - F_after).toBe(QO_after - QO_before);
+  });
+
+  it("logging a planned cash dollar: F drops, QO unchanged; checking will drop on next balance update", async () => {
+    const { monthVariableObligationHeadline } = await import("./engine");
+    const cap = 600;
+    const E_override = 600;
+
+    // Before: L=0, F = 600. QO = 0.
+    const F_before = monthVariableObligationHeadline(0, cap, E_override) - 0;
+    const QO_before = 0;
+
+    // Log a $150 CASH row (quicksilver=false). L=150. QO unchanged.
+    const F_after = monthVariableObligationHeadline(150, cap, E_override) - 150;
+    const QO_after = 0;
+
+    // F dropped by 150. QO unchanged (cash row never enters QO). The $150
+    // outflow will materialize via the next checking balance update — not
+    // via the hold path. F and QO never overlapped on this dollar.
+    expect(F_before - F_after).toBe(150);
+    expect(QO_after).toBe(QO_before);
   });
 });
 
@@ -1411,7 +1471,8 @@ describe("Fix 5 — UI = engine cross-validation guard rails", () => {
       [600, 600, null, 600],
       [300, 600, null, 600],
       [750, 600, null, 750],
-      [400, 600, 100, 500],
+      [400, 600, 100, 400], // E=100 below L=400 → obligation tracks L
+      [400, 600, 800, 800], // E=800 above L=400 → obligation tracks E
     ];
     for (const [logged, cap, override, expected] of cases) {
       expect(monthVariableObligationHeadline(logged, cap, override)).toBe(expected);
