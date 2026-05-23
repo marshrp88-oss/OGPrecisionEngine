@@ -83,15 +83,29 @@ async function seed() {
     { name: "Phone (Verizon)", amount: "65.00", dueDay: 2, frequency: "monthly", category: "essential", autopay: true, includeInCycle: true },
     { name: "Claude Subscription", amount: "21.00", dueDay: 3, frequency: "monthly", category: "discretionary", autopay: true, includeInCycle: true },
     { name: "Rent", amount: "1000.00", dueDay: 4, frequency: "monthly", category: "essential", autopay: true, includeInCycle: true, notes: "Largest fixed obligation" },
-    { name: "Car Loan (2024 Camry)", amount: "337.00", dueDay: 1, frequency: "monthly", category: "debt", autopay: true, includeInCycle: true, notes: "WNY FCU, 4.74% APR, 60 months. Principal ~$18,500." },
+    { name: "Car Loan (2024 Camry)", amount: "337.57", dueDay: 1, frequency: "monthly", category: "debt", autopay: true, includeInCycle: true, notes: "WNY FCU, 4.74% APR, 60 months. Principal ~$18,500." },
     { name: "Car Insurance", amount: "141.95", dueDay: 8, frequency: "monthly", category: "essential", autopay: true, includeInCycle: true, notes: "Expected reprice September 2026" },
     { name: "YouTube Premium", amount: "14.00", dueDay: 15, frequency: "monthly", category: "discretionary", autopay: true, includeInCycle: true },
     { name: "Electric", amount: "175.00", dueDay: 16, frequency: "monthly", category: "essential", autopay: false, includeInCycle: true, notes: "Manual pay" },
     { name: "Gas", amount: "70.00", dueDay: 19, frequency: "monthly", category: "essential", autopay: false, includeInCycle: true, notes: "Manual pay" },
-    { name: "EZ-Pass", amount: "10.00", dueDay: 22, frequency: "monthly", category: "essential", autopay: true, includeInCycle: true },
+    { name: "Replit Subscription", amount: "21.00", dueDay: 21, frequency: "monthly", category: "discretionary", autopay: true, includeInCycle: true },
     { name: "Capital One QuickSilver (variable)", amount: "0.00", dueDay: 25, frequency: "monthly", category: "variable", autopay: false, includeInCycle: false, notes: "Statement balance accrues from variable spend log; never auto-charged. Use Variable Spend Log to track." },
   ]);
   console.log("  Seeded 11 real bills (car loan due day = 1st; QuickSilver tracker as variable, Include=FALSE).");
+
+  // v9 Fix 5 — EZ-Pass moves out of recurring monthly bills (the $10 figure
+  // was wrong; actual top-ups are sporadic ~$30) into the one-time framework.
+  // Seed a single open one-time item; user can defer or repeat as needed.
+  const ezPassOneTime = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  await db.insert(oneTimeExpenses).values({
+    description: "EZ-Pass top-up",
+    amount: "30.00",
+    dueDate: ezPassOneTime.toISOString().split("T")[0],
+    paid: false,
+    deferred: false,
+    notes: "Moved from recurring (was $10 placeholder). Reload when balance dips.",
+  });
+  console.log("  Seeded EZ-Pass top-up as a one-time expense (replaces recurring $10 row).");
 
   // === A4: Historical commissions (compute payout/take_home from formulas) ===
   const commissionRows = [

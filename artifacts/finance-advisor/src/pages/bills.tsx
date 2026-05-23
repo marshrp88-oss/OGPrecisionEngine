@@ -13,12 +13,145 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertTriangle, Plus, Trash2, Pencil, Zap, Clock, TrendingUp } from "lucide-react";
+import { AlertTriangle, Plus, Trash2, Pencil, Zap, Clock, TrendingUp, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+
+// v9 Fix — single source of truth for how a bill's payment state should be
+// DISPLAYED. Mirrors `displayPaymentState()` in
+// artifacts/api-server/src/lib/paymentState.ts. A bill marked `paid` without a
+// `clearedDate` still shows as "pending" because the money hasn't actually
+// left checking yet — the same rule the Overview's cash-position card uses.
+type DisplayState =
+  | "scheduled"
+  | "pending"
+  | "cleared"
+  | "late_unpaid"
+  | "skipped_cycle";
+
+function displayBillState(
+  paymentState: string,
+  clearedDate: string | Date | null,
+): DisplayState {
+  if (paymentState === "scheduled") return "scheduled";
+  if (paymentState === "skipped_cycle") return "skipped_cycle";
+  if (paymentState === "late_unpaid") return "late_unpaid";
+  if (paymentState === "paid_pending_clear") return "pending";
+  if (paymentState === "paid") return clearedDate ? "cleared" : "pending";
+  return "scheduled";
+}
+
+const DISPLAY_LABEL: Record<DisplayState, string> = {
+  scheduled: "Scheduled",
+  pending: "Pending",
+  cleared: "Cleared",
+  late_unpaid: "Late",
+  skipped_cycle: "Skipped",
+};
+
+const DISPLAY_HINT: Record<DisplayState, string> = {
+  scheduled: "Not yet paid; money still expected to leave checking.",
+  pending: "Paid by you, but the money hasn't actually left checking yet — held against checking.",
+  cleared: "Money has actually left checking this cycle.",
+  late_unpaid: "Past due, still owed.",
+  skipped_cycle: "Skipped this cycle only — auto-reverts next cycle.",
+};
+
+const DISPLAY_PILL_CLASS: Record<DisplayState, string> = {
+  scheduled: "bg-muted text-muted-foreground border-border",
+  pending: "bg-warning/15 text-warning border-warning/30",
+  cleared: "bg-success/15 text-success border-success/30",
+  late_unpaid: "bg-destructive/15 text-destructive border-destructive/30",
+  skipped_cycle: "bg-muted text-muted-foreground/70 border-border",
+};
+
+/** Stored states the user can pick from the menu. */
+type StoredState =
+  | "scheduled"
+  | "paid_pending_clear"
+  | "paid"
+  | "late_unpaid"
+  | "skipped_cycle";
+
+const STORED_OPTIONS: { value: StoredState; label: string; hint: string }[] = [
+  { value: "scheduled", label: "Scheduled", hint: "Reset — money still expected to leave." },
+  { value: "paid_pending_clear", label: "Paid (pending)", hint: "Paid, but money hasn't actually left checking yet." },
+  { value: "paid", label: "Cleared", hint: "Money has actually left checking." },
+  { value: "late_unpaid", label: "Late", hint: "Past due, still owed." },
+  { value: "skipped_cycle", label: "Skip this cycle", hint: "Auto-reverts next cycle." },
+];
+
+function BillStatePill({
+  paymentState,
+  clearedDate,
+  onChange,
+  testidBase,
+}: {
+  paymentState: string;
+  clearedDate: string | Date | null;
+  onChange: (next: StoredState) => void;
+  testidBase: string;
+}) {
+  const display = displayBillState(paymentState, clearedDate);
+  // The radio-group value is the STORED state, so flipping a "paid w/o
+  // clearedDate" row back to "Paid (pending)" is a no-op (already there).
+  const currentStored: StoredState =
+    paymentState === "paid" && !clearedDate
+      ? "paid_pending_clear"
+      : (paymentState as StoredState);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          title={DISPLAY_HINT[display]}
+          className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] uppercase tracking-wider hover-elevate ${DISPLAY_PILL_CLASS[display]}`}
+          data-testid={`${testidBase}-state-pill`}
+        >
+          {DISPLAY_LABEL[display]}
+          <ChevronDown className="h-3 w-3 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="text-xs font-medium">
+          Payment status
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup
+          value={currentStored}
+          onValueChange={(v) => onChange(v as StoredState)}
+        >
+          {STORED_OPTIONS.map((o) => (
+            <DropdownMenuRadioItem
+              key={o.value}
+              value={o.value}
+              className="flex flex-col items-start gap-0.5 py-2"
+              data-testid={`${testidBase}-state-${o.value}`}
+            >
+              <span className="text-sm">{o.label}</span>
+              <span className="text-[10px] text-muted-foreground">
+                {o.hint}
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -488,45 +621,19 @@ export default function Bills() {
                 >
                   {bill.autopay ? "auto" : "manual"}
                 </button>
-                {/* v8.1 payment-state segmented control (Sched → Pending → Paid lifecycle) */}
-                <div className="flex items-center gap-0.5 border rounded overflow-hidden text-[10px] uppercase tracking-wider">
-                  {([
-                    ["scheduled", "Sched"],
-                    ["paid_pending_clear", "Pending"],
-                    ["paid", "Cleared"],
-                    ["late_unpaid", "Late"],
-                    ["skipped_cycle", "Skip"],
-                  ] as const).map(([state, label]) => {
-                    const active = bill.paymentState === state;
-                    const activeStyle =
-                      state === "paid"
-                        ? "bg-success/30 text-success"
-                        : state === "paid_pending_clear"
-                          ? "bg-warning/30 text-warning"
-                          : state === "late_unpaid"
-                            ? "bg-destructive/30 text-destructive"
-                            : state === "skipped_cycle"
-                              ? "bg-muted text-muted-foreground"
-                              : "bg-primary/20 text-primary";
-                    return (
-                      <button
-                        key={state}
-                        onClick={() => handleSetPaymentState(bill.id, state)}
-                        className={`px-1.5 py-0.5 hover-elevate ${active ? activeStyle : "text-muted-foreground"}`}
-                        data-testid={`button-paystate-${bill.id}-${state}`}
-                        title={
-                          state === "scheduled" ? "Not yet paid; money still expected to leave."
-                          : state === "paid_pending_clear" ? "Paid by you, but money hasn't withdrawn yet — STAYS held against checking."
-                          : state === "paid" ? "Money has cleared the account this cycle."
-                          : state === "late_unpaid" ? "Past due, still owed."
-                          : "Skip this cycle only — auto-reverts next cycle."
-                        }
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
+                {/* v9 Fix — single-source payment-state pill.
+                    The displayed state derives from (paymentState, clearedDate)
+                    so the Bills page and Overview can never disagree:
+                      - paymentState='paid' AND clearedDate set → "Cleared"
+                      - paymentState='paid' AND no clearedDate → "Pending"
+                        (user marked paid but money hasn't actually left).
+                    Same rule the Overview cash-position card uses. */}
+                <BillStatePill
+                  paymentState={bill.paymentState}
+                  clearedDate={bill.clearedDate ?? null}
+                  onChange={(next) => handleSetPaymentState(bill.id, next)}
+                  testidBase={`bill-${bill.id}`}
+                />
                 <Button variant="ghost" size="icon" onClick={() => openEdit(bill)} data-testid={`button-edit-bill-${bill.id}`}>
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>

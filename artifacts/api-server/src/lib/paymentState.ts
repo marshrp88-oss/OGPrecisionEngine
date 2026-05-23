@@ -7,6 +7,43 @@ export function cycleKey(today: Date): string {
 }
 
 /**
+ * Single source of truth for how a bill's payment state should be DISPLAYED.
+ *
+ * The stored `paymentState` column carries five values (scheduled,
+ * paid_pending_clear, paid, late_unpaid, skipped_cycle). Two of those map to
+ * the same user-visible idea ("the money hasn't actually left checking yet"):
+ *   - paymentState='paid_pending_clear' → user paid, awaiting clear.
+ *   - paymentState='paid' WITHOUT clearedDate → same thing; only the marker
+ *     differs (e.g. user flipped from the Bills page rather than the Overview
+ *     toggle).
+ *
+ * Both the Bills page pill and the Overview's cash-position card derive their
+ * label from THIS function. The previous mismatch (Bills showed "Cleared" for
+ * the same row Overview called "pending") came from the two views diverging
+ * on this rule.
+ */
+export type DisplayPaymentState =
+  | "scheduled"
+  | "pending"
+  | "cleared"
+  | "late_unpaid"
+  | "skipped_cycle";
+
+export function displayPaymentState(b: {
+  paymentState: string;
+  clearedDate: Date | string | null;
+}): DisplayPaymentState {
+  if (b.paymentState === "scheduled") return "scheduled";
+  if (b.paymentState === "skipped_cycle") return "skipped_cycle";
+  if (b.paymentState === "late_unpaid") return "late_unpaid";
+  if (b.paymentState === "paid_pending_clear") return "pending";
+  if (b.paymentState === "paid") {
+    return b.clearedDate ? "cleared" : "pending";
+  }
+  return "scheduled";
+}
+
+/**
  * Pure decision function for the per-bill payment-state transition.
  * Exposed for unit testing — `syncBillPaymentStates` is its DB-bound wrapper.
  *

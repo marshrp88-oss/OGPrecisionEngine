@@ -33,6 +33,14 @@ const CENT = 0.005;
 async function runChecks(): Promise<IntegrityCheck[]> {
   const checks: IntegrityCheck[] = [];
 
+  // v9 Fix 3 — defensively purge any stored `next_payday_date` assumption row.
+  // No code reads it anymore (payday is derived dynamically from 7th/22nd) but
+  // the row may still exist in databases seeded prior to v9. Removing it here
+  // means even a stale DB self-heals on the next integrity run.
+  await db
+    .delete(assumptions)
+    .where(eq(assumptions.key, "next_payday_date"));
+
   const [latestBalance] = await db
     .select()
     .from(balances)

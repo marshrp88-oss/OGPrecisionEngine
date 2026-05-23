@@ -349,13 +349,6 @@ export default function Dashboard() {
                   Safe to Spend
                 </TabsTrigger>
                 <TabsTrigger
-                  value="monthly-savings"
-                  data-testid="tab-math-monthly-savings"
-                  disabled={!discretionary}
-                >
-                  Monthly Savings
-                </TabsTrigger>
-                <TabsTrigger
                   value="discretionary"
                   data-testid="tab-math-discretionary"
                   disabled={!discretionary}
@@ -407,7 +400,7 @@ export default function Dashboard() {
                 <Row label="= Safe to Spend" value={cycle.safeToSpend} bold />
                 {cycle.overCommittedBy > 0 && (
                   <p className="text-xs text-destructive font-mono pt-1">
-                    pre-floor = {formatCurrency(cycle.safeToSpendPreFloor)} → over-committed by {formatCurrency(cycle.overCommittedBy)}
+                    pre-floor = {formatCurrency(cycle.safeToSpendPreFloor)} → {formatCurrency(cycle.overCommittedBy)} short of this cycle&apos;s required hold
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground pt-2 border-t border-border/30 mt-2">
@@ -480,91 +473,6 @@ export default function Dashboard() {
                 </TabsContent>
               )}
 
-              {discretionary && (
-                <TabsContent
-                  value="monthly-savings"
-                  className="space-y-3 font-mono text-sm pt-4"
-                >
-                  <p className="text-xs text-muted-foreground italic pb-1">
-                    Estimated cash that survives to month end. Inflows already in checking + future-cash credits, vs. every reservation between today and end of month. Headline = Discretionary − $100 conservative buffer (per Playbook B62 placeholder).
-                  </p>
-                  <Row
-                    label="= Monthly Savings (estimated)"
-                    value={discretionary.monthlySavings}
-                    bold
-                  />
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">
-                    Inflows / Reservations breakdown
-                  </p>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-1">
-                    Inflows
-                  </p>
-                  <Row label="Checking Balance" value={discretionary.checking} />
-                  <Row
-                    label={`Remaining Paychecks This Month (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
-                    value={discretionary.remainingPaychecksThisMonth}
-                  />
-                  <Row
-                    label="Confirmed Commission (not yet received)"
-                    value={discretionary.confirmedCommissionUnreceived}
-                  />
-                  <Row
-                    label="= Total Inflows Available"
-                    value={discretionary.totalInflowsAvailable}
-                    bold
-                  />
-
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">
-                    Reservations
-                  </p>
-                  <Row
-                    label="Bills remaining this month"
-                    value={discretionary.billsRemainingThisMonth}
-                  />
-                  <Row
-                    label="One-time expenses dated through month end"
-                    value={discretionary.oneTimeDatedThisMonth}
-                  />
-                  <Row
-                    label="Variable expected this month (editable above)"
-                    value={discretionary.variableRemainingThisMonth}
-                  />
-                  <Row
-                    label="QuickSilver Owed"
-                    value={discretionary.quicksilverBalanceOwed}
-                  />
-                  <Row label="Minimum cushion" value={discretionary.minimumCushion} />
-                  <Row
-                    label="= Total Reservations Required"
-                    value={discretionary.totalReservationsRequired}
-                    bold
-                  />
-
-                  {discretionary.oneTimeUndatedAdvisory > 0 && (
-                    <p className="text-xs text-amber-700 dark:text-amber-400 pt-2 border-t border-border/30 mt-2">
-                      Advisory: {formatCurrency(discretionary.oneTimeUndatedAdvisory)} of one-time expenses are unpaid without a due date — set due dates so they're reserved.
-                    </p>
-                  )}
-
-                  {discretionary.billsRemainingDetail.length > 0 && (
-                    <div className="pt-3 border-t border-border/30 mt-2">
-                      <p className="text-xs text-muted-foreground mb-1">
-                        Remaining bills this month:
-                      </p>
-                      <ul className="text-xs space-y-0.5">
-                        {discretionary.billsRemainingDetail.map((b) => (
-                          <li key={b.id} className="flex justify-between">
-                            <span>
-                              {b.name} (day {b.dueDay})
-                            </span>
-                            <span>{formatCurrency(b.amount)}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </TabsContent>
-              )}
             </Tabs>
           </AccordionContent>
         </AccordionItem>
@@ -620,7 +528,7 @@ function SituationBlock({
               className="text-xs text-destructive font-mono mt-2 font-medium"
               data-testid="text-over-committed"
             >
-              over-committed by {formatCurrency(cycle.overCommittedBy)}
+              {formatCurrency(cycle.overCommittedBy)} short of this cycle&apos;s required hold
             </p>
           ) : null}
           <p className="text-xs text-muted-foreground font-mono mt-3">
@@ -631,23 +539,36 @@ function SituationBlock({
           </p>
           {discretionary && (
             <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 text-xs font-mono">
-              <InlineAssumptionEditor
-                label="Variable remaining"
-                assumptionKey="planned_variable_remaining_override"
-                value={discretionary.variableExpectedRemaining}
-                fallback={discretionary.variableCap}
-                isOverridden={discretionary.plannedVariableRemainingOverride !== null}
-                suffix={`of ${formatCurrency(discretionary.variableCap)}`}
-              />
-              <p className="text-[10px] text-muted-foreground/70 italic pt-1">
-                Tap a number to edit. Month Production now lives in the math accordion below.
-              </p>
+              {/* v9 Fix 4 — variable remaining now reflects ACTUAL logged
+                  spend against the cap (cap − logged, floored at 0). With
+                  $600 logged this reads "$0 of $600", not "$600 of $600".
+                  All variable spend counts — cash and QuickSilver charges
+                  alike. QuickSilver Owed is held separately against
+                  checking until the statement is paid. */}
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Variable remaining</span>
+                <span>
+                  <span className="text-foreground font-medium">
+                    {formatCurrency(discretionary.variableCapRemaining)}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {" "}of {formatCurrency(discretionary.variableCap)}
+                  </span>
+                </span>
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* 4-up stat strip — single line on desktop, wraps on mobile */}
+      {/* v9 Fix 1 — strip pared down to the three numbers that drive Safe to
+          Spend. "Monthly Savings (theoretical)" was removed: it was a stale
+          parallel calculation that contradicted the reserve-aware "Available
+          to Save / Invest" headline on the Cash Position card. There are now
+          exactly two savings/available numbers in the product:
+            (a) Safe to Spend — can-I-spend-today liquidity (this section).
+            (b) Available to Save / Invest — reserve-aware month-end position
+                (the Cash Position card below). */}
       <div
         className="border-t border-border px-6 md:px-8 py-3 text-xs font-mono text-muted-foreground flex flex-wrap gap-x-6 gap-y-1"
         data-testid="stat-strip"
@@ -658,10 +579,6 @@ function SituationBlock({
           value={formatCurrency(cycle.totalRequiredHold)}
         />
         <StripItem label="Forward Reserve" value={formatCurrency(cycle.forwardReserve)} />
-        <StripItem
-          label="Monthly Savings (theoretical)"
-          value={formatCurrency(discretionary?.monthlySavings ?? 0)}
-        />
       </div>
     </section>
   );
@@ -2028,7 +1945,12 @@ function CashPositionCard() {
               {formatCurrency(head)}
             </h3>
             {data.isDeficit && (
-              <p className="text-xs text-destructive font-mono mt-1">already over-committed</p>
+              <p
+                className="text-xs text-destructive font-mono mt-1"
+                data-testid="text-available-deficit"
+              >
+                can&apos;t save this month — {formatCurrency(Math.abs(head))} short of your reserve
+              </p>
             )}
             {data.isTight && (
               <p className="text-xs text-warning font-mono mt-1">tight — under $100 cushion</p>
