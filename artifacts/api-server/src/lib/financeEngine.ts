@@ -72,8 +72,13 @@ export interface CycleState {
   remainingDiscretionary: number;
   status: "GREEN" | "YELLOW" | "RED";
   paydayRisk: boolean;
+  /**
+   * Read-only label: of the bills already in `billsDueBeforePayday`, this is
+   * the subset whose dueDay falls in [1, 7]. NOT a separate addend in
+   * `totalRequiredHold` — the bills are already counted via the cycle window.
+   */
   forwardReserve: number;
-  /** v8.1 — bill component of forwardReserve (sum of due-day-in-window). */
+  /** Alias of `forwardReserve` (kept for API back-compat). */
   forwardReserveBillsTotal: number;
   /** v8.1 — sum of bills with paymentState='paid_pending_clear'. */
   pendingBillsOwed: number;
@@ -150,7 +155,67 @@ export function deriveNextPayday(today: Date): Date {
   return engineEffectivePayday(nextNominalPayday(utcStartOfDay(today)));
 }
 
-export async function computeCycleState(asOf?: Date): Promise<CycleState> {
+/**
+ * Single source of truth for Required Hold.
+ *
+ * ONE function computes everything that goes into the hold against checking.
+ * `computeCycleState` and `integrity.runChecks` both call this — there is no
+ * parallel implementation of cycle membership anywhere else in the codebase.
+ *
+ * Composition (every dollar counted exactly once):
+ *
+ *   totalRequiredHold =
+ *       billsDueBeforePayday    // bills whose next due date ∈ [today, effectivePayday)
+ *     + oneTimeDueBeforePayday  // unpaid, non-deferred one-times in same window
+ *     + pendingHoldsReserve     // assumption row
+ *     + minimumCushion          // assumption row
+ *     + quicksilverOwed         // unpaid QS variable-spend rows
+ *     + pendingBillsOwed        // bills marked paid_pending_clear
+ *
+ * Forward Reserve is NOT a separate addend. It is a READ-ONLY LABEL derived
+ * from the bills already in `billsDueBeforePayday`: the subset whose dueDay
+ * falls in [1, 7]. On payday-morning rollover days the cycle window straddles
+ * the month boundary and naturally captures next month's first-week bills via
+ * the bills-due term — adding them again as "forward reserve" was the v9 bug.
+ */
+export interface RequiredHoldBreakdown {
+  today: Date;
+  checkingBalance: number;
+  lastBalanceUpdate: Date | null;
+  daysSinceUpdate: number | null;
+  isStale: boolean;
+  nextPaydayNominal: Date;
+  nextPayday: Date;
+  daysUntilPayday: number;
+  paydayRisk: boolean;
+
+  billsDueBeforePayday: number;
+  oneTimeDueBeforePayday: number;
+  pendingHoldsReserve: number;
+  minimumCushion: number;
+  quicksilverOwed: number;
+  pendingBillsOwed: number;
+  totalRequiredHold: number;
+
+  /**
+   * Read-only label: of the bills already in `billsDueBeforePayday`, this is
+   * the subset whose dueDay is 1..7. Surfaces as `cycle.forwardReserve` in the
+   * API response for the dashboard's "Forward Reserve" breakdown row. Never
+   * added to `totalRequiredHold` again.
+   */
+  forwardReserveLabel: number;
+
+  safeToSpend: number;
+  safeToSpendPreFloor: number;
+  overCommittedBy: number;
+
+  alertThreshold: number;
+  variableSpendCap: number;
+  monthLengthDays: number;
+  variableSpendUntilPayday: number;
+}
+
+export async function computeRequiredHold(asOf?: Date): Promise<RequiredHoldBreakdown> {
   const alertThreshold = await getAssumption("alert_threshold", 400);
   const monthLengthDays = await getAssumption("month_length_days", 30.4);
   const variableSpendCap = await getAssumption("variable_spend_cap", 600);
@@ -165,48 +230,73 @@ export async function computeCycleState(asOf?: Date): Promise<CycleState> {
   const checkingBalance = latestChecking ? parseFloat(latestChecking.amount) : 0;
   const lastBalanceUpdate = latestChecking ? new Date(latestChecking.asOfDate) : null;
 
-  // v8.2 — optional `asOf` lets callers simulate a different calendar day
-  // (e.g. ?asOf=2026-06-22) for testing month-timing stability and verifying
-  // that the cycle math doesn't drift around paydays. Defaults to real today.
   const today = utcStartOfDay(asOf ?? new Date());
 
   const daysSinceUpdate = lastBalanceUpdate
     ? engineDaysSinceUpdate(utcStartOfDay(lastBalanceUpdate), today)
     : null;
+  const stale =
+    daysSinceUpdate === null || isStale(utcStartOfDay(lastBalanceUpdate ?? today), today);
 
-  const stale = daysSinceUpdate === null || isStale(utcStartOfDay(lastBalanceUpdate ?? today), today);
-
-  // v8.0 payday-morning fix: on a day that *is* a nominal payday, the naive
-  // window [today, nextPayday) is empty and bills due 23rd-31st (or 8th-21st)
-  // would not be held. Roll the cycle boundary forward to the FOLLOWING
-  // nominal payday so the new cycle [today, next-next-payday) is captured.
+  // Payday-morning rollover: when today IS a nominal payday, [today, nextPayday)
+  // is empty. Roll forward to the FOLLOWING payday so bills due 23rd-31st AND
+  // bills due 1st-7th of next month all fall inside the rolled cycle window —
+  // captured exactly once by `billsDueBeforePayday`.
   const rawNominal = deriveNextNominalPayday(today);
   const nextPaydayNominal =
     rawNominal.getTime() === today.getTime()
       ? deriveNextNominalPayday(new Date(today.getTime() + 86400000))
       : rawNominal;
   const nextPayday = engineEffectivePayday(nextPaydayNominal);
-
   const daysUntilPayday = engineDaysUntilPayday(today, nextPaydayNominal);
   const paydayRisk = paydayRiskFlag(nextPaydayNominal);
 
-  // Bills in current cycle hold (engine enforces strict < effective payday).
-  // Pass the rolled nominal so enumerateBills' cycle membership matches.
+  // The hold is the UNION of two bill sets, deduplicated by bill id:
+  //   A = bills whose next due date ∈ [today, effectivePayday(rolledNominal))
+  //   B = always-hold forward reserve: bills with dueDay 1..7 (next month's
+  //       first-week obligations, reserved every day regardless of cycle phase)
+  //
+  // Union-by-id is the keystone: on payday-morning days the rolled cycle window
+  // already captures next-month day-1..7 bills via A, AND those same bills are
+  // in B. Without the union we'd re-create the v9 double-count. With the union,
+  // any bill that lands in both sets collapses to a single entry — counted once.
+  //
+  // paid_pending_clear bills are excluded from both subsets and held via
+  // pendingBillsOwed instead. skipped_cycle is excluded entirely.
   const enriched = await enumerateBills(today, nextPaydayNominal);
-  // v8.1 — Exclude `paid_pending_clear` here so the bill is held exactly
-  // once via `pendingBillsOwed` below instead of double-counted (bills bucket
-  // + pending bucket). The user has "paid" the bill from their perspective,
-  // so it leaves the scheduled-bills total; the hold migrates to the
-  // pendingBillsOwed lane until they call POST /bills/:id/mark-cleared.
-  const billsDueBeforePayday = enriched
-    .filter((b) => b.countsThisCycle && b.paymentState !== "paid_pending_clear")
+
+  const cycleBills = enriched.filter(
+    (b) => b.countsThisCycle && b.paymentState !== "paid_pending_clear",
+  );
+  const forwardBills = enriched.filter(
+    (b) =>
+      b.isActivePeriod &&
+      b.includeInCycle &&
+      b.amount > 0 &&
+      b.paymentState !== "paid_pending_clear" &&
+      b.paymentState !== "skipped_cycle" &&
+      b.dueDay >= 1 &&
+      b.dueDay <= 7,
+  );
+
+  const billsInHoldMap = new Map<number, (typeof enriched)[number]>();
+  for (const b of cycleBills) billsInHoldMap.set(b.id, b);
+  for (const b of forwardBills) billsInHoldMap.set(b.id, b);
+  const billsInHold = Array.from(billsInHoldMap.values());
+
+  const billsDueBeforePayday = billsInHold.reduce((s, b) => s + b.amount, 0);
+
+  // Forward Reserve LABEL: subset of bills already in the hold with dueDay 1-7.
+  // Pure derived value — never summed back into totalRequiredHold.
+  const forwardReserveLabel = billsInHold
+    .filter((b) => b.dueDay >= 1 && b.dueDay <= 7)
     .reduce((s, b) => s + b.amount, 0);
 
   const pendingHoldsReserve = await getAssumption("pending_holds_reserve", 0);
   const minimumCushion = await getAssumption("minimum_cushion", 0);
 
-  // One-time expenses due in cycle (engine: <= effective payday, inclusive).
-  // v8.0 Part 3 — deferred items are excluded from all cycle math.
+  // One-time expenses due in cycle (engine: ≤ effective payday, inclusive).
+  // Deferred items excluded from all cycle math (v8.0 Part 3).
   const allOneTime = await db.select().from(oneTimeExpenses);
   const engineOneTimes = selectActiveOneTimeExpenses(allOneTime);
   const oneTimeDueBeforePayday = oneTimeExpensesDueInCycle(
@@ -215,136 +305,126 @@ export async function computeCycleState(asOf?: Date): Promise<CycleState> {
     nextPaydayNominal,
   );
 
-  // v9 — Forward Reserve SIMPLIFIED (Playbook v9 Fix 2).
-  // Sum of include=TRUE bill amounts with dueDay 1..7 (the first week of
-  // the next calendar month). NO 14-day window. NO variable buffer.
-  // NO dedup against current cycle. Just next month's day-1–7 bills.
-  // Rationale: cycle-based dedup was the bug class that produced engine
-  // drift; the math is now stable, auditable, and matches the user's
-  // mental model ("reserve next month's first-week bills so payday
-  // doesn't immediately go red").
-  void variableSpendCap; void monthLengthDays; // intentionally unused here
-  let forwardReserveBillsTotal = 0;
-  for (const b of enriched) {
-    if (!b.isActivePeriod || !b.includeInCycle || b.amount <= 0) continue;
-    if (b.paymentState === "skipped_cycle") continue;
-    if (b.dueDay < 1 || b.dueDay > 7) continue;
-    forwardReserveBillsTotal += b.amount;
-  }
-  const forwardReserve = forwardReserveBillsTotal;
-
-  // v8.0 Final Fix — QuickSilver settlement hold. Every QS row (quicksilver=
-  // true) that has NOT been marked paid-off represents a dollar that has left
-  // the cycle as "consumption" (variable spend) but has NOT yet left checking
-  // as "settlement". To enforce "every dollar counted exactly once", we hold
-  // the unpaid QS balance against checking until the user marks it paid via
-  // POST /variable-spend/quicksilver/mark-paid.
+  // QuickSilver settlement hold: every QS variable-spend row not yet paid off
+  // is a dollar consumed but not yet debited.
   const allVarSpend = await db.select().from(variableSpend);
   const quicksilverOwed = allVarSpend
     .filter((v) => v.quicksilver && v.paidOffAt === null)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
 
-  // v8.1 — Pending Bill Payments hold. Any bill with paymentState=
-  // 'paid_pending_clear' has been marked paid by the user but the money
-  // hasn't actually withdrawn from checking yet. We hold the amount
-  // against checking until the user calls POST /bills/:id/mark-cleared.
-  // This closes the loophole where marking a bill 'paid' immediately
-  // dropped it from the hold even though the checking balance hadn't
-  // dropped yet. Mirrors the QuickSilver pattern.
+  // Pending Bill Payments hold: bills marked paid_pending_clear haven't actually
+  // debited yet. Held here (not in billsDueBeforePayday) so the dollar is held once.
   const allBillRows = await db.select().from(bills);
   const pendingBillsOwed = allBillRows
     .filter((b) => b.paymentState === "paid_pending_clear" && b.includeInCycle)
     .reduce((s, b) => s + parseFloat(b.amount), 0);
 
-  // Required Hold per BUILD_SPEC §4.4: bills + pending + cushion + one-time.
-  // v8.0 §1.1: + Forward Reserve. v8.0 Final Fix: + quicksilverOwed.
-  // v8.1: + pendingBillsOwed.
   const totalRequiredHold =
     billsDueBeforePayday +
+    oneTimeDueBeforePayday +
     pendingHoldsReserve +
     minimumCushion +
-    oneTimeDueBeforePayday +
-    forwardReserve +
     quicksilverOwed +
     pendingBillsOwed;
 
-  const variableSpendUntilPayday = await getAssumption("variable_spend_until_payday", 0);
-
-  // Fold quicksilverOwed + pendingBillsOwed into the engine's pendingHolds
-  // term so engine.safeToSpend stays the single source of truth for the
-  // floor + Forward-Reserve composition.
-  const sts = safeToSpend(checkingBalance, billsDueBeforePayday, {
-    pendingHolds: pendingHoldsReserve + quicksilverOwed + pendingBillsOwed,
-    minimumCushion,
-    oneTimeDueTotal: oneTimeDueBeforePayday,
-    forwardReserveAmount: forwardReserve,
-    includeForwardReserveInSts: true,
-  });
-  const safeToSpendPreFloor =
-    checkingBalance -
-    (billsDueBeforePayday +
-      pendingHoldsReserve +
-      minimumCushion +
-      oneTimeDueBeforePayday +
-      forwardReserve +
-      quicksilverOwed +
-      pendingBillsOwed);
+  const safeToSpendPreFloor = checkingBalance - totalRequiredHold;
+  const safeToSpendValue = Math.max(0, safeToSpendPreFloor);
   const overCommittedBy = safeToSpendPreFloor < 0 ? -safeToSpendPreFloor : 0;
 
-  const lastUpdateDate = lastBalanceUpdate ? utcStartOfDay(lastBalanceUpdate) : today;
+  const variableSpendUntilPayday = await getAssumption("variable_spend_until_payday", 0);
+
+  return {
+    today,
+    checkingBalance,
+    lastBalanceUpdate,
+    daysSinceUpdate,
+    isStale: stale,
+    nextPaydayNominal,
+    nextPayday,
+    daysUntilPayday,
+    paydayRisk,
+    billsDueBeforePayday,
+    oneTimeDueBeforePayday,
+    pendingHoldsReserve,
+    minimumCushion,
+    quicksilverOwed,
+    pendingBillsOwed,
+    totalRequiredHold,
+    forwardReserveLabel,
+    safeToSpend: safeToSpendValue,
+    safeToSpendPreFloor,
+    overCommittedBy,
+    alertThreshold,
+    variableSpendCap,
+    monthLengthDays,
+    variableSpendUntilPayday,
+  };
+}
+
+export async function computeCycleState(asOf?: Date): Promise<CycleState> {
+  const hold = await computeRequiredHold(asOf);
+
+  // engine.safeToSpend keeps its semantics — folded through the engine helper
+  // so the floor + clamp behaviour stays identical to the reference engine.
+  // Forward Reserve is no longer a separate addend; it's purely a label.
+  const sts = safeToSpend(hold.checkingBalance, hold.billsDueBeforePayday, {
+    pendingHolds: hold.pendingHoldsReserve + hold.quicksilverOwed + hold.pendingBillsOwed,
+    minimumCushion: hold.minimumCushion,
+    oneTimeDueTotal: hold.oneTimeDueBeforePayday,
+    forwardReserveAmount: 0,
+    includeForwardReserveInSts: false,
+  });
+
+  const lastUpdateDate = hold.lastBalanceUpdate
+    ? utcStartOfDay(hold.lastBalanceUpdate)
+    : hold.today;
 
   const dailyRateFromUpdate = dailyRateStatic(
     sts,
-    variableSpendUntilPayday,
-    nextPaydayNominal,
+    hold.variableSpendUntilPayday,
+    hold.nextPaydayNominal,
     lastUpdateDate,
   );
 
   const dailyRateRealTime = dailyRateRealtime(
     sts,
-    variableSpendUntilPayday,
-    nextPaydayNominal,
-    today,
+    hold.variableSpendUntilPayday,
+    hold.nextPaydayNominal,
+    hold.today,
   );
 
   const coverage = daysOfCoverage(sts, dailyRateFromUpdate);
-
-  const remainingDiscretionary = Math.max(0, sts - variableSpendUntilPayday);
-
-  // Status: engine GREEN (>=threshold), YELLOW (0<sts<threshold), RED (sts<=0).
-  // The api shape distinguishes RED only when checking < hold. With
-  // sts = max(0, checking - hold), sts<=0 already implies checking<=hold,
-  // so engine status == api status.
-  const status = cycleStatus(sts, alertThreshold);
+  const remainingDiscretionary = Math.max(0, sts - hold.variableSpendUntilPayday);
+  const status = cycleStatus(sts, hold.alertThreshold);
 
   return {
-    checkingBalance,
-    lastBalanceUpdate,
-    nextPayday,
-    nextPaydayNominal,
-    daysSinceUpdate,
-    isStale: stale,
-    daysUntilPayday,
-    billsDueBeforePayday,
-    pendingHoldsReserve,
-    minimumCushion,
-    oneTimeDueBeforePayday,
-    totalRequiredHold,
-    quicksilverOwed,
+    checkingBalance: hold.checkingBalance,
+    lastBalanceUpdate: hold.lastBalanceUpdate,
+    nextPayday: hold.nextPayday,
+    nextPaydayNominal: hold.nextPaydayNominal,
+    daysSinceUpdate: hold.daysSinceUpdate,
+    isStale: hold.isStale,
+    daysUntilPayday: hold.daysUntilPayday,
+    billsDueBeforePayday: hold.billsDueBeforePayday,
+    pendingHoldsReserve: hold.pendingHoldsReserve,
+    minimumCushion: hold.minimumCushion,
+    oneTimeDueBeforePayday: hold.oneTimeDueBeforePayday,
+    totalRequiredHold: hold.totalRequiredHold,
+    quicksilverOwed: hold.quicksilverOwed,
     safeToSpend: sts,
-    safeToSpendPreFloor,
-    overCommittedBy,
+    safeToSpendPreFloor: hold.safeToSpendPreFloor,
+    overCommittedBy: hold.overCommittedBy,
     dailyRateFromUpdate,
     dailyRateRealTime,
     daysOfCoverage: coverage,
-    variableSpendUntilPayday,
+    variableSpendUntilPayday: hold.variableSpendUntilPayday,
     remainingDiscretionary,
     status,
-    paydayRisk,
-    forwardReserve,
-    forwardReserveBillsTotal,
-    pendingBillsOwed,
-    alertThreshold,
+    paydayRisk: hold.paydayRisk,
+    forwardReserve: hold.forwardReserveLabel,
+    forwardReserveBillsTotal: hold.forwardReserveLabel,
+    pendingBillsOwed: hold.pendingBillsOwed,
+    alertThreshold: hold.alertThreshold,
   };
 }
 

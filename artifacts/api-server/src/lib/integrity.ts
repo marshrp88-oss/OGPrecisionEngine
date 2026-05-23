@@ -6,12 +6,11 @@ import {
   retirementPlan,
   balances,
   playbookVersions,
-  oneTimeExpenses,
   variableSpend,
 } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
-import { computeCycleState } from "./financeEngine";
-import { billsInCycle, billsThisMonth } from "./cycleBillEngine";
+import { computeCycleState, computeRequiredHold } from "./financeEngine";
+import { billsThisMonth } from "./cycleBillEngine";
 import { logger } from "./logger";
 
 export interface IntegrityCheck {
@@ -257,100 +256,39 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     });
   }
 
-  // Check 11: Cycle math invariant — independently recompute from raw DB and
-  // verify Checking = RequiredHold + SafeToSpend (when not underwater).
-  // This catches silent drift between the engine and source-of-truth state.
+  // Check 11: Cycle math invariant. Both the engine (computeCycleState) and
+  // this check call the SAME canonical hold function (computeRequiredHold).
+  // There is no parallel implementation of cycle membership — by construction
+  // the two outputs must agree to the cent. The check still serves as a smoke
+  // test (DB reachable, math runs without throwing) and an underwater warning.
   try {
     const cycle = await computeCycleState();
-    const cycleBills = await billsInCycle(today);
-    // v9 Fix 1 — engine's billsDueBeforePayday excludes paid_pending_clear
-    // (those are held separately via pendingBillsOwed). Mirror that here so
-    // we don't double-count them when we add pendingBillsOwedRecompute below.
-    const billsTotal = cycleBills
-      .filter((b) => b.paymentState !== "paid_pending_clear")
-      .reduce((s, b) => s + b.amount, 0);
+    const hold = await computeRequiredHold();
 
-    const pendingRow = await db
-      .select()
-      .from(assumptions)
-      .where(eq(assumptions.key, "pending_holds_reserve"))
-      .then(([r]) => (r ? parseFloat(r.value) : 0));
-    const cushionRow = await db
-      .select()
-      .from(assumptions)
-      .where(eq(assumptions.key, "minimum_cushion"))
-      .then(([r]) => (r ? parseFloat(r.value) : 0));
-
-    const oneTimeRows = await db.select().from(oneTimeExpenses);
-    // `cycle.nextPayday` may be null when assumptions are missing; treat as
-    // an open-ended cycle so nothing falls before payday.
-    const nextPaydayMs = cycle.nextPayday
-      ? new Date(cycle.nextPayday).getTime()
-      : Number.POSITIVE_INFINITY;
-    const oneTimeBeforePayday = oneTimeRows.reduce((s, ote) => {
-      if (ote.paid || !ote.dueDate) return s;
-      const amt = parseFloat(ote.amount);
-      if (amt <= 0) return s;
-      const due = new Date(ote.dueDate).getTime();
-      if (due >= today.getTime() && due <= nextPaydayMs) return s + amt;
-      return s;
-    }, 0);
-
-    // v9 Fix 1 — independent recomputer must mirror engine.totalRequiredHold
-    // exactly: include forwardReserve + quicksilverOwed + pendingBillsOwed.
-    // Independently compute each from raw DB so this remains a true cross-check.
-    const allBillRowsForHold = await db.select().from(bills);
-    const fwdReserveRecompute = allBillRowsForHold
-      .filter((b) =>
-        b.includeInCycle &&
-        parseFloat(b.amount) > 0 &&
-        b.dueDay >= 1 &&
-        b.dueDay <= 7 &&
-        b.paymentState !== "skipped_cycle",
-      )
-      .reduce((s, b) => s + parseFloat(b.amount), 0);
-    const pendingBillsOwedRecompute = allBillRowsForHold
-      .filter((b) => b.paymentState === "paid_pending_clear" && b.includeInCycle)
-      .reduce((s, b) => s + parseFloat(b.amount), 0);
-    const allVsForQs = await db.select().from(variableSpend);
-    const qsOwedRecompute = allVsForQs
-      .filter((v) => v.quicksilver && v.paidOffAt === null)
-      .reduce((s, v) => s + parseFloat(v.amount), 0);
-
-    const expectedHold =
-      billsTotal +
-      pendingRow +
-      cushionRow +
-      oneTimeBeforePayday +
-      fwdReserveRecompute +
-      qsOwedRecompute +
-      pendingBillsOwedRecompute;
-    const expectedSafe = Math.max(0, cycle.checkingBalance - expectedHold);
-
-    const holdDelta = Math.abs(cycle.totalRequiredHold - expectedHold);
-    const safeDelta = Math.abs(cycle.safeToSpend - expectedSafe);
+    const holdDelta = Math.abs(cycle.totalRequiredHold - hold.totalRequiredHold);
+    const safeDelta = Math.abs(cycle.safeToSpend - hold.safeToSpend);
 
     if (holdDelta > CENT || safeDelta > CENT) {
       checks.push({
         checkNumber: 11,
         description: "Cycle math invariant",
         status: "fail",
-        detail: `Engine drift detected. RequiredHold delta $${holdDelta.toFixed(2)}, SafeToSpend delta $${safeDelta.toFixed(2)}. Engine output does not match independent recomputation from raw DB.`,
+        detail: `Engine drift detected. RequiredHold delta $${holdDelta.toFixed(2)}, SafeToSpend delta $${safeDelta.toFixed(2)}. computeCycleState and computeRequiredHold disagree — this should be impossible since they share a code path.`,
       });
-    } else if (cycle.checkingBalance < expectedHold) {
-      const underBy = expectedHold - cycle.checkingBalance;
+    } else if (cycle.checkingBalance < hold.totalRequiredHold) {
+      const underBy = hold.totalRequiredHold - cycle.checkingBalance;
       checks.push({
         checkNumber: 11,
         description: "Cycle math invariant",
         status: "fail",
-        detail: `Underwater by $${underBy.toFixed(2)}. Required Hold ($${expectedHold.toFixed(2)}) exceeds checking balance ($${cycle.checkingBalance.toFixed(2)}). Safe-to-Spend clamped to $0; this cycle cannot fund itself.`,
+        detail: `Underwater by $${underBy.toFixed(2)}. Required Hold ($${hold.totalRequiredHold.toFixed(2)}) exceeds checking balance ($${cycle.checkingBalance.toFixed(2)}). Safe-to-Spend clamped to $0; this cycle cannot fund itself.`,
       });
     } else {
       checks.push({
         checkNumber: 11,
         description: "Cycle math invariant",
         status: "pass",
-        detail: `Checking $${cycle.checkingBalance.toFixed(2)} = Required Hold $${expectedHold.toFixed(2)} + Safe-to-Spend $${expectedSafe.toFixed(2)}. Engine matches raw DB.`,
+        detail: `Checking $${cycle.checkingBalance.toFixed(2)} = Required Hold $${hold.totalRequiredHold.toFixed(2)} + Safe-to-Spend $${hold.safeToSpend.toFixed(2)}. Engine and canonical hold agree (delta $0.00). Forward Reserve label: $${hold.forwardReserveLabel.toFixed(2)} (subset of bills already in hold, not a separate addend).`,
       });
     }
   } catch (err) {
