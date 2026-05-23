@@ -3,7 +3,15 @@ import { GetDashboardCycleResponse } from "@workspace/api-zod";
 import { computeCycleState, deriveNextPayday } from "../lib/financeEngine";
 import { billsThisMonth } from "../lib/cycleBillEngine";
 import { syncBillPaymentStates } from "../lib/paymentState";
-import { db, oneTimeExpenses, variableSpend, bills, assumptions, commissions, balances } from "@workspace/db";
+import {
+  db,
+  oneTimeExpenses,
+  variableSpend,
+  bills,
+  assumptions,
+  commissions,
+  balances,
+} from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import {
   BASE_NET_INCOME,
@@ -57,7 +65,7 @@ router.get("/dashboard/cycle", async (req, res): Promise<void> => {
       ...cycle,
       lastBalanceUpdate: cycle.lastBalanceUpdate?.toISOString() ?? null,
       nextPayday: cycle.nextPayday?.toISOString().split("T")[0] ?? null,
-    })
+    }),
   );
 });
 
@@ -85,7 +93,9 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     .where(eq(balances.accountType, "checking"))
     .orderBy(desc(balances.asOfDate))
     .limit(1);
-  const checking = latestChecking ? parseFloat(latestChecking.amount as unknown as string) : 0;
+  const checking = latestChecking
+    ? parseFloat(latestChecking.amount as unknown as string)
+    : 0;
 
   const allAssumps = await db.select().from(assumptions);
   const A = (k: string, dflt = 0) => {
@@ -105,9 +115,13 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const nrrTarget = A("nrr_target", 6000);
   const taxRate = A("commission_tax_rate", 0.435);
   // §1.2 override: empty/missing → use cap − logged. Numeric → use that.
-  const overrideRow = allAssumps.find((a) => a.key === "planned_variable_remaining_override");
+  const overrideRow = allAssumps.find(
+    (a) => a.key === "planned_variable_remaining_override",
+  );
   const plannedVariableRemainingOverride: number | null =
-    overrideRow && overrideRow.value !== "" && !isNaN(parseFloat(overrideRow.value))
+    overrideRow &&
+    overrideRow.value !== "" &&
+    !isNaN(parseFloat(overrideRow.value))
       ? parseFloat(overrideRow.value)
       : null;
 
@@ -122,7 +136,9 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const ymd = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const incomeOverrideFor = (paydayISO: string): number | null => {
-    const row = allAssumps.find((a) => a.key === `income_override:${paydayISO}`);
+    const row = allAssumps.find(
+      (a) => a.key === `income_override:${paydayISO}`,
+    );
     if (!row || row.value === "") return null;
     const n = parseFloat(row.value);
     // Accept any finite non-negative number — including 0, which models an
@@ -172,18 +188,23 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   for (const c of allCommissions) {
     if (!c.payoutDate) continue;
     const pd = new Date(c.payoutDate);
-    if (pd.getFullYear() !== today.getFullYear() || pd.getMonth() !== today.getMonth()) continue;
+    if (
+      pd.getFullYear() !== today.getFullYear() ||
+      pd.getMonth() !== today.getMonth()
+    )
+      continue;
     // Prefer stored takeHome; fall back to recomputing if missing.
     const stored = parseFloat(c.takeHome);
-    const amount = !isNaN(stored) && stored > 0
-      ? stored
-      : commissionTakeHome(
-          parseFloat(c.mrrAchieved as unknown as string),
-          parseFloat(c.nrrAchieved as unknown as string),
-          mrrTarget,
-          nrrTarget,
-          taxRate,
-        );
+    const amount =
+      !isNaN(stored) && stored > 0
+        ? stored
+        : commissionTakeHome(
+            parseFloat(c.mrrAchieved as unknown as string),
+            parseFloat(c.nrrAchieved as unknown as string),
+            mrrTarget,
+            nrrTarget,
+            taxRate,
+          );
     if (c.status === "paid" && pd <= today) commissionPaidThisMonth += amount;
     else if (c.status === "pending" && pd > today && pd <= monthEnd)
       commissionPendingThisMonth += amount;
@@ -191,7 +212,8 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   // Back-compat aliases for older UI fields:
   const confirmedCommissionAlready = commissionPaidThisMonth;
   const confirmedCommissionUnreceived = commissionPendingThisMonth;
-  const confirmedCommissionTotal = commissionPaidThisMonth + commissionPendingThisMonth;
+  const confirmedCommissionTotal =
+    commissionPaidThisMonth + commissionPendingThisMonth;
 
   // v8.0 Part 1.2 — monthBillsObligated = SUM(include=TRUE bills dueDay in
   // this month, payment_state != 'skipped_cycle'). Paid OR unpaid both count
@@ -203,8 +225,20 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   let billsLateUnpaidThisMonth = 0;
   let billsPaidThisMonth = 0;
   let billsSkippedThisMonth = 0;
-  const billsThisMonthDetail: { id: number; name: string; amount: number; dueDay: number; paymentState: string }[] = [];
-  const billsRemainingDetail: { id: number; name: string; amount: number; dueDay: number; paymentState: string }[] = [];
+  const billsThisMonthDetail: {
+    id: number;
+    name: string;
+    amount: number;
+    dueDay: number;
+    paymentState: string;
+  }[] = [];
+  const billsRemainingDetail: {
+    id: number;
+    name: string;
+    amount: number;
+    dueDay: number;
+    paymentState: string;
+  }[] = [];
   for (const b of allBills) {
     if (!b.includeInCycle) continue;
     const amt = parseFloat(b.amount);
@@ -214,9 +248,16 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
         billsSkippedThisMonth += amt;
       } else {
         billsThisMonthTotal += amt;
-        billsThisMonthDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay, paymentState: b.paymentState });
+        billsThisMonthDetail.push({
+          id: b.id,
+          name: b.name,
+          amount: amt,
+          dueDay: b.dueDay,
+          paymentState: b.paymentState,
+        });
         if (b.paymentState === "paid") billsPaidThisMonth += amt;
-        else if (b.paymentState === "late_unpaid") billsLateUnpaidThisMonth += amt;
+        else if (b.paymentState === "late_unpaid")
+          billsLateUnpaidThisMonth += amt;
       }
     }
     // billsRemaining = obligation still expected to leave checking before
@@ -228,7 +269,13 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
       b.paymentState !== "skipped_cycle"
     ) {
       billsRemainingThisMonth += amt;
-      billsRemainingDetail.push({ id: b.id, name: b.name, amount: amt, dueDay: b.dueDay, paymentState: b.paymentState });
+      billsRemainingDetail.push({
+        id: b.id,
+        name: b.name,
+        amount: amt,
+        dueDay: b.dueDay,
+        paymentState: b.paymentState,
+      });
     }
   }
 
@@ -241,7 +288,14 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   let oneTimeRemainingFromToday = 0;
   let oneTimeDeferredTotal = 0;
   let oneTimePaidThisMonth = 0;
-  const oneTimeDetail: { id: number; description: string; amount: number; dueDate: string | null; paid: boolean; deferred: boolean }[] = [];
+  const oneTimeDetail: {
+    id: number;
+    description: string;
+    amount: number;
+    dueDate: string | null;
+    paid: boolean;
+    deferred: boolean;
+  }[] = [];
   for (const o of oteRows) {
     const amt = parseFloat(o.amount);
     if (o.deferred) {
@@ -249,13 +303,21 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
       continue;
     }
     const dd = o.dueDate ? new Date(o.dueDate) : null;
-    const isThisMonth = dd === null
-      ? !o.paid                                  // undated unpaid → this month
-      : dd >= monthStart && dd <= monthEnd;
+    const isThisMonth =
+      dd === null
+        ? !o.paid // undated unpaid → this month
+        : dd >= monthStart && dd <= monthEnd;
     if (!isThisMonth) continue;
 
     oneTimeMonthObligated += amt;
-    oneTimeDetail.push({ id: o.id, description: o.description, amount: amt, dueDate: o.dueDate, paid: o.paid, deferred: o.deferred });
+    oneTimeDetail.push({
+      id: o.id,
+      description: o.description,
+      amount: amt,
+      dueDate: o.dueDate,
+      paid: o.paid,
+      deferred: o.deferred,
+    });
     if (o.paid) {
       oneTimePaidThisMonth += amt;
     } else if (dd === null || dd >= today) {
@@ -276,7 +338,10 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     const w = new Date(v.weekOf);
     return w >= monthStart && w <= monthEnd;
   });
-  const variableLoggedThisMonth = monthVs.reduce((s, v) => s + parseFloat(v.amount), 0);
+  const variableLoggedThisMonth = monthVs.reduce(
+    (s, v) => s + parseFloat(v.amount),
+    0,
+  );
   const variableSpentThisMonth = variableLoggedThisMonth;
   const quicksilverAccruedThisMonth = monthVs
     .filter((v) => v.quicksilver)
@@ -305,10 +370,13 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   // Legacy field kept for breakdown display; NOT used in headline.
   const variableExpectedRemainingTrailing = Math.max(
     0,
-    trailingDailyRate * Math.max(0, daysRemainingInMonth - 1),  // exclude today
+    trailingDailyRate * Math.max(0, daysRemainingInMonth - 1), // exclude today
   );
   // Variable cap remaining (cap − logged, floored).
-  const variableCapRemaining = Math.max(0, variableCap - variableLoggedThisMonth);
+  const variableCapRemaining = Math.max(
+    0,
+    variableCap - variableLoggedThisMonth,
+  );
   // Fix 2: headline routed through engine helper (single source of truth).
   const monthVariableObligation = monthVariableObligationHeadline(
     variableLoggedThisMonth,
@@ -338,9 +406,7 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     commissionPaidThisMonth +
     commissionPendingThisMonth;
   const totalMonthOutgo =
-    billsThisMonthTotal +
-    monthVariableObligation +
-    oneTimeMonthObligated;
+    billsThisMonthTotal + monthVariableObligation + oneTimeMonthObligated;
   const discretionaryHeadline = totalMonthIncome - totalMonthOutgo;
 
   // Cycle (Safe to Spend) still uses the FROZEN engine for back-compat.
@@ -357,7 +423,10 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const monthBillsForEngine: EngineBill[] = monthBillRows.map(
     (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category),
   );
-  const fixedMonthlyTotal = monthBillsForEngine.reduce((s, b) => s + b.amount, 0);
+  const fixedMonthlyTotal = monthBillsForEngine.reduce(
+    (s, b) => s + b.amount,
+    0,
+  );
   const fixedRatio = baseNetIncome > 0 ? fixedMonthlyTotal / baseNetIncome : 0;
 
   // Monthly Savings = Discretionary − $100 conservative buffer (Playbook B62
@@ -365,7 +434,10 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   // Discretionary is negative, savings is simply $0 and the negative is shown
   // on the Discretionary line itself.
   const engineSavings = Math.max(0, discretionaryHeadline - 100);
-  const savingsRate = baseNetIncome > 0 ? engineSavings / (baseNetIncome + confirmedCommissionTotal) : 0;
+  const savingsRate =
+    baseNetIncome > 0
+      ? engineSavings / (baseNetIncome + confirmedCommissionTotal)
+      : 0;
 
   // Cap-derived prorated remaining (legacy breakdown row). Distinct from the
   // trailing-rate-derived variableExpectedRemaining used in the headline.
@@ -413,7 +485,9 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     // Forward Reserve surfaced for cross-reference ONLY (Safe to Spend uses it).
     // NOT subtracted from Discretionary headline per Part 0/1.
     forwardReserve: round(cycle.forwardReserve),
-    proratedVariableRemainingThisMonth: round(proratedVariableRemainingForBreakdown),
+    proratedVariableRemainingThisMonth: round(
+      proratedVariableRemainingForBreakdown,
+    ),
     daysRemainingInMonth,
 
     // Income ledger (full month, stable)
@@ -424,7 +498,8 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     paycheckBreakdown: paycheckBreakdown.map((p) => ({
       ...p,
       baseAmount: round(p.baseAmount),
-      overrideAmount: p.overrideAmount !== null ? round(p.overrideAmount) : null,
+      overrideAmount:
+        p.overrideAmount !== null ? round(p.overrideAmount) : null,
       appliedAmount: round(p.appliedAmount),
     })),
     commissionPaidThisMonth: round(commissionPaidThisMonth),
@@ -518,6 +593,7 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     ? parseFloat(latestChecking.amount as unknown as string)
     : 0;
   const lastBalanceUpdate = latestChecking?.asOfDate ?? null;
+  const cycle = await computeCycleState(today);
 
   // ---- Assumptions ----
   const allAssumps = await db.select().from(assumptions);
@@ -532,7 +608,9 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
   const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
   const plannedVariableRemainingOverride = (() => {
-    const r = allAssumps.find((a) => a.key === "planned_variable_remaining_override");
+    const r = allAssumps.find(
+      (a) => a.key === "planned_variable_remaining_override",
+    );
     if (!r) return null;
     const raw = (r.value ?? "").toString().trim();
     if (raw === "") return null;
@@ -600,14 +678,18 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     if (b.dueDay < 1 || b.dueDay > monthEnd.getDate()) continue;
     if (b.paymentState === "skipped_cycle") continue;
 
-    const paidDateStr = b.paidDate ? new Date(b.paidDate).toISOString().split("T")[0] : null;
-    const clearedDateStr = b.clearedDate ? new Date(b.clearedDate).toISOString().split("T")[0] : null;
-    const isCleared = b.paymentState === "paid" && !!b.clearedDate;
+    const paidDateStr = b.paidDate
+      ? new Date(b.paidDate).toISOString().split("T")[0]
+      : null;
+    const clearedDateStr = b.clearedDate
+      ? new Date(b.clearedDate).toISOString().split("T")[0]
+      : null;
+    const isCleared = b.paymentState === "paid";
 
     let cashStatus: BillRow["cashStatus"];
     if (isCleared) cashStatus = "debited";
     else if (b.paymentState === "late_unpaid") cashStatus = "late";
-    else if (b.paymentState === "paid" || b.paymentState === "paid_pending_clear") cashStatus = "pending";
+    else if (b.paymentState === "paid_pending_clear") cashStatus = "pending";
     else cashStatus = "scheduled";
 
     const row: BillRow = {
@@ -640,7 +722,10 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     const w = new Date(v.weekOf);
     return w >= monthStart && w <= monthEnd;
   });
-  const variableLoggedThisMonth = monthVs.reduce((s, v) => s + parseFloat(v.amount), 0);
+  const variableLoggedThisMonth = monthVs.reduce(
+    (s, v) => s + parseFloat(v.amount),
+    0,
+  );
   const quicksilverAccruedThisMonth = monthVs
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
@@ -654,16 +739,23 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     monthVariableObligation - variableLoggedThisMonth,
   );
   // Pro-rate the QS:cash mix from logged spend; fallback to all-cash.
-  const qsRatio = variableLoggedThisMonth > 0
-    ? quicksilverAccruedThisMonth / variableLoggedThisMonth
-    : 0;
-  const variableExpectedRemainingCash = variableExpectedRemaining * (1 - qsRatio);
+  const qsRatio =
+    variableLoggedThisMonth > 0
+      ? quicksilverAccruedThisMonth / variableLoggedThisMonth
+      : 0;
+  const variableExpectedRemainingCash =
+    variableExpectedRemaining * (1 - qsRatio);
   const variableExpectedRemainingQs = variableExpectedRemaining * qsRatio;
 
   // ---- One-time still to pay (non-deferred, unpaid, this month or undated) ----
   const oteRows = await db.select().from(oneTimeExpenses);
   let oneTimeStillToPay = 0;
-  const oneTimeStillToPayDetail: { id: number; description: string; amount: number; dueDate: string | null }[] = [];
+  const oneTimeStillToPayDetail: {
+    id: number;
+    description: string;
+    amount: number;
+    dueDate: string | null;
+  }[] = [];
   for (const o of oteRows) {
     if (o.deferred || o.paid) continue;
     const amt = parseFloat(o.amount);
@@ -688,15 +780,16 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   // Splitting these prevents a generous future-variable override from
   // making the headline far more negative than the user's actual position.
   const commitmentOutflowsRemaining = billsNotYetDebited + oneTimeStillToPay;
-  const commitmentBalance =
-    currentChecking + incomeStillToReceive - commitmentOutflowsRemaining;
+  const commitmentBalance = currentChecking - cycle.totalRequiredHold;
   const totalCashOutflowsRemaining =
     commitmentOutflowsRemaining + variableExpectedRemainingCash;
   const projectedEndOfMonthChecking =
     currentChecking + incomeStillToReceive - totalCashOutflowsRemaining;
 
   const daysSinceUpdate = lastBalanceUpdate
-    ? Math.floor((today.getTime() - new Date(lastBalanceUpdate).getTime()) / 86400000)
+    ? Math.floor(
+        (today.getTime() - new Date(lastBalanceUpdate).getTime()) / 86400000,
+      )
     : null;
 
   const round = (n: number) => Math.round(n * 100) / 100;
@@ -706,7 +799,9 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     monthEnd: monthEnd.toISOString().split("T")[0],
     // Starting point
     currentChecking: round(currentChecking),
-    lastBalanceUpdate: lastBalanceUpdate ? new Date(lastBalanceUpdate).toISOString() : null,
+    lastBalanceUpdate: lastBalanceUpdate
+      ? new Date(lastBalanceUpdate).toISOString()
+      : null,
     daysSinceUpdate,
     // Inflows
     incomeStillToReceive: round(incomeStillToReceive),
@@ -748,17 +843,42 @@ router.get("/dashboard/integrity-summary", async (_req, res): Promise<void> => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const checks: { name: string; status: "pass" | "warn" | "fail"; detail: string }[] = [];
+  const checks: {
+    name: string;
+    status: "pass" | "warn" | "fail";
+    detail: string;
+  }[] = [];
 
   // 1. Balance freshness
   const { balances } = await import("@workspace/db");
-  const [latestBalance] = await db.select().from(balances).where(eq(balances.accountType, "checking")).orderBy(desc(balances.asOfDate)).limit(1);
+  const [latestBalance] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
   if (!latestBalance) {
-    checks.push({ name: "Checking balance", status: "fail", detail: "No checking balance recorded." });
+    checks.push({
+      name: "Checking balance",
+      status: "fail",
+      detail: "No checking balance recorded.",
+    });
   } else {
-    const days = Math.floor((today.getTime() - new Date(latestBalance.asOfDate).getTime()) / 86400000);
-    if (days > 3) checks.push({ name: "Balance freshness", status: "fail", detail: `Updated ${days} days ago — must be ≤3.` });
-    else checks.push({ name: "Balance freshness", status: "pass", detail: `Updated ${days} day(s) ago.` });
+    const days = Math.floor(
+      (today.getTime() - new Date(latestBalance.asOfDate).getTime()) / 86400000,
+    );
+    if (days > 3)
+      checks.push({
+        name: "Balance freshness",
+        status: "fail",
+        detail: `Updated ${days} days ago — must be ≤3.`,
+      });
+    else
+      checks.push({
+        name: "Balance freshness",
+        status: "pass",
+        detail: `Updated ${days} day(s) ago.`,
+      });
   }
 
   // 2. Next payday — v8.0 dynamic derivation (7th/22nd). No assumption row
@@ -774,23 +894,59 @@ router.get("/dashboard/integrity-summary", async (_req, res): Promise<void> => {
 
   // 3. Active bills exist
   const allBills = await db.select().from(bills);
-  const active = allBills.filter((b) => b.includeInCycle && parseFloat(b.amount) > 0);
-  if (active.length === 0) checks.push({ name: "Active bills", status: "warn", detail: "No bills marked Include=TRUE." });
-  else checks.push({ name: "Active bills", status: "pass", detail: `${active.length} active bills.` });
+  const active = allBills.filter(
+    (b) => b.includeInCycle && parseFloat(b.amount) > 0,
+  );
+  if (active.length === 0)
+    checks.push({
+      name: "Active bills",
+      status: "warn",
+      detail: "No bills marked Include=TRUE.",
+    });
+  else
+    checks.push({
+      name: "Active bills",
+      status: "pass",
+      detail: `${active.length} active bills.`,
+    });
 
   // 4. No negative bills
   const negBills = allBills.filter((b) => parseFloat(b.amount) < 0);
-  if (negBills.length > 0) checks.push({ name: "Bill amounts non-negative", status: "fail", detail: `${negBills.length} bill(s) have negative amounts.` });
-  else checks.push({ name: "Bill amounts non-negative", status: "pass", detail: "All bills ≥ 0." });
+  if (negBills.length > 0)
+    checks.push({
+      name: "Bill amounts non-negative",
+      status: "fail",
+      detail: `${negBills.length} bill(s) have negative amounts.`,
+    });
+  else
+    checks.push({
+      name: "Bill amounts non-negative",
+      status: "pass",
+      detail: "All bills ≥ 0.",
+    });
 
   // 5. Base net income
-  const [incRow] = await db.select().from(assumptions).where(eq(assumptions.key, "base_net_income"));
-  if (!incRow || parseFloat(incRow.value) <= 0) checks.push({ name: "Base net income", status: "fail", detail: "Set in Settings." });
-  else checks.push({ name: "Base net income", status: "pass", detail: `$${parseFloat(incRow.value).toFixed(2)}/mo` });
+  const [incRow] = await db
+    .select()
+    .from(assumptions)
+    .where(eq(assumptions.key, "base_net_income"));
+  if (!incRow || parseFloat(incRow.value) <= 0)
+    checks.push({
+      name: "Base net income",
+      status: "fail",
+      detail: "Set in Settings.",
+    });
+  else
+    checks.push({
+      name: "Base net income",
+      status: "pass",
+      detail: `$${parseFloat(incRow.value).toFixed(2)}/mo`,
+    });
 
   const failCount = checks.filter((c) => c.status === "fail").length;
   const warnCount = checks.filter((c) => c.status === "warn").length;
-  const overall: "pass" | "warn" | "fail" = failCount > 0 ? "fail" : warnCount > 0 ? "warn" : "pass";
+  const overall: "pass" | "warn" | "fail" =
+    failCount > 0 ? "fail" : warnCount > 0 ? "warn" : "pass";
 
   res.json({ overall, failCount, warnCount, checks });
 });
