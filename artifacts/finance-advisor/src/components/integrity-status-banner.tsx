@@ -14,9 +14,10 @@ interface IntegrityCheck {
   detail: string;
 }
 
-// Engine: data + math + discipline (real-time signals you must act on).
-// Advisory: standing configuration & known decisions.
-const ENGINE_CHECKS = new Set([1, 2, 3, 4, 11, 12, 13]);
+// v9 Fix 4 — every emitted check counts as engine. Previous subset hid
+// real failures from the banner (e.g. stale-payday). Keep the set
+// explicit so future check numbers must be added intentionally.
+const ENGINE_CHECKS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 
 function pickWorst(
   checks: IntegrityCheck[],

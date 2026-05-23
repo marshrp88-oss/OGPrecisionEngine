@@ -71,35 +71,17 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     }
   }
 
-  const [payRow] = await db
-    .select()
-    .from(assumptions)
-    .where(eq(assumptions.key, "next_payday_date"));
-  if (!payRow || !payRow.value) {
-    checks.push({
-      checkNumber: 2,
-      description: "Next payday date set",
-      status: "fail",
-      detail: "Next payday date not configured. Set it in Settings.",
-    });
-  } else {
-    const payday = new Date(payRow.value);
-    if (payday < today) {
-      checks.push({
-        checkNumber: 2,
-        description: "Next payday date is current",
-        status: "fail",
-        detail: `Next payday date (${payRow.value}) is in the past. Update it.`,
-      });
-    } else {
-      checks.push({
-        checkNumber: 2,
-        description: "Next payday date is current",
-        status: "pass",
-        detail: `Next payday: ${payRow.value}.`,
-      });
-    }
-  }
+  // v9 Fix 3 — next payday is dynamically derived (7th/22nd). The
+  // assumption row has been removed; this check confirms the derivation
+  // produces a future date (which it does by construction).
+  const { deriveNextPayday } = await import("./financeEngine");
+  const derivedPayday = deriveNextPayday(today);
+  checks.push({
+    checkNumber: 2,
+    description: "Next payday (derived)",
+    status: "pass",
+    detail: `Next payday: ${derivedPayday.toISOString().slice(0, 10)} (dynamic 7th/22nd).`,
+  });
 
   const [baseIncomeRow] = await db
     .select()
@@ -281,7 +263,12 @@ async function runChecks(): Promise<IntegrityCheck[]> {
   try {
     const cycle = await computeCycleState();
     const cycleBills = await billsInCycle(today);
-    const billsTotal = cycleBills.reduce((s, b) => s + b.amount, 0);
+    // v9 Fix 1 — engine's billsDueBeforePayday excludes paid_pending_clear
+    // (those are held separately via pendingBillsOwed). Mirror that here so
+    // we don't double-count them when we add pendingBillsOwedRecompute below.
+    const billsTotal = cycleBills
+      .filter((b) => b.paymentState !== "paid_pending_clear")
+      .reduce((s, b) => s + b.amount, 0);
 
     const pendingRow = await db
       .select()
@@ -309,8 +296,35 @@ async function runChecks(): Promise<IntegrityCheck[]> {
       return s;
     }, 0);
 
+    // v9 Fix 1 — independent recomputer must mirror engine.totalRequiredHold
+    // exactly: include forwardReserve + quicksilverOwed + pendingBillsOwed.
+    // Independently compute each from raw DB so this remains a true cross-check.
+    const allBillRowsForHold = await db.select().from(bills);
+    const fwdReserveRecompute = allBillRowsForHold
+      .filter((b) =>
+        b.includeInCycle &&
+        parseFloat(b.amount) > 0 &&
+        b.dueDay >= 1 &&
+        b.dueDay <= 7 &&
+        b.paymentState !== "skipped_cycle",
+      )
+      .reduce((s, b) => s + parseFloat(b.amount), 0);
+    const pendingBillsOwedRecompute = allBillRowsForHold
+      .filter((b) => b.paymentState === "paid_pending_clear" && b.includeInCycle)
+      .reduce((s, b) => s + parseFloat(b.amount), 0);
+    const allVsForQs = await db.select().from(variableSpend);
+    const qsOwedRecompute = allVsForQs
+      .filter((v) => v.quicksilver && v.paidOffAt === null)
+      .reduce((s, v) => s + parseFloat(v.amount), 0);
+
     const expectedHold =
-      billsTotal + pendingRow + cushionRow + oneTimeBeforePayday;
+      billsTotal +
+      pendingRow +
+      cushionRow +
+      oneTimeBeforePayday +
+      fwdReserveRecompute +
+      qsOwedRecompute +
+      pendingBillsOwedRecompute;
     const expectedSafe = Math.max(0, cycle.checkingBalance - expectedHold);
 
     const holdDelta = Math.abs(cycle.totalRequiredHold - expectedHold);

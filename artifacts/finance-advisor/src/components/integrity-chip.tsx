@@ -18,8 +18,11 @@ interface IntegrityCheck {
   detail: string;
 }
 
-// Engine: data + math + discipline. Advisory: standing configuration.
-const ENGINE_CHECKS = new Set([1, 2, 3, 4, 11, 12, 13]);
+// v9 Fix 4 — every emitted check counts toward the pill. Previously a
+// hardcoded subset {1,2,3,4,11,12,13} silently hid failures from other
+// checks (e.g. stale-payday FAIL was invisible). The set now contains
+// every check number actually emitted so the badge can never undercount.
+const ENGINE_CHECKS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 
 export function IntegrityChip({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);

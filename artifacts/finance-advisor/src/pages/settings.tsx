@@ -32,7 +32,6 @@ interface SettingsGroup {
 
 const ASSUMPTION_META: Record<string, AssumptionMeta> = {
   // Cycle group
-  next_payday_date: { label: "Next Payday Date", description: "Your next scheduled paycheck (7th or 22nd)" },
   base_net_income: { label: "Base Net Income", description: "Monthly take-home after federal/state taxes (biweekly pay × 2)", prefix: "$" },
   variable_spend_until_payday: { label: "Variable Spend Until Payday", description: "Already-spent variable amount in current cycle", prefix: "$" },
   quicksilver_balance_owed: { label: "QuickSilver Owed", description: "Outstanding credit card balance to pay mid-next month", prefix: "$" },
@@ -58,7 +57,7 @@ const GROUPS: SettingsGroup[] = [
     id: "cycle",
     title: "Cycle",
     description: "Paycheck timing, net income, and current-cycle balances that drive Safe to Spend.",
-    keys: ["next_payday_date", "base_net_income", "variable_spend_until_payday", "quicksilver_balance_owed", "month_length_days"],
+    keys: ["base_net_income", "variable_spend_until_payday", "quicksilver_balance_owed", "month_length_days"],
   },
   {
     id: "reserves",

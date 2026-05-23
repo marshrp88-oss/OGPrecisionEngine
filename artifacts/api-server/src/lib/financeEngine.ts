@@ -215,43 +215,23 @@ export async function computeCycleState(asOf?: Date): Promise<CycleState> {
     nextPaydayNominal,
   );
 
-  // v8.2 — Forward Reserve covers ONE FULL NEXT PAY CYCLE (14 days).
-  // Reserve = sum of bill amounts whose next occurrence falls in the
-  // 14-day window AFTER nextPaydayNominal, PLUS 14 days of prorated
-  // variable-spend cap. Aligns with the bi-weekly pay rhythm: every
-  // paycheck must reserve enough to bridge the user to the NEXT paycheck.
-  //
-  // (v8.1 used a 7-day window which under-captured the second week of
-  //  the next pay cycle — bills due Jun 12-19 silently dropped.)
-  //
-  // Window: (nextPaydayNominal, nextPaydayNominal + 14 days] (exclusive on
-  // the left so the payday itself doesn't double-count). For each active,
-  // included monthly bill we compute the next occurrence strictly after
-  // the payday and check membership in the window.
-  const forwardReserveWindowDays = 14;
-  const windowStart = nextPaydayNominal; // exclusive
-  const windowEnd = new Date(nextPaydayNominal.getTime() + forwardReserveWindowDays * 86400000); // inclusive
-  // Use the shared engine helper for proper month-length clamping (dueDay
-  // 29/30/31 in short months). Passing `windowStart + 1 day` as the
-  // reference date yields the next occurrence strictly after the payday.
-  const afterPayday = new Date(windowStart.getTime() + 86400000);
+  // v9 — Forward Reserve SIMPLIFIED (Playbook v9 Fix 2).
+  // Sum of include=TRUE bill amounts with dueDay 1..7 (the first week of
+  // the next calendar month). NO 14-day window. NO variable buffer.
+  // NO dedup against current cycle. Just next month's day-1–7 bills.
+  // Rationale: cycle-based dedup was the bug class that produced engine
+  // drift; the math is now stable, auditable, and matches the user's
+  // mental model ("reserve next month's first-week bills so payday
+  // doesn't immediately go red").
+  void variableSpendCap; void monthLengthDays; // intentionally unused here
   let forwardReserveBillsTotal = 0;
   for (const b of enriched) {
     if (!b.isActivePeriod || !b.includeInCycle || b.amount <= 0) continue;
-    // Skip bills already in current cycle hold (strict membership only —
-    // late_unpaid stickiness must NOT suppress next month's instance).
-    if (b.countsThisCycleStrict) continue;
-    // v8.2: also skip paid_pending_clear (already held via pendingBillsOwed).
-    if (b.paymentState === "paid_pending_clear") continue;
-    const occ = billNextDueDate(afterPayday, b.dueDay, true);
-    if (!occ) continue;
-    if (occ.getTime() > windowStart.getTime() && occ.getTime() <= windowEnd.getTime()) {
-      forwardReserveBillsTotal += b.amount;
-    }
+    if (b.paymentState === "skipped_cycle") continue;
+    if (b.dueDay < 1 || b.dueDay > 7) continue;
+    forwardReserveBillsTotal += b.amount;
   }
-  const forwardReserveVariableProration =
-    (variableSpendCap / monthLengthDays) * forwardReserveWindowDays;
-  const forwardReserve = forwardReserveBillsTotal + forwardReserveVariableProration;
+  const forwardReserve = forwardReserveBillsTotal;
 
   // v8.0 Final Fix — QuickSilver settlement hold. Every QS row (quicksilver=
   // true) that has NOT been marked paid-off represents a dollar that has left
@@ -441,11 +421,13 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     Math.round(((daysToPayday) / monthLengthDays) * variableSpendCap * 100) / 100,
   );
 
-  const forwardReserveAmount = engineForwardReserve(
-    allActiveEngineBills,
-    variableSpendCap,
-    monthLengthDays,
-  );
+  // v9 — match dashboard engine: Forward Reserve = sum of include=TRUE
+  // bills with dueDay 1..7 of next calendar month. No buffer. No window.
+  void engineForwardReserve; // legacy helper, intentionally bypassed
+  void allActiveEngineBills;
+  const forwardReserveAmount = enriched
+    .filter((b) => b.isActivePeriod && b.includeInCycle && b.amount > 0 && b.dueDay >= 1 && b.dueDay <= 7 && b.paymentState !== "skipped_cycle")
+    .reduce((s, b) => s + b.amount, 0);
 
   // PLACEHOLDER (per user direction 2026-04-24): Monthly Savings Estimate is
   // expressed as Discretionary minus a fixed $100 buffer. Rationale: Monthly
