@@ -268,12 +268,17 @@ export async function computeRequiredHold(asOf?: Date): Promise<RequiredHoldBrea
   const cycleBills = enriched.filter(
     (b) => b.countsThisCycle && b.paymentState !== "paid_pending_clear",
   );
+  // v9 Fix — Forward Reserve is dueDay-based: it holds the NEXT occurrence of
+  // a recurring day-1..7 bill. The bill row's `paymentState` is a
+  // per-occurrence flag that refers to the CURRENT period's instance. Marking
+  // May's rent paid_pending_clear must not suppress June's rent from the
+  // forward reserve. Only `skipped_cycle` (an explicit "exclude this cycle"
+  // signal) is honored here.
   const forwardBills = enriched.filter(
     (b) =>
       b.isActivePeriod &&
       b.includeInCycle &&
       b.amount > 0 &&
-      b.paymentState !== "paid_pending_clear" &&
       b.paymentState !== "skipped_cycle" &&
       b.dueDay >= 1 &&
       b.dueDay <= 7,
@@ -312,11 +317,21 @@ export async function computeRequiredHold(asOf?: Date): Promise<RequiredHoldBrea
     .filter((v) => v.quicksilver && v.paidOffAt === null)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
 
-  // Pending Bill Payments hold: bills marked paid_pending_clear haven't actually
-  // debited yet. Held here (not in billsDueBeforePayday) so the dollar is held once.
+  // Pending Bill Payments hold: bills marked paid_pending_clear haven't
+  // actually debited yet. v9 Fix — dedupe against `billsInHold`: now that
+  // forwardBills no longer filters out paid_pending_clear, a recurring bill
+  // already counted via the cycle/forward window would otherwise be held
+  // twice. Bills outside the cycle/forward window (e.g. Electric dueDay=16
+  // marked paid_pending_clear) continue to be held here, exactly as before.
   const allBillRows = await db.select().from(bills);
+  const inHoldIds = new Set(billsInHold.map((b) => b.id));
   const pendingBillsOwed = allBillRows
-    .filter((b) => b.paymentState === "paid_pending_clear" && b.includeInCycle)
+    .filter(
+      (b) =>
+        b.paymentState === "paid_pending_clear" &&
+        b.includeInCycle &&
+        !inHoldIds.has(b.id),
+    )
     .reduce((s, b) => s + parseFloat(b.amount), 0);
 
   const totalRequiredHold =
