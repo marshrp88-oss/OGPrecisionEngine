@@ -1781,13 +1781,15 @@ function VariableEstimateEditor({
     committedRef.current = true;
     const trimmed = draft.trim();
     const parsed = trimmed === "" ? null : parseFloat(trimmed);
-    // F1 — reject zero too. Storing "0" makes the pill sticky at "$0 of $0"
-    // (F = max(0, 0 − L) = 0 for any L), and the user almost always means
-    // "reset to cap" rather than "force E = 0 forever." Direct them to the
-    // reset path (clear the field / use the reset button) instead.
-    if (trimmed !== "" && (parsed === null || isNaN(parsed) || parsed <= 0)) {
+    // Allow zero as a deliberate user-stated total. "I plan to spend $0 more
+    // this month" is a legitimate state: F = max(0, 0 − L) = 0 → headline
+    // returns to the no-variable-reservation baseline. The pill's red
+    // "(spent $L)" chip surfaces the overspend case when L > E. Empty field
+    // is the explicit reset-to-cap path; entering "0" is the explicit
+    // "reserve nothing more" path. Only negative values are rejected.
+    if (trimmed !== "" && (parsed === null || isNaN(parsed) || parsed < 0)) {
       toast({
-        title: "Enter a positive number or leave blank to reset to cap",
+        title: "Enter a non-negative number or leave blank to reset",
         variant: "destructive",
       });
       setDraft(E.toFixed(2));
