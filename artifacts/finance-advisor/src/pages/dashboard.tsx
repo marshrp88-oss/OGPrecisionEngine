@@ -1986,6 +1986,17 @@ function CashPositionCard() {
       return r.json();
     },
   });
+  // A+E hint — pull trailingDailyRate + daysRemainingInMonth from the
+  // discretionary query that's already loaded by the parent Dashboard.
+  // React Query dedupes on key — no extra network round-trip.
+  const { data: discretionary } = useQuery<DiscretionaryResp>({
+    queryKey: ["dashboard-discretionary"],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/dashboard/discretionary`);
+      if (!r.ok) throw new Error("Failed to load discretionary");
+      return r.json();
+    },
+  });
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
@@ -2039,6 +2050,31 @@ function CashPositionCard() {
   const headColor = head < 0 ? "text-destructive" : head < 100 ? "text-warning" : "text-success";
   const eomColor = eom < 0 ? "text-destructive" : eom < 100 ? "text-warning" : "text-success";
   const borderColor = head < 0 ? "border-l-destructive" : head < 100 ? "border-l-warning" : "border-l-success";
+
+  // A+E pace hint — informational only. Headline math unchanged; this sublabel
+  // tells the user how F compares to trailing burn so they can decide whether
+  // to lower E. Suppressed when:
+  //   • discretionary cache hasn't loaded (paceImpliedF null)
+  //   • pace and reserved F are within $1 (noise; no signal)
+  //   • pace > reserved F (no over-reservation; pill surfaces overspend separately)
+  // When dayOfMonth < 7 OR L = 0, the route's trailingDailyRate falls back to
+  // variableCap/monthLengthDays; label that "Cap-rate pace" so it isn't sold
+  // as observed burn.
+  const trailingRate = discretionary?.trailingDailyRate ?? null;
+  const daysLeft = discretionary?.daysRemainingInMonth ?? null;
+  const logged = discretionary?.variableLoggedThisMonth ?? null;
+  const localDayOfMonth = new Date().getDate();
+  const isCapRateFallback =
+    logged !== null && (localDayOfMonth < 7 || logged === 0);
+  const paceImpliedF =
+    trailingRate !== null && daysLeft !== null
+      ? trailingRate * daysLeft
+      : null;
+  const reservedF = data.variableExpectedRemaining;
+  const showPaceHint =
+    paceImpliedF !== null &&
+    Math.abs(paceImpliedF - reservedF) >= 1 &&
+    paceImpliedF < reservedF;
 
   return (
     <section
@@ -2101,6 +2137,18 @@ function CashPositionCard() {
             <span>− Estimated future variable spend (full)</span>
             <span>−{formatCurrency(data.variableExpectedRemaining)}</span>
           </div>
+          {showPaceHint && (
+            <p
+              className="text-[10px] text-muted-foreground/70 italic -mt-1 pl-2"
+              data-testid="text-pace-hint"
+            >
+              {isCapRateFallback ? "Cap-rate pace" : "Trailing pace"}:{" "}
+              {formatCurrency(trailingRate!)}/day · {daysLeft} day
+              {daysLeft === 1 ? "" : "s"} left · pace-implied F ≈{" "}
+              {formatCurrency(paceImpliedF!)}. F currently reserves{" "}
+              {formatCurrency(reservedF)} (full E − L). Lower E to release the gap.
+            </p>
+          )}
           <div className={cn("flex justify-between font-bold border-t border-border/30 pt-2 mt-1", headColor)}>
             <span>= Available to move to HYSA / investments</span>
             <span>{formatCurrency(head)}</span>
