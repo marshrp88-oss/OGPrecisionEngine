@@ -788,6 +788,11 @@ function BillsCycleColumn({
       <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         Bills in Cycle
       </h3>
+      <p className="text-[10px] text-muted-foreground/70 italic -mt-1">
+        Bills due before next payday. This is the bills portion only; the full
+        Required Hold (incl. one-time, QS owed, cushion, etc.) is broken out in
+        the Cash Position math chain above.
+      </p>
       {rows.length === 0 ? (
         <p className="text-xs text-muted-foreground font-mono">
           — No bills in current cycle.
@@ -811,7 +816,7 @@ function BillsCycleColumn({
             ))}
             <tr className="border-t border-border/60">
               <td colSpan={2} className="pt-2 text-sm font-semibold">
-                Total hold
+                Bills portion of hold
               </td>
               <td className="pt-2 text-right text-sm font-semibold">
                 {formatCurrency(totalHold)}
@@ -2234,7 +2239,10 @@ function CashPositionCard() {
         {data.billsNotYetDebitedDetail.length > 0 && (
           <div className="mt-5 pt-4 border-t border-border/30">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-              Bills not yet debited — toggle if money already left
+              Bills this month, not yet debited — toggle if money already left
+            </p>
+            <p className="text-[10px] text-muted-foreground/70 italic mb-2 normal-case tracking-normal">
+              Calendar-month informational list. The cycle hold above is what drives the headline.
             </p>
             <ul className="space-y-1.5">
               {data.billsNotYetDebitedDetail
@@ -2292,7 +2300,10 @@ function CashPositionCard() {
         {data.billsAlreadyDebitedDetail.length > 0 && (
           <div className="mt-4 pt-3 border-t border-border/30">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-              Already debited this month ({formatCurrency(data.billsAlreadyDebited)})
+              Bills already paid this month ({formatCurrency(data.billsAlreadyDebited)})
+            </p>
+            <p className="text-[10px] text-muted-foreground/70 italic mb-2 normal-case tracking-normal">
+              Already reflected in &ldquo;Checking now&rdquo; — not subtracted again.
             </p>
             <ul className="space-y-1">
               {data.billsAlreadyDebitedDetail
