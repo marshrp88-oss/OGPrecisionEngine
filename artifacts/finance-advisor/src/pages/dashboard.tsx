@@ -607,6 +607,7 @@ function MarkQsPaidButton({ amount }: { amount: number }) {
         queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
         queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+        queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
       },
     },
   });
@@ -863,6 +864,7 @@ function OneTimeColumn() {
           queryClient.invalidateQueries({ queryKey: getGetOneTimeExpensesQueryKey() });
           queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
           queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
           toast({ title: paid ? "Marked unpaid" : "Marked paid" });
         },
       },
@@ -1308,6 +1310,7 @@ function UpdateBalanceDialog() {
           }
           queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
           queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
           queryClient.invalidateQueries({ queryKey: ["dashboard-integrity"] });
           queryClient.invalidateQueries({ queryKey: ["bills"] });
           setOpen(false);
@@ -1520,6 +1523,10 @@ function LogSpendDialog() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
           queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          // QS variable rows feed quicksilverOwed → totalRequiredHold → headline.
+          // Cash rows don't, but a redundant refetch is cheap; invalidate uniformly.
+          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
           setOpen(false);
           setForm((f) => ({ ...f, amount: "", notes: "" }));
           toast({ title: "Variable entry logged" });
@@ -1657,6 +1664,7 @@ function OneTimeQuickAddDialog() {
             queryKey: getGetDashboardCycleQueryKey(),
           });
           queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
           setOpen(false);
           setForm({ description: "", amount: "", dueDate: "", notes: "" });
           toast({ title: "One-time expense added" });
