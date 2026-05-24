@@ -445,16 +445,17 @@ export default function Dashboard() {
                     value={discretionary.variableLoggedThisMonth}
                     negative
                   />
-                  {/* v10 — single editor on Overview pill. This row is now
-                      read-only; tap the "Variable remaining" pill in the
-                      Safe-to-Spend block above to change the month estimate. */}
+                  {/* R-as-truth — this row is the reservation R (what
+                      Available-to-Save subtracts). Decoupled from L: cash
+                      variable rows are audit-only; QS rows still flow into
+                      the hold via the sealed engine path. */}
                   <Row
-                    label={`− Variable expected remaining (F = max(0, E − logged))`}
+                    label={`− Variable reserved (R)`}
                     value={discretionary.variableExpectedRemaining}
                     negative
                   />
                   <p className="text-[10px] text-muted-foreground/70 italic -mt-1 pl-2">
-                    Edit E (month estimate) via the &ldquo;Variable remaining&rdquo; pill above. F recomputes live.
+                    Edit R via the &ldquo;Variable reserved&rdquo; pill above. Cash variable rows are audit-only; QS rows still flow into the hold.
                   </p>
                   <Row
                     label={`− One-time this month (${formatCurrency(discretionary.oneTimePaidThisMonth)} paid; ${formatCurrency(discretionary.oneTimeDeferredTotal)} deferred excluded)`}
@@ -546,14 +547,15 @@ function SituationBlock({
           </p>
           {discretionary && (
             <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 text-xs font-mono">
-              {/* v10 — editable month-total estimate E. Pill shows "F of E"
-                  where F = max(0, E − loggedMTD). Tap E to edit; F recomputes
-                  live. Reset clears the override row → E falls back to
-                  variable_spend_cap ($600 default). E never enters the cash
-                  hold; F is a projection input only. See the no-double-count
-                  comment in engine.ts:monthVariableObligationHeadline. */}
+              {/* R-as-truth — editable reservation R. Pill shows R as a
+                  single number. Tap to edit; tap Prorate for a time-aware
+                  cap × daysRemaining ÷ daysInMonth suggestion. Reset clears
+                  the override row → R falls back to variable_spend_cap
+                  ($600 default). R subtracts directly from Available-to-Save.
+                  Cash variable rows are audit-only; QS rows flow into the
+                  hold via sealed engine (quicksilverOwed). */}
               <VariableEstimateEditor
-                E={
+                R={
                   discretionary.plannedVariableRemainingOverride ??
                   discretionary.variableCap
                 }
@@ -562,6 +564,8 @@ function SituationBlock({
                   discretionary.plannedVariableRemainingOverride !== null
                 }
                 fallbackCap={discretionary.variableCap}
+                daysRemaining={discretionary.daysRemainingInMonth}
+                daysInMonth={discretionary.discipline?.daysInMonth ?? 30}
               />
             </div>
           )}
@@ -1746,53 +1750,61 @@ function OneTimeQuickAddDialog() {
 // Shared math row (used by Zone 3 tabs)
 // ---------------------------------------------------------------------------
 
-// v10 — Variable remaining pill on Overview. Tap the right-hand number ($E)
-// to edit the month total estimate. F (left-hand number) = max(0, E − logged)
-// is derived and read-only. When L > E the pill surfaces "spent $L" in red so
-// overspend is visible without polluting F. Reset clears the override → E
-// falls back to variable_spend_cap.
+// R-as-truth — Variable reserved pill on Overview. Tap the number to edit
+// R directly. R is what Available-to-Save subtracts from commitmentBalance.
+// The log feeds nothing here; it's an audit history only. When L > R the
+// pill surfaces "(spent $L)" in red as awareness. Prorate button sets R to
+// cap × daysRemaining / daysInMonth (time-aware suggestion the user can
+// then keep, adjust, or override). Reset clears the override → R falls
+// back to variable_spend_cap.
 function VariableEstimateEditor({
-  E,
+  R,
   logged,
   isOverridden,
   fallbackCap,
+  daysRemaining,
+  daysInMonth,
 }: {
-  E: number;
+  R: number;
   logged: number;
   isOverridden: boolean;
   fallbackCap: number;
+  daysRemaining: number;
+  daysInMonth: number;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(E.toFixed(2));
+  const [draft, setDraft] = useState(R.toFixed(2));
   const committedRef = useRef(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const updateMut = useUpdateAssumption();
 
   useEffect(() => {
-    if (!editing) setDraft(E.toFixed(2));
-  }, [E, editing]);
+    if (!editing) setDraft(R.toFixed(2));
+  }, [R, editing]);
 
-  const F = Math.max(0, E - logged);
-  const overBy = Math.max(0, logged - E);
+  const overBy = Math.max(0, logged - R);
+
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+    queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+  };
 
   const commit = () => {
     if (committedRef.current) return;
     committedRef.current = true;
     const trimmed = draft.trim();
     const parsed = trimmed === "" ? null : parseFloat(trimmed);
-    // Allow zero as a deliberate user-stated total. "I plan to spend $0 more
-    // this month" is a legitimate state: F = max(0, 0 − L) = 0 → headline
-    // returns to the no-variable-reservation baseline. The pill's red
-    // "(spent $L)" chip surfaces the overspend case when L > E. Empty field
-    // is the explicit reset-to-cap path; entering "0" is the explicit
-    // "reserve nothing more" path. Only negative values are rejected.
+    // R = literal user input. Zero is a deliberate "reserve nothing more"
+    // state (headline returns to baseline). Empty field is the explicit
+    // reset-to-cap path. Only negative values are rejected.
     if (trimmed !== "" && (parsed === null || isNaN(parsed) || parsed < 0)) {
       toast({
         title: "Enter a non-negative number or leave blank to reset",
         variant: "destructive",
       });
-      setDraft(E.toFixed(2));
+      setDraft(R.toFixed(2));
       setEditing(false);
       return;
     }
@@ -1803,14 +1815,12 @@ function VariableEstimateEditor({
       },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
-          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+          invalidateAll();
           setEditing(false);
         },
         onError: () => {
           toast({ title: "Update failed", variant: "destructive" });
-          setDraft(E.toFixed(2));
+          setDraft(R.toFixed(2));
           setEditing(false);
         },
       },
@@ -1825,23 +1835,42 @@ function VariableEstimateEditor({
       },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
-          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+          invalidateAll();
           toast({ title: `Reset to cap (${formatCurrency(fallbackCap)})` });
         },
       },
     );
   };
 
+  const prorate = () => {
+    // Time-aware suggestion: cap × (days remaining / days in month).
+    // Floor at $0. Round to cents.
+    const safeDays = Math.max(1, daysInMonth);
+    const prorated =
+      Math.round(
+        Math.max(0, (fallbackCap * daysRemaining) / safeDays) * 100,
+      ) / 100;
+    updateMut.mutate(
+      {
+        key: "planned_variable_remaining_override",
+        data: { value: String(prorated) },
+      },
+      {
+        onSuccess: () => {
+          invalidateAll();
+          toast({
+            title: `Prorated to ${formatCurrency(prorated)} (${daysRemaining}/${daysInMonth} days × cap)`,
+          });
+        },
+        onError: () => toast({ title: "Prorate failed", variant: "destructive" }),
+      },
+    );
+  };
+
   return (
     <div className="flex justify-between items-center gap-2">
-      <span className="text-muted-foreground">Variable remaining</span>
+      <span className="text-muted-foreground">Variable reserved</span>
       <span className="flex items-center gap-1.5">
-        <span className="text-foreground font-medium" data-testid="text-variable-F">
-          {formatCurrency(F)}
-        </span>
-        <span className="text-muted-foreground">of</span>
         {editing ? (
           <input
             type="number"
@@ -1861,22 +1890,22 @@ function VariableEstimateEditor({
               }
               if (e.key === "Escape") {
                 committedRef.current = true;
-                setDraft(E.toFixed(2));
+                setDraft(R.toFixed(2));
                 setEditing(false);
               }
             }}
             className="w-24 text-right font-mono bg-background border border-border rounded px-2 py-0.5 text-xs"
-            data-testid="input-variable-E"
+            data-testid="input-variable-R"
           />
         ) : (
           <button
             type="button"
             onClick={() => setEditing(true)}
             className="font-mono hover:underline decoration-dotted underline-offset-4 text-foreground"
-            data-testid="button-edit-variable-E"
-            title="Tap to edit your month total variable estimate"
+            data-testid="button-edit-variable-R"
+            title="Tap to edit how much you've reserved for variable spending"
           >
-            {formatCurrency(E)}
+            {formatCurrency(R)}
           </button>
         )}
         {overBy > 0 && !editing && (
@@ -1887,12 +1916,23 @@ function VariableEstimateEditor({
             (spent {formatCurrency(logged)})
           </span>
         )}
+        {!editing && (
+          <button
+            type="button"
+            onClick={prorate}
+            className="text-[9px] text-muted-foreground hover:text-foreground uppercase tracking-wider ml-1 border border-border rounded px-1.5 py-0.5"
+            data-testid="button-prorate-variable-R"
+            title={`Set R to cap × days remaining ÷ days in month (${daysRemaining}/${daysInMonth})`}
+          >
+            prorate
+          </button>
+        )}
         {isOverridden && !editing && (
           <button
             type="button"
             onClick={reset}
             className="text-[9px] text-muted-foreground hover:text-foreground uppercase tracking-wider ml-1"
-            data-testid="button-reset-variable-E"
+            data-testid="button-reset-variable-R"
           >
             reset
           </button>
@@ -2189,7 +2229,7 @@ function CashPositionCard() {
             <span>{formatCurrency(data.commitmentBalance)}</span>
           </div>
           <div className="flex justify-between text-destructive">
-            <span>− Estimated future variable spend (full F)</span>
+            <span>− Variable reserved (R)</span>
             <span>−{formatCurrency(data.variableExpectedRemaining)}</span>
           </div>
           {showPaceHint && (
@@ -2199,9 +2239,9 @@ function CashPositionCard() {
             >
               {isCapRateFallback ? "Cap-rate pace" : "Trailing pace"}:{" "}
               {formatCurrency(trailingRate!)}/day · {daysLeft} day
-              {daysLeft === 1 ? "" : "s"} left · pace-implied F ≈{" "}
-              {formatCurrency(paceImpliedF!)}. F currently reserves{" "}
-              {formatCurrency(reservedF)} (full E − L). Lower E to release the gap.
+              {daysLeft === 1 ? "" : "s"} left · pace-implied R ≈{" "}
+              {formatCurrency(paceImpliedF!)}. R currently reserves{" "}
+              {formatCurrency(reservedF)}. Tap <strong>Prorate</strong> on the pill to set R to the pace-implied value.
             </p>
           )}
           <div className={cn("flex justify-between font-bold border-t border-border/30 pt-2 mt-1", headColor)}>
@@ -2232,7 +2272,7 @@ function CashPositionCard() {
               <span>{formatCurrency(eom)}</span>
             </div>
             <p className="text-[10px] text-muted-foreground/70 italic">
-              Variable estimate (E) editable via the &ldquo;Variable remaining&rdquo; pill on the Overview headline above. F (estimated future variable) updates live as you log spend.
+              Variable reservation (R) editable via the &ldquo;Variable reserved&rdquo; pill on the Overview headline above. Cash portion shown here is R split by the logged QS:cash mix so the projection stays in sync with the headline.
             </p>
           </div>
         )}

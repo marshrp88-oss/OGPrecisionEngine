@@ -19,7 +19,6 @@ import {
   VARIABLE_SPEND_CAP,
   Bill as EngineBill,
   commissionTakeHome,
-  monthVariableObligationHeadline,
 } from "@workspace/finance";
 
 // NOTE: Playbook §1.1 (Forward Reserve subtracted from Safe to Spend) is now
@@ -347,18 +346,22 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
 
-  // v10 — variable model:
-  //   E = planned_variable_remaining_override (legacy key name; current
-  //       meaning = TOTAL month estimate) if set, else variable_spend_cap.
-  //   L = variableLoggedThisMonth (sum of variable_spend rows this month).
-  //   monthVariableObligation = max(L, E)            — via engine helper.
-  //   F (future variable still to spend) = max(0, E − L) = obligation − L.
-  // F is what the projection layer subtracts from Available-to-Save and
-  // Projected EOM. F is NEVER added to totalRequiredHold; quicksilverOwed
-  // (logged-only) carries the hold side. F and quicksilverOwed are disjoint
-  // by construction — see engine.ts:monthVariableObligationHeadline for the
-  // no-double-count proof. Trailing daily rate is preserved for display
-  // analytics (burn pace) only — never feeds the headline.
+  // R-as-truth variable model:
+  //   R = planned_variable_remaining_override if set, else variable_spend_cap.
+  //   R is the user's stated reservation — what they've decided to set aside
+  //   for variable spending the rest of the month. Edited via the Overview
+  //   "Variable reserved" pill (with Prorate one-tap helper that suggests
+  //   cap × daysRemaining / daysInMonth).
+  // R subtracts directly from Available-to-Save (headline). It also drives
+  // Projected EOM via qsRatio split of logged spend (variableExpectedRemainingCash).
+  //   L = variableLoggedThisMonth — AUDIT TOTAL ONLY. Does NOT feed R or the
+  //   headline. Surfaces in the pill as a "(spent $L)" awareness chip when
+  //   L > R, and in the Discretionary tab as a flow analytic.
+  // QuickSilver-flagged variable_spend rows STILL feed quicksilverOwed via
+  // the sealed totalRequiredHold path — that's real card debt, not a
+  // projection. Adding/deleting a CASH variable row leaves the headline
+  // unchanged; adding/deleting a QS row moves it via quicksilverOwed.
+  // Trailing daily rate is preserved for display analytics (burn pace) only.
   const dayOfMonth = today.getDate();
   const daysInMonth = monthEnd.getDate();
   const daysRemainingInMonth = Math.max(0, daysInMonth - dayOfMonth + 1);
@@ -377,17 +380,14 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     0,
     variableCap - variableLoggedThisMonth,
   );
-  // Fix 2: headline routed through engine helper (single source of truth).
-  const monthVariableObligation = monthVariableObligationHeadline(
-    variableLoggedThisMonth,
-    variableCap,
-    plannedVariableRemainingOverride,
-  );
-  // Expected remaining = obligation − logged (≥ 0). Surfaced for UI rows.
-  const variableExpectedRemaining = Math.max(
-    0,
-    monthVariableObligation - variableLoggedThisMonth,
-  );
+  // R-as-truth: variableExpectedRemaining IS the user's stored reservation
+  // (override) directly, falling back to cap when unset. Decoupled from L —
+  // logging/deleting cash variable rows does not change this value.
+  const variableExpectedRemaining =
+    plannedVariableRemainingOverride !== null
+      ? Math.max(0, plannedVariableRemainingOverride)
+      : variableCap;
+  const monthVariableObligation = variableExpectedRemaining; // analytics alias
   const variableRemainingThisMonth = variableExpectedRemaining; // back-compat
 
   // ============================================================
@@ -712,11 +712,15 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     }
   }
 
-  // ---- Variable expected remaining (cash portion only) ----
-  // The QuickSilver-flagged portion of variable spend hits the card, not
-  // checking. We subtract only the non-QS planned remaining from checking.
-  // Conservative approach: assume the planned remaining mirrors the current
-  // logged QS:cash mix.
+  // ---- R-as-truth: variable reservation drives the headline ----
+  // variableExpectedRemaining = R = the user's stored reservation (override
+  // assumption), falling back to variable_spend_cap when unset. Decoupled
+  // from L — adding/deleting CASH variable rows does NOT change R or the
+  // headline. QuickSilver-flagged rows still flow into quicksilverOwed via
+  // the sealed totalRequiredHold path; that's real card debt.
+  // L is still computed: used (a) for the qsRatio split below so Projected
+  // EOM stays consistent with R, (b) for the pill's "(spent $L)" overspend
+  // chip, (c) for Discretionary tab analytics.
   const allVs = await db.select().from(variableSpend);
   const monthVs = allVs.filter((v) => {
     const w = new Date(v.weekOf);
@@ -729,16 +733,12 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   const quicksilverAccruedThisMonth = monthVs
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
-  const monthVariableObligation = monthVariableObligationHeadline(
-    variableLoggedThisMonth,
-    variableCap,
-    plannedVariableRemainingOverride,
-  );
-  const variableExpectedRemaining = Math.max(
-    0,
-    monthVariableObligation - variableLoggedThisMonth,
-  );
-  // Pro-rate the QS:cash mix from logged spend; fallback to all-cash.
+  const variableExpectedRemaining =
+    plannedVariableRemainingOverride !== null
+      ? Math.max(0, plannedVariableRemainingOverride)
+      : variableCap;
+  // Pro-rate R into cash and QS portions using the logged QS:cash mix so
+  // Projected EOM stays in sync with the headline (Q2 of R-as-truth design).
   const qsRatio =
     variableLoggedThisMonth > 0
       ? quicksilverAccruedThisMonth / variableLoggedThisMonth
@@ -781,14 +781,14 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   // making the headline far more negative than the user's actual position.
   const commitmentOutflowsRemaining = billsNotYetDebited + oneTimeStillToPay;
   const commitmentBalance = currentChecking - cycle.totalRequiredHold;
-  // v10 — Available to Save subtracts FULL F (estimated future variable),
-  // not just F_cash. Rationale: this is the savings-decision headline;
-  // conservatism wins. The QS portion of F will eventually settle from
-  // checking via a statement payment, so we don't want to tempt a sweep
-  // that we'd then have to claw back from HYSA. Projected EOM keeps F_cash
-  // only because it's a cash-trajectory number, not a save-decision one.
-  // F never enters totalRequiredHold — it's unlogged future spend, disjoint
-  // from quicksilverOwed (logged-only). See engine helper for the proof.
+  // R-as-truth — Available to Save subtracts R (the user's stored
+  // reservation). R is decoupled from L; cash variable rows logged do not
+  // move this number. QS rows DO move the headline via the hold path
+  // (quicksilverOwed → totalRequiredHold → commitmentBalance), because
+  // unpaid QS card debt is real money the user owes; that's a sealed-engine
+  // invariant we preserve.
+  // Projected EOM uses R split by the logged qsRatio (cash portion only)
+  // so the cash-trajectory number stays consistent with the headline.
   const availableToInvest = commitmentBalance - variableExpectedRemaining;
   const totalCashOutflowsRemaining =
     commitmentOutflowsRemaining + variableExpectedRemainingCash;
@@ -832,12 +832,12 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     // Totals
     commitmentOutflowsRemaining: round(commitmentOutflowsRemaining),
     // Raw "checking − hold" — diagnostic only. The headline number the UI
-    // shows is availableToInvest, which additionally subtracts F.
+    // shows is availableToInvest, which additionally subtracts R.
     commitmentBalance: round(commitmentBalance),
-    // v10 canonical user-facing headline = commitmentBalance − F. The dollar
+    // Canonical user-facing headline = commitmentBalance − R. The dollar
     // amount you can safely sweep to HYSA / brokerage right now without
-    // bouncing a known obligation AND while still funding the planned
-    // variable spend for the rest of the month (full F, per design Q1).
+    // bouncing a known obligation AND while still leaving your stated
+    // variable reservation (R) intact.
     availableToInvest: round(availableToInvest),
     totalCashOutflowsRemaining: round(totalCashOutflowsRemaining),
     projectedEndOfMonthChecking: round(projectedEndOfMonthChecking),
