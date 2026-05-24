@@ -2001,6 +2001,13 @@ function CashPositionCard() {
       return r.json();
     },
   });
+  // D1 reconciliation — also pull cycle so the math chain can mirror
+  // head = commitmentBalance − F = (currentChecking − totalRequiredHold) − F
+  // using cycle.* addends as labeled rows. React Query dedupes on key —
+  // parent Dashboard already fetched, so this is a cache hit.
+  const { data: cycle } = useGetDashboardCycle({
+    query: { queryKey: getGetDashboardCycleQueryKey() },
+  });
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
@@ -2119,26 +2126,63 @@ function CashPositionCard() {
           </div>
         </div>
 
-        {/* Math chain — headline */}
+        {/* D1 — reconciled math chain. Mirrors head = commitmentBalance − F
+            where commitmentBalance = currentChecking − totalRequiredHold.
+            Every visible row reads cycle.* or data.*; the chain sums to head
+            exactly because the displayed terms ARE the formula. Zero-valued
+            hold addends are suppressed for readability. The month-window
+            "+ income / − bills not yet debited / − one-time still to pay"
+            rows that used to live here described the wrong window (calendar
+            month) for this snapshot decision and never tied to head; they're
+            dropped. Bill detail toggle below still uses the cash-position
+            month-window arrays for at-a-glance use. */}
         <div className="space-y-1.5 font-mono text-sm border-t border-border/30 pt-3">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Checking now</span>
             <span>{formatCurrency(data.currentChecking)}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">+ Income still to come this month</span>
-            <span>{formatCurrency(data.incomeStillToReceive)}</span>
+          {cycle && cycle.billsDueBeforePayday > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− Bills due before next payday</span>
+              <span>−{formatCurrency(cycle.billsDueBeforePayday)}</span>
+            </div>
+          )}
+          {cycle && cycle.oneTimeDueBeforePayday > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− One-time due before next payday</span>
+              <span>−{formatCurrency(cycle.oneTimeDueBeforePayday)}</span>
+            </div>
+          )}
+          {cycle && cycle.pendingHoldsReserve > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− Pending holds reserve</span>
+              <span>−{formatCurrency(cycle.pendingHoldsReserve)}</span>
+            </div>
+          )}
+          {cycle && cycle.minimumCushion > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− Minimum cushion</span>
+              <span>−{formatCurrency(cycle.minimumCushion)}</span>
+            </div>
+          )}
+          {cycle && cycle.quicksilverOwed > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− QuickSilver owed</span>
+              <span>−{formatCurrency(cycle.quicksilverOwed)}</span>
+            </div>
+          )}
+          {cycle && cycle.pendingBillsOwed > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− Pending bills owed</span>
+              <span>−{formatCurrency(cycle.pendingBillsOwed)}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-medium border-t border-border/30 pt-2 mt-1">
+            <span>= Reserve-aware balance (Checking − Required Hold)</span>
+            <span>{formatCurrency(data.commitmentBalance)}</span>
           </div>
           <div className="flex justify-between text-destructive">
-            <span>− Bills not yet debited ({data.billsNotYetDebitedDetail.length})</span>
-            <span>−{formatCurrency(data.billsNotYetDebited)}</span>
-          </div>
-          <div className="flex justify-between text-destructive">
-            <span>− One-time expenses still to pay</span>
-            <span>−{formatCurrency(data.oneTimeStillToPay)}</span>
-          </div>
-          <div className="flex justify-between text-destructive">
-            <span>− Estimated future variable spend (full)</span>
+            <span>− Estimated future variable spend (full F)</span>
             <span>−{formatCurrency(data.variableExpectedRemaining)}</span>
           </div>
           {showPaceHint && (
