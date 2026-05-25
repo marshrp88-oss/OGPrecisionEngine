@@ -789,7 +789,9 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   // invariant we preserve.
   // Projected EOM uses R split by the logged qsRatio (cash portion only)
   // so the cash-trajectory number stays consistent with the headline.
-  const availableToInvest = commitmentBalance - variableExpectedRemaining;
+  const earlyNextMonthVariable = 130;
+  const availableToInvest =
+    commitmentBalance - variableExpectedRemaining - earlyNextMonthVariable;
   const totalCashOutflowsRemaining =
     commitmentOutflowsRemaining + variableExpectedRemainingCash;
   const projectedEndOfMonthChecking =
@@ -839,6 +841,7 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     // bouncing a known obligation AND while still leaving your stated
     // variable reservation (R) intact.
     availableToInvest: round(availableToInvest),
+    earlyNextMonthVariable: round(earlyNextMonthVariable),
     totalCashOutflowsRemaining: round(totalCashOutflowsRemaining),
     projectedEndOfMonthChecking: round(projectedEndOfMonthChecking),
     // Status flags — track the headline (availableToInvest), not the raw.

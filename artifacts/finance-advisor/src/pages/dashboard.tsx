@@ -124,7 +124,14 @@ interface DiscretionaryResp {
   oneTimeMonthObligated: number;
   oneTimePaidThisMonth: number;
   oneTimeDeferredTotal: number;
-  oneTimeDetail: { id: number; description: string; amount: number; dueDate: string | null; paid: boolean; deferred: boolean }[];
+  oneTimeDetail: {
+    id: number;
+    description: string;
+    amount: number;
+    dueDate: string | null;
+    paid: boolean;
+    deferred: boolean;
+  }[];
   totalMonthOutgo: number;
   nextEffectivePayday: string;
   forwardReserve: number;
@@ -138,7 +145,12 @@ interface DiscretionaryResp {
   confirmedCommissionAlready: number;
   totalInflowsAvailable: number;
   billsRemainingThisMonth: number;
-  billsRemainingDetail: { id: number; name: string; amount: number; dueDay: number }[];
+  billsRemainingDetail: {
+    id: number;
+    name: string;
+    amount: number;
+    dueDay: number;
+  }[];
   oneTimeDatedThisMonth: number;
   oneTimeUndatedAdvisory: number;
   variableCap: number;
@@ -203,10 +215,16 @@ function statusTextClass(s: CycleStatus): string {
 // ---------------------------------------------------------------------------
 
 export default function Dashboard() {
-  const { data: cycle, isLoading, error } = useGetDashboardCycle({
+  const {
+    data: cycle,
+    isLoading,
+    error,
+  } = useGetDashboardCycle({
     query: { queryKey: getGetDashboardCycleQueryKey() },
   });
-  const { data: bills } = useGetBills({ query: { queryKey: getGetBillsQueryKey() } });
+  const { data: bills } = useGetBills({
+    query: { queryKey: getGetBillsQueryKey() },
+  });
 
   const { data: discretionary } = useQuery<DiscretionaryResp>({
     queryKey: ["dashboard-discretionary"],
@@ -252,7 +270,11 @@ export default function Dashboard() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* ZONE 1 — SITUATION (above the fold, first primary content) */}
-      <SituationBlock cycle={cycle} discretionary={discretionary} status={status} />
+      <SituationBlock
+        cycle={cycle}
+        discretionary={discretionary}
+        status={status}
+      />
 
       {discretionary?.discipline && (
         <DisciplineStrip d={discretionary.discipline} />
@@ -270,9 +292,13 @@ export default function Dashboard() {
           className="bg-destructive/10 border-destructive/20 text-destructive-foreground"
         >
           <AlertTriangle className="h-5 w-5" />
-          <AlertTitle className="text-lg font-bold">Stale Data Warning</AlertTitle>
+          <AlertTitle className="text-lg font-bold">
+            Stale Data Warning
+          </AlertTitle>
           <AlertDescription className="font-mono text-sm mt-1">
-            Balance last updated {cycle.daysSinceUpdate} days ago. Cycle calculations may be unreliable. Update your checking balance to restore precision.
+            Balance last updated {cycle.daysSinceUpdate} days ago. Cycle
+            calculations may be unreliable. Update your checking balance to
+            restore precision.
           </AlertDescription>
         </Alert>
       )}
@@ -280,9 +306,12 @@ export default function Dashboard() {
       {cycle.paydayRisk && (
         <Alert className="bg-amber-50 dark:bg-amber-950/30 border-amber-500/30">
           <AlertTriangle className="h-4 w-4 text-amber-600" />
-          <AlertTitle className="text-amber-900 dark:text-amber-200">Payday on Weekend</AlertTitle>
+          <AlertTitle className="text-amber-900 dark:text-amber-200">
+            Payday on Weekend
+          </AlertTitle>
           <AlertDescription className="text-amber-900/80 dark:text-amber-300/80 text-sm">
-            Nominal payday falls on a weekend. Effective deposit is the prior Friday.
+            Nominal payday falls on a weekend. Effective deposit is the prior
+            Friday.
           </AlertDescription>
         </Alert>
       )}
@@ -361,7 +390,10 @@ export default function Dashboard() {
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="sts" className="space-y-3 font-mono text-sm pt-4">
+              <TabsContent
+                value="sts"
+                className="space-y-3 font-mono text-sm pt-4"
+              >
                 <Row label="Checking Balance" value={cycle.checkingBalance} />
                 <Row
                   label="− Bills Due Before Payday"
@@ -373,7 +405,11 @@ export default function Dashboard() {
                   value={cycle.pendingHoldsReserve}
                   negative
                 />
-                <Row label="− Minimum Cushion" value={cycle.minimumCushion} negative />
+                <Row
+                  label="− Minimum Cushion"
+                  value={cycle.minimumCushion}
+                  negative
+                />
                 <Row
                   label="− One-Time Costs in Cycle"
                   value={cycle.oneTimeDueBeforePayday}
@@ -389,7 +425,11 @@ export default function Dashboard() {
                   label="− Pending Bill Payments"
                   value={cycle.pendingBillsOwed}
                   negative
-                  sublabel={cycle.pendingBillsOwed > 0 ? "Bills marked paid that haven't cleared checking yet — release on Bills page" : undefined}
+                  sublabel={
+                    cycle.pendingBillsOwed > 0
+                      ? "Bills marked paid that haven't cleared checking yet — release on Bills page"
+                      : undefined
+                  }
                 />
                 <div className="flex items-center justify-between gap-3">
                   <Row
@@ -404,11 +444,17 @@ export default function Dashboard() {
                 <Row label="= Safe to Spend" value={cycle.safeToSpend} bold />
                 {cycle.overCommittedBy > 0 && (
                   <p className="text-xs text-destructive font-mono pt-1">
-                    pre-floor = {formatCurrency(cycle.safeToSpendPreFloor)} → {formatCurrency(cycle.overCommittedBy)} short of this cycle&apos;s required hold
+                    pre-floor = {formatCurrency(cycle.safeToSpendPreFloor)} →{" "}
+                    {formatCurrency(cycle.overCommittedBy)} short of this
+                    cycle&apos;s required hold
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground pt-2 border-t border-border/30 mt-2">
-                  Forward Reserve ({formatCurrency(cycle.forwardReserve)}) and QuickSilver Owed ({formatCurrency(cycle.quicksilverOwed)}) are both subtracted from Safe to Spend so every dollar leaving checking is counted exactly once. Mark QS Paid when the statement settles to release that hold.
+                  Forward Reserve ({formatCurrency(cycle.forwardReserve)}) and
+                  QuickSilver Owed ({formatCurrency(cycle.quicksilverOwed)}) are
+                  both subtracted from Safe to Spend so every dollar leaving
+                  checking is counted exactly once. Mark QS Paid when the
+                  statement settles to release that hold.
                 </p>
               </TabsContent>
 
@@ -418,10 +464,18 @@ export default function Dashboard() {
                   className="space-y-3 font-mono text-sm pt-4"
                 >
                   <p className="text-xs text-muted-foreground italic pb-1">
-                    Month-anchored flow (v8.0): full-month income vs. full-month obligations through {formatDate(discretionary.monthEnd)}. Paid bills still count (the money already left this month); only <em>skipped this cycle</em> and <em>deferred</em> items are excluded. Forward Reserve and current checking are NOT part of this formula — Forward Reserve is a timing buffer, not a flow item.
+                    Month-anchored flow (v8.0): full-month income vs. full-month
+                    obligations through {formatDate(discretionary.monthEnd)}.
+                    Paid bills still count (the money already left this month);
+                    only <em>skipped this cycle</em> and <em>deferred</em> items
+                    are excluded. Forward Reserve and current checking are NOT
+                    part of this formula — Forward Reserve is a timing buffer,
+                    not a flow item.
                   </p>
 
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Month income</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">
+                    Month income
+                  </p>
                   <Row
                     label={`Paychecks received (${discretionary.paychecksReceivedCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
                     value={discretionary.paychecksReceivedThisMonth}
@@ -430,11 +484,23 @@ export default function Dashboard() {
                     label={`+ Paychecks remaining (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
                     value={discretionary.expectedRemainingPaychecks}
                   />
-                  <Row label="+ Commission paid" value={discretionary.commissionPaidThisMonth} />
-                  <Row label="+ Commission pending" value={discretionary.commissionPendingThisMonth} />
-                  <Row label="= Total month income" value={discretionary.totalMonthIncome} bold />
+                  <Row
+                    label="+ Commission paid"
+                    value={discretionary.commissionPaidThisMonth}
+                  />
+                  <Row
+                    label="+ Commission pending"
+                    value={discretionary.commissionPendingThisMonth}
+                  />
+                  <Row
+                    label="= Total month income"
+                    value={discretionary.totalMonthIncome}
+                    bold
+                  />
 
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">Month obligations</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">
+                    Month obligations
+                  </p>
                   <Row
                     label={`− Bills this month (${formatCurrency(discretionary.billsPaidThisMonth)} paid · ${formatCurrency(discretionary.billsLateUnpaidThisMonth)} late · skipped ${formatCurrency(discretionary.billsSkippedThisMonth)} excluded)`}
                     value={discretionary.billsThisMonth}
@@ -455,14 +521,20 @@ export default function Dashboard() {
                     negative
                   />
                   <p className="text-[10px] text-muted-foreground/70 italic -mt-1 pl-2">
-                    Edit R via the &ldquo;Variable reserved&rdquo; pill above. Cash variable rows are audit-only; QS rows still flow into the hold.
+                    Edit R via the &ldquo;Variable reserved&rdquo; pill above.
+                    Cash variable rows are audit-only; QS rows still flow into
+                    the hold.
                   </p>
                   <Row
                     label={`− One-time this month (${formatCurrency(discretionary.oneTimePaidThisMonth)} paid; ${formatCurrency(discretionary.oneTimeDeferredTotal)} deferred excluded)`}
                     value={discretionary.oneTimeMonthObligated}
                     negative
                   />
-                  <Row label="= Total month outgo" value={discretionary.totalMonthOutgo} bold />
+                  <Row
+                    label="= Total month outgo"
+                    value={discretionary.totalMonthOutgo}
+                    bold
+                  />
 
                   <Row
                     label="= Discretionary This Month"
@@ -472,15 +544,23 @@ export default function Dashboard() {
                   />
                   {discretionary.discretionaryThisMonth < 0 && (
                     <p className="text-xs text-destructive italic pt-2">
-                      Negative = the month is running a real deficit. Obligations exceed income by {formatCurrency(Math.abs(discretionary.discretionaryThisMonth))}. Cut variable, defer one-times, or skip a bill to this cycle.
+                      Negative = the month is running a real deficit.
+                      Obligations exceed income by{" "}
+                      {formatCurrency(
+                        Math.abs(discretionary.discretionaryThisMonth),
+                      )}
+                      . Cut variable, defer one-times, or skip a bill to this
+                      cycle.
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground italic pt-2">
-                    Forward Reserve ({formatCurrency(discretionary.forwardReserve)}) shown for reference — feeds Safe to Spend, not Discretionary. Distinct from Safe to Spend (current pay cycle, checking-anchored).
+                    Forward Reserve (
+                    {formatCurrency(discretionary.forwardReserve)}) shown for
+                    reference — feeds Safe to Spend, not Discretionary. Distinct
+                    from Safe to Spend (current pay cycle, checking-anchored).
                   </p>
                 </TabsContent>
               )}
-
             </Tabs>
           </AccordionContent>
         </AccordionItem>
@@ -502,7 +582,10 @@ function SituationBlock({
   discretionary: DiscretionaryResp | undefined;
   status: CycleStatus;
 }) {
-  const paydayLabel = paydayRelativeLabel(cycle.daysUntilPayday, cycle.nextPayday);
+  const paydayLabel = paydayRelativeLabel(
+    cycle.daysUntilPayday,
+    cycle.nextPayday,
+  );
 
   return (
     <section
@@ -536,14 +619,16 @@ function SituationBlock({
               className="text-xs text-destructive font-mono mt-2 font-medium"
               data-testid="text-over-committed"
             >
-              {formatCurrency(cycle.overCommittedBy)} short of this cycle&apos;s required hold
+              {formatCurrency(cycle.overCommittedBy)} short of this cycle&apos;s
+              required hold
             </p>
           ) : null}
           <p className="text-xs text-muted-foreground font-mono mt-3">
             {formatCurrency(cycle.dailyRateRealTime)}/day · {paydayLabel}
           </p>
           <p className="text-[10px] text-muted-foreground/70 mt-1">
-            Reserve-aware cash position — your daily decision number. Every dollar leaving checking is counted exactly once.
+            Reserve-aware cash position — your daily decision number. Every
+            dollar leaving checking is counted exactly once.
           </p>
           {discretionary && (
             <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 text-xs font-mono">
@@ -584,12 +669,18 @@ function SituationBlock({
         className="border-t border-border px-6 md:px-8 py-3 text-xs font-mono text-muted-foreground flex flex-wrap gap-x-6 gap-y-1"
         data-testid="stat-strip"
       >
-        <StripItem label="Checking" value={formatCurrency(cycle.checkingBalance)} />
+        <StripItem
+          label="Checking"
+          value={formatCurrency(cycle.checkingBalance)}
+        />
         <StripItem
           label="Required Hold"
           value={formatCurrency(cycle.totalRequiredHold)}
         />
-        <StripItem label="Forward Reserve" value={formatCurrency(cycle.forwardReserve)} />
+        <StripItem
+          label="Forward Reserve"
+          value={formatCurrency(cycle.forwardReserve)}
+        />
       </div>
     </section>
   );
@@ -604,10 +695,18 @@ function MarkQsPaidButton({ amount }: { amount: number }) {
   const mut = useMarkQuicksilverPaid({
     mutation: {
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
-        queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-        queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+        queryClient.invalidateQueries({
+          queryKey: getGetDashboardCycleQueryKey(),
+        });
+        queryClient.invalidateQueries({
+          queryKey: getGetVariableSpendQueryKey(),
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["dashboard-discretionary"],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["dashboard-cash-position"],
+        });
       },
     },
   });
@@ -735,7 +834,9 @@ function DisciplineMetric({
       <span className="text-xs text-muted-foreground uppercase tracking-wider">
         {label}
       </span>
-      <span className={cn("font-mono text-sm font-semibold reserve-animate", color)}>
+      <span
+        className={cn("font-mono text-sm font-semibold reserve-animate", color)}
+      >
         {value}
       </span>
       <span
@@ -815,7 +916,9 @@ function BillsCycleColumn({
             {rows.map((b) => (
               <tr key={b.id} className="text-foreground">
                 <td className="py-1 truncate max-w-[140px]">{b.name}</td>
-                <td className="py-1 text-right text-muted-foreground">{b.dueDay}</td>
+                <td className="py-1 text-right text-muted-foreground">
+                  {b.dueDay}
+                </td>
                 <td className="py-1 text-right">{formatCurrency(b.amount)}</td>
               </tr>
             ))}
@@ -861,10 +964,18 @@ function OneTimeColumn() {
       { id, data: { paid: !paid } },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetOneTimeExpensesQueryKey() });
-          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+          queryClient.invalidateQueries({
+            queryKey: getGetOneTimeExpensesQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: getGetDashboardCycleQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-discretionary"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-cash-position"],
+          });
           toast({ title: paid ? "Marked unpaid" : "Marked paid" });
         },
       },
@@ -985,7 +1096,8 @@ function VariableSpendRow({
           setEditing(false);
           toast({ title: "Entry updated" });
         },
-        onError: () => toast({ title: "Update failed", variant: "destructive" }),
+        onError: () =>
+          toast({ title: "Update failed", variant: "destructive" }),
       },
     );
   };
@@ -1005,14 +1117,18 @@ function VariableSpendRow({
           refreshAll();
           toast({ title: "Entry deleted" });
         },
-        onError: () => toast({ title: "Delete failed", variant: "destructive" }),
+        onError: () =>
+          toast({ title: "Delete failed", variant: "destructive" }),
       },
     );
   };
 
   if (editing) {
     return (
-      <tr data-testid={`row-variable-${row.id}-editing`} className="bg-muted/30">
+      <tr
+        data-testid={`row-variable-${row.id}-editing`}
+        className="bg-muted/30"
+      >
         <td className="py-1">
           <input
             type="date"
@@ -1039,7 +1155,9 @@ function VariableSpendRow({
             </select>
             <button
               type="button"
-              onClick={() => setForm({ ...form, quicksilver: !form.quicksilver })}
+              onClick={() =>
+                setForm({ ...form, quicksilver: !form.quicksilver })
+              }
               className={cn(
                 "text-[10px] font-mono uppercase tracking-wider px-1 py-0.5 rounded border",
                 form.quicksilver
@@ -1169,14 +1287,18 @@ function VariableSpendColumn() {
           variant="ghost"
           size="sm"
           className="h-7 px-2 text-xs"
-          onClick={() => window.dispatchEvent(new CustomEvent("reserve:open-log-spend"))}
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent("reserve:open-log-spend"))
+          }
           data-testid="button-log-variable"
         >
           Log
         </Button>
       </div>
       {recent.length === 0 ? (
-        <p className="text-xs text-muted-foreground font-mono">— No entries yet</p>
+        <p className="text-xs text-muted-foreground font-mono">
+          — No entries yet
+        </p>
       ) : (
         <table className="w-full text-xs font-mono">
           <thead>
@@ -1244,8 +1366,12 @@ type ReconcileSuggestion = {
 function UpdateBalanceDialog() {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
-  const [suggestion, setSuggestion] = useState<ReconcileSuggestion | null>(null);
-  const [selectedClearIds, setSelectedClearIds] = useState<Set<number>>(new Set());
+  const [suggestion, setSuggestion] = useState<ReconcileSuggestion | null>(
+    null,
+  );
+  const [selectedClearIds, setSelectedClearIds] = useState<Set<number>>(
+    new Set(),
+  );
   const [submitting, setSubmitting] = useState(false);
   const createBalance = useCreateBalance();
   const queryClient = useQueryClient();
@@ -1308,9 +1434,15 @@ function UpdateBalanceDialog() {
             if (r.status === "fulfilled" && r.value.ok) cleared++;
             else failed++;
           }
-          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+          queryClient.invalidateQueries({
+            queryKey: getGetDashboardCycleQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-discretionary"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-cash-position"],
+          });
           queryClient.invalidateQueries({ queryKey: ["dashboard-integrity"] });
           queryClient.invalidateQueries({ queryKey: ["bills"] });
           setOpen(false);
@@ -1320,7 +1452,9 @@ function UpdateBalanceDialog() {
           setSubmitting(false);
           const parts: string[] = [];
           if (cleared > 0)
-            parts.push(`${cleared} pending bill${cleared > 1 ? "s" : ""} cleared`);
+            parts.push(
+              `${cleared} pending bill${cleared > 1 ? "s" : ""} cleared`,
+            );
           if (failed > 0)
             parts.push(`${failed} clear${failed > 1 ? "s" : ""} failed`);
           toast({
@@ -1385,7 +1519,13 @@ function UpdateBalanceDialog() {
               </div>
               <div className="flex justify-between font-mono font-semibold border-t border-border pt-1 mt-1">
                 <span>Change</span>
-                <span className={suggestion.delta < 0 ? "text-destructive" : "text-emerald-600"}>
+                <span
+                  className={
+                    suggestion.delta < 0
+                      ? "text-destructive"
+                      : "text-emerald-600"
+                  }
+                >
                   {suggestion.delta >= 0 ? "+" : ""}
                   {formatCurrency(suggestion.delta)}
                 </span>
@@ -1414,7 +1554,9 @@ function UpdateBalanceDialog() {
                     />
                     <span className="text-sm">{b.name}</span>
                   </div>
-                  <span className="font-mono text-sm">{formatCurrency(b.amount)}</span>
+                  <span className="font-mono text-sm">
+                    {formatCurrency(b.amount)}
+                  </span>
                 </label>
               ))}
             </div>
@@ -1463,7 +1605,9 @@ function UpdateBalanceDialog() {
           </Button>
           <Button
             onClick={suggestion ? handleConfirmWithClears : handleSave}
-            disabled={submitting || createBalance.isPending || (!suggestion && !amount)}
+            disabled={
+              submitting || createBalance.isPending || (!suggestion && !amount)
+            }
             data-testid="button-save-balance"
           >
             <RefreshCw
@@ -1521,12 +1665,20 @@ function LogSpendDialog() {
       },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+          queryClient.invalidateQueries({
+            queryKey: getGetVariableSpendQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-discretionary"],
+          });
           // QS variable rows feed quicksilverOwed → totalRequiredHold → headline.
           // Cash rows don't, but a redundant refetch is cheap; invalidate uniformly.
-          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
-          queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-cash-position"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: getGetDashboardCycleQueryKey(),
+          });
           setOpen(false);
           setForm((f) => ({ ...f, amount: "", notes: "" }));
           toast({ title: "Variable entry logged" });
@@ -1663,8 +1815,12 @@ function OneTimeQuickAddDialog() {
           queryClient.invalidateQueries({
             queryKey: getGetDashboardCycleQueryKey(),
           });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
-          queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-discretionary"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-cash-position"],
+          });
           setOpen(false);
           setForm({ description: "", amount: "", dueDate: "", notes: "" });
           toast({ title: "One-time expense added" });
@@ -1699,7 +1855,9 @@ function OneTimeQuickAddDialog() {
             <Label>Description</Label>
             <Input
               value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
               placeholder="e.g. Dentist co-pay"
               data-testid="input-one-time-description"
               autoFocus
@@ -1727,7 +1885,8 @@ function OneTimeQuickAddDialog() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Undated items aren't reserved in Safe-to-Spend. Set a due date to include them.
+            Undated items aren't reserved in Safe-to-Spend. Set a due date to
+            include them.
           </p>
           <div>
             <Label>Notes</Label>
@@ -1855,9 +2014,8 @@ function VariableEstimateEditor({
     // Floor at $0. Round to cents.
     const safeDays = Math.max(1, daysInMonth);
     const prorated =
-      Math.round(
-        Math.max(0, (fallbackCap * daysRemaining) / safeDays) * 100,
-      ) / 100;
+      Math.round(Math.max(0, (fallbackCap * daysRemaining) / safeDays) * 100) /
+      100;
     updateMut.mutate(
       {
         key: "planned_variable_remaining_override",
@@ -1870,7 +2028,8 @@ function VariableEstimateEditor({
             title: `Prorated to ${formatCurrency(prorated)} (${daysRemaining}/${daysInMonth} days × cap)`,
           });
         },
-        onError: () => toast({ title: "Prorate failed", variant: "destructive" }),
+        onError: () =>
+          toast({ title: "Prorate failed", variant: "destructive" }),
       },
     );
   };
@@ -1950,7 +2109,6 @@ function VariableEstimateEditor({
   );
 }
 
-
 function Row({
   label,
   value,
@@ -1968,7 +2126,9 @@ function Row({
     <div
       className={cn(
         "py-1",
-        bold ? "border-t-2 border-border pt-2 font-bold" : "border-b border-border/40",
+        bold
+          ? "border-t-2 border-border pt-2 font-bold"
+          : "border-b border-border/40",
         negative ? "text-destructive" : "",
       )}
     >
@@ -2012,10 +2172,16 @@ interface CashPositionResp {
   variableExpectedRemainingQs: number;
   quicksilverAccruedRatio: number;
   oneTimeStillToPay: number;
-  oneTimeStillToPayDetail: { id: number; description: string; amount: number; dueDate: string | null }[];
+  oneTimeStillToPayDetail: {
+    id: number;
+    description: string;
+    amount: number;
+    dueDate: string | null;
+  }[];
   commitmentOutflowsRemaining: number;
   commitmentBalance: number;
   availableToInvest: number;
+  earlyNextMonthVariable: number;
   totalCashOutflowsRemaining: number;
   projectedEndOfMonthChecking: number;
   isDeficit: boolean;
@@ -2087,17 +2253,21 @@ function CashPositionCard() {
         id: bill.id,
         data: {
           paymentState: next,
-          paidDate: next === "paid" || next === "paid_pending_clear" ? today : null,
+          paidDate:
+            next === "paid" || next === "paid_pending_clear" ? today : null,
         },
       },
       {
         onSuccess: () => {
           refresh();
           toast({
-            title: debited ? `Marked ${bill.name} as debited` : `Marked ${bill.name} as not yet debited`,
+            title: debited
+              ? `Marked ${bill.name} as debited`
+              : `Marked ${bill.name} as not yet debited`,
           });
         },
-        onError: () => toast({ title: "Failed to update bill", variant: "destructive" }),
+        onError: () =>
+          toast({ title: "Failed to update bill", variant: "destructive" }),
       },
     );
   };
@@ -2113,9 +2283,20 @@ function CashPositionCard() {
   // cash-trajectory number, not a save-decision number.
   const head = data.availableToInvest;
   const eom = data.projectedEndOfMonthChecking;
-  const headColor = head < 0 ? "text-destructive" : head < 100 ? "text-warning" : "text-success";
-  const eomColor = eom < 0 ? "text-destructive" : eom < 100 ? "text-warning" : "text-success";
-  const borderColor = head < 0 ? "border-l-destructive" : head < 100 ? "border-l-warning" : "border-l-success";
+  const headColor =
+    head < 0
+      ? "text-destructive"
+      : head < 100
+        ? "text-warning"
+        : "text-success";
+  const eomColor =
+    eom < 0 ? "text-destructive" : eom < 100 ? "text-warning" : "text-success";
+  const borderColor =
+    head < 0
+      ? "border-l-destructive"
+      : head < 100
+        ? "border-l-warning"
+        : "border-l-success";
 
   // A+E pace hint — informational only. Headline math unchanged; this sublabel
   // tells the user how F compares to trailing burn so they can decide whether
@@ -2133,9 +2314,7 @@ function CashPositionCard() {
   const isCapRateFallback =
     logged !== null && (localDayOfMonth < 7 || logged === 0);
   const paceImpliedF =
-    trailingRate !== null && daysLeft !== null
-      ? trailingRate * daysLeft
-      : null;
+    trailingRate !== null && daysLeft !== null ? trailingRate * daysLeft : null;
   const reservedF = data.variableExpectedRemaining;
   const showPaceHint =
     paceImpliedF !== null &&
@@ -2157,12 +2336,17 @@ function CashPositionCard() {
               Available to Move to HYSA / Investments
             </p>
             <p className="text-[10px] text-muted-foreground/70 mt-1">
-              The dollar amount you can safely sweep to savings or brokerage right now without bouncing a known obligation AND while still funding the planned variable spend for the rest of the month.
+              The dollar amount you can safely sweep to savings or brokerage
+              right now without bouncing a known obligation AND while still
+              funding the planned variable spend for the rest of the month.
             </p>
           </div>
           <div className="text-right">
             <h3
-              className={cn("text-4xl font-bold font-mono tracking-tighter", headColor)}
+              className={cn(
+                "text-4xl font-bold font-mono tracking-tighter",
+                headColor,
+              )}
               data-testid="text-commitment-balance"
             >
               {formatCurrency(head)}
@@ -2172,11 +2356,14 @@ function CashPositionCard() {
                 className="text-xs text-destructive font-mono mt-1"
                 data-testid="text-available-deficit"
               >
-                can&apos;t save this month — {formatCurrency(Math.abs(head))} short of your reserve
+                can&apos;t save this month — {formatCurrency(Math.abs(head))}{" "}
+                short of your reserve
               </p>
             )}
             {data.isTight && (
-              <p className="text-xs text-warning font-mono mt-1">tight — under $100 cushion</p>
+              <p className="text-xs text-warning font-mono mt-1">
+                tight — under $100 cushion
+              </p>
             )}
           </div>
         </div>
@@ -2240,6 +2427,10 @@ function CashPositionCard() {
             <span>− Variable reserved (R)</span>
             <span>−{formatCurrency(data.variableExpectedRemaining)}</span>
           </div>
+          <div className="flex justify-between text-destructive">
+            <span>− Early next-month variable (days 1–7)</span>
+            <span>−{formatCurrency(data.earlyNextMonthVariable)}</span>
+          </div>
           {showPaceHint && (
             <p
               className="text-[10px] text-muted-foreground/70 italic -mt-1 pl-2"
@@ -2249,10 +2440,16 @@ function CashPositionCard() {
               {formatCurrency(trailingRate!)}/day · {daysLeft} day
               {daysLeft === 1 ? "" : "s"} left · pace-implied R ≈{" "}
               {formatCurrency(paceImpliedF!)}. R currently reserves{" "}
-              {formatCurrency(reservedF)}. Tap <strong>Prorate</strong> on the pill to set R to the pace-implied value.
+              {formatCurrency(reservedF)}. Tap <strong>Prorate</strong> on the
+              pill to set R to the pace-implied value.
             </p>
           )}
-          <div className={cn("flex justify-between font-bold border-t border-border/30 pt-2 mt-1", headColor)}>
+          <div
+            className={cn(
+              "flex justify-between font-bold border-t border-border/30 pt-2 mt-1",
+              headColor,
+            )}
+          >
             <span>= Available to move to HYSA / investments</span>
             <span>{formatCurrency(head)}</span>
           </div>
@@ -2269,7 +2466,8 @@ function CashPositionCard() {
                 − Variable still to spend from checking
                 {data.quicksilverAccruedRatio > 0 && (
                   <span className="text-[10px] text-muted-foreground ml-1">
-                    ({Math.round((1 - data.quicksilverAccruedRatio) * 100)}% cash, rest on QS card)
+                    ({Math.round((1 - data.quicksilverAccruedRatio) * 100)}%
+                    cash, rest on QS card)
                   </span>
                 )}
               </span>
@@ -2280,7 +2478,10 @@ function CashPositionCard() {
               <span>{formatCurrency(eom)}</span>
             </div>
             <p className="text-[10px] text-muted-foreground/70 italic">
-              Variable reservation (R) editable via the &ldquo;Variable reserved&rdquo; pill on the Overview headline above. Cash portion shown here is R split by the logged QS:cash mix so the projection stays in sync with the headline.
+              Variable reservation (R) editable via the &ldquo;Variable
+              reserved&rdquo; pill on the Overview headline above. Cash portion
+              shown here is R split by the logged QS:cash mix so the projection
+              stays in sync with the headline.
             </p>
           </div>
         )}
@@ -2292,7 +2493,8 @@ function CashPositionCard() {
               Bills this month, not yet debited — toggle if money already left
             </p>
             <p className="text-[10px] text-muted-foreground/70 italic mb-2 normal-case tracking-normal">
-              Calendar-month informational list. The cycle hold above is what drives the headline.
+              Calendar-month informational list. The cycle hold above is what
+              drives the headline.
             </p>
             <ul className="space-y-1.5">
               {data.billsNotYetDebitedDetail
@@ -2305,7 +2507,9 @@ function CashPositionCard() {
                   >
                     <div className="flex-1 min-w-0">
                       <span className="truncate">{b.name}</span>
-                      <span className="text-xs text-muted-foreground ml-2">day {b.dueDay}</span>
+                      <span className="text-xs text-muted-foreground ml-2">
+                        day {b.dueDay}
+                      </span>
                       <span
                         className={cn(
                           "text-[10px] uppercase tracking-wider ml-2 px-1.5 py-0.5 rounded",
@@ -2350,10 +2554,12 @@ function CashPositionCard() {
         {data.billsAlreadyDebitedDetail.length > 0 && (
           <div className="mt-4 pt-3 border-t border-border/30">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-              Bills already paid this month ({formatCurrency(data.billsAlreadyDebited)})
+              Bills already paid this month (
+              {formatCurrency(data.billsAlreadyDebited)})
             </p>
             <p className="text-[10px] text-muted-foreground/70 italic mb-2 normal-case tracking-normal">
-              Already reflected in &ldquo;Checking now&rdquo; — not subtracted again.
+              Already reflected in &ldquo;Checking now&rdquo; — not subtracted
+              again.
             </p>
             <ul className="space-y-1">
               {data.billsAlreadyDebitedDetail
@@ -2364,9 +2570,12 @@ function CashPositionCard() {
                     className="flex items-center justify-between gap-3 text-xs font-mono text-muted-foreground"
                   >
                     <span className="flex-1 truncate">
-                      {b.name} <span className="text-[10px]">(day {b.dueDay})</span>
+                      {b.name}{" "}
+                      <span className="text-[10px]">(day {b.dueDay})</span>
                     </span>
-                    <span className="tabular-nums w-20 text-right">{formatCurrency(b.amount)}</span>
+                    <span className="tabular-nums w-20 text-right">
+                      {formatCurrency(b.amount)}
+                    </span>
                     <button
                       onClick={() => setBillCashStatus(b, false)}
                       className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border hover-elevate"
