@@ -24,3 +24,15 @@ id = "NvIiac-rJD75uoPTSzkGI"
 uri = "file://exports/reserve-source-bundle.tar.gz"
 type = "unspecified"
 title = "Source files archive (.tar.gz — original structure)"
+
+[[outputs]]
+id = "3EIBt1g-d4XBjAOq2x9R9"
+uri = "file://exports/architecture-answers.docx"
+type = "word_document"
+title = "Architecture Answers (Word)"
+
+[[outputs]]
+id = "81bSjMbi2qLBcvAndDs88"
+uri = "file://exports/architecture-answers.md"
+type = "text"
+title = "Architecture Answers (Markdown — fallback)"
