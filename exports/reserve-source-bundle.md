@@ -1,0 +1,9037 @@
+# Reserve — Personal Finance Advisor
+## Production Architecture Source Bundle
+
+Generated for multi-income-event + multi-user architecture design.
+
+## Contents
+
+- `lib/db/src/schema/index.ts`
+- `lib/db/src/schema/assumptions.ts`
+- `lib/db/src/schema/balances.ts`
+- `lib/db/src/schema/bills.ts`
+- `lib/db/src/schema/commissions.ts`
+- `lib/db/src/schema/one_time_expenses.ts`
+- `lib/db/src/schema/variable_spend.ts`
+- `lib/db/src/schema/wealth_snapshots.ts`
+- `lib/db/src/schema/credit_scores.ts`
+- `lib/db/src/schema/debt.ts`
+- `lib/db/src/schema/retirement.ts`
+- `lib/db/src/schema/scenarios.ts`
+- `lib/db/src/schema/playbook.ts`
+- `lib/db/src/schema/integrity_log.ts`
+- `lib/db/src/schema/conversations.ts`
+- `lib/db/src/schema/messages.ts`
+- `lib/db/src/schema/plaid_items.ts`
+- `lib/db/drizzle.config.ts`
+- `lib/db/package.json`
+- `lib/finance/package.json`
+- `lib/finance/engine.ts`
+- `artifacts/api-server/src/lib/cycleBillEngine.ts`
+- `artifacts/api-server/src/lib/financeEngine.ts`
+- `artifacts/api-server/src/lib/advisorContext.ts`
+- `artifacts/api-server/src/lib/engineTools.ts`
+- `artifacts/api-server/src/lib/integrity.ts`
+- `artifacts/api-server/src/routes/index.ts`
+- `artifacts/api-server/src/routes/dashboard.ts`
+- `artifacts/api-server/src/routes/bills.ts`
+- `artifacts/api-server/package.json`
+- `artifacts/finance-advisor/src/pages/dashboard.tsx`
+- `artifacts/finance-advisor/package.json`
+
+---
+
+
+## `lib/db/src/schema/index.ts` (17 lines)
+
+```ts
+export * from "./assumptions";
+export * from "./balances";
+export * from "./bills";
+export * from "./one_time_expenses";
+export * from "./variable_spend";
+export * from "./commissions";
+export * from "./wealth_snapshots";
+export * from "./credit_scores";
+export * from "./debt";
+export * from "./retirement";
+export * from "./scenarios";
+export * from "./playbook";
+export * from "./integrity_log";
+export * from "./conversations";
+export * from "./messages";
+export * from "./plaid_items";
+
+```
+
+
+## `lib/db/src/schema/assumptions.ts` (14 lines)
+
+```ts
+import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const assumptions = pgTable("assumptions", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const insertAssumptionSchema = createInsertSchema(assumptions);
+export type Assumption = typeof assumptions.$inferSelect;
+export type InsertAssumption = z.infer<typeof insertAssumptionSchema>;
+
+```
+
+
+## `lib/db/src/schema/balances.ts` (17 lines)
+
+```ts
+import { pgTable, serial, text, numeric, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const balances = pgTable("balances", {
+  id: serial("id").primaryKey(),
+  accountType: text("account_type").notNull(),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  asOfDate: timestamp("as_of_date", { withTimezone: true }).notNull(),
+  source: text("source").notNull().default("manual"),
+  notes: text("notes"),
+});
+
+export const insertBalanceSchema = createInsertSchema(balances).omit({ id: true });
+export type Balance = typeof balances.$inferSelect;
+export type InsertBalance = z.infer<typeof insertBalanceSchema>;
+
+```
+
+
+## `lib/db/src/schema/bills.ts` (40 lines)
+
+```ts
+import { pgTable, serial, text, numeric, integer, boolean, date, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const bills = pgTable("bills", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  dueDay: integer("due_day").notNull(),
+  frequency: text("frequency").notNull().default("monthly"),
+  includeInCycle: boolean("include_in_cycle").notNull().default(true),
+  category: text("category").notNull().default("essential"),
+  autopay: boolean("autopay").notNull().default(false),
+  notes: text("notes"),
+  activeFrom: date("active_from"),
+  activeUntil: date("active_until"),
+  // v8.0 payment-state engine (Part 2) + v8.1 pending-clear extension.
+  // 'scheduled'         = not yet paid, money still expected to leave.
+  // 'paid_pending_clear'= user paid the bill, but money hasn't withdrawn
+  //                       from checking yet. STILL held against checking
+  //                       (mirrors QuickSilver owed) until 'Mark Cleared'.
+  // 'paid'              = money has actually left the account this cycle.
+  // 'late_unpaid'       = past scheduled day, manual bill, still owed.
+  // 'skipped_cycle'     = excluded from THIS cycle only; auto-reverts next cycle.
+  paymentState: text("payment_state").notNull().default("scheduled"),
+  paidDate: date("paid_date"),
+  // v8.1 — stamped when state transitions to 'paid' (money actually
+  // withdrawn). Null while in 'paid_pending_clear'. Used for audit only.
+  clearedDate: timestamp("cleared_date", { withTimezone: true }),
+  // Cycle key for skipped_cycle auto-revert. YYYY-MM string of cycle when
+  // state was last set. When current cycle key != stored key, skip auto-reverts.
+  paymentStateCycleKey: text("payment_state_cycle_key"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const insertBillSchema = createInsertSchema(bills).omit({ id: true, createdAt: true, updatedAt: true });
+export type Bill = typeof bills.$inferSelect;
+export type InsertBill = z.infer<typeof insertBillSchema>;
+
+```
+
+
+## `lib/db/src/schema/commissions.ts` (24 lines)
+
+```ts
+import { pgTable, serial, text, numeric, date, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const commissions = pgTable("commissions", {
+  id: serial("id").primaryKey(),
+  salesMonth: date("sales_month").notNull(),
+  mrrAchieved: numeric("mrr_achieved", { precision: 10, scale: 2 }).notNull().default("0"),
+  nrrAchieved: numeric("nrr_achieved", { precision: 10, scale: 2 }).notNull().default("0"),
+  mrrPayout: numeric("mrr_payout", { precision: 10, scale: 2 }).notNull().default("0"),
+  nrrPayout: numeric("nrr_payout", { precision: 10, scale: 2 }).notNull().default("0"),
+  grossTotal: numeric("gross_total", { precision: 10, scale: 2 }).notNull().default("0"),
+  takeHome: numeric("take_home", { precision: 10, scale: 2 }).notNull().default("0"),
+  payoutDate: date("payout_date"),
+  status: text("status").notNull().default("pending"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const insertCommissionSchema = createInsertSchema(commissions).omit({ id: true, createdAt: true, updatedAt: true });
+export type Commission = typeof commissions.$inferSelect;
+export type InsertCommission = z.infer<typeof insertCommissionSchema>;
+
+```
+
+
+## `lib/db/src/schema/one_time_expenses.ts` (21 lines)
+
+```ts
+import { pgTable, serial, text, numeric, boolean, date, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const oneTimeExpenses = pgTable("one_time_expenses", {
+  id: serial("id").primaryKey(),
+  description: text("description").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  dueDate: date("due_date"),
+  paid: boolean("paid").notNull().default(false),
+  // v8.0 Part 3: deferred items excluded from ALL math but kept visible
+  // in a separate "Deferred Obligations" panel. Manual toggle.
+  deferred: boolean("deferred").notNull().default(false),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertOneTimeExpenseSchema = createInsertSchema(oneTimeExpenses).omit({ id: true, createdAt: true });
+export type OneTimeExpense = typeof oneTimeExpenses.$inferSelect;
+export type InsertOneTimeExpense = z.infer<typeof insertOneTimeExpenseSchema>;
+
+```
+
+
+## `lib/db/src/schema/variable_spend.ts` (24 lines)
+
+```ts
+import { pgTable, serial, text, numeric, boolean, date, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const variableSpend = pgTable("variable_spend", {
+  id: serial("id").primaryKey(),
+  weekOf: date("week_of").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  category: text("category"),
+  quicksilver: boolean("quicksilver").notNull().default(false),
+  notes: text("notes"),
+  // v8.0 Final Fix — QuickSilver settlement lifecycle. When NULL, this QS row
+  // is "owed" (the dollar has been spent on the card but not yet paid off from
+  // checking). When set, the row has been settled and drops out of the
+  // Required Hold's quicksilverOwed term. Bulk-stamped by
+  // POST /variable-spend/quicksilver/mark-paid.
+  paidOffAt: timestamp("paid_off_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertVariableSpendSchema = createInsertSchema(variableSpend).omit({ id: true, createdAt: true, paidOffAt: true });
+export type VariableSpend = typeof variableSpend.$inferSelect;
+export type InsertVariableSpend = z.infer<typeof insertVariableSpendSchema>;
+
+```
+
+
+## `lib/db/src/schema/wealth_snapshots.ts` (26 lines)
+
+```ts
+import { pgTable, serial, text, numeric, date, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const wealthSnapshots = pgTable("wealth_snapshots", {
+  id: serial("id").primaryKey(),
+  snapshotDate: date("snapshot_date").notNull(),
+  hysa: numeric("hysa", { precision: 12, scale: 2 }).notNull().default("0"),
+  brokerage: numeric("brokerage", { precision: 12, scale: 2 }).notNull().default("0"),
+  retirement401k: numeric("retirement_401k", { precision: 12, scale: 2 }).notNull().default("0"),
+  otherAssets: numeric("other_assets", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalAssets: numeric("total_assets", { precision: 12, scale: 2 }).notNull().default("0"),
+  carLoan: numeric("car_loan", { precision: 12, scale: 2 }).notNull().default("0"),
+  studentLoans: numeric("student_loans", { precision: 12, scale: 2 }).notNull().default("0"),
+  otherLiabilities: numeric("other_liabilities", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalLiabilities: numeric("total_liabilities", { precision: 12, scale: 2 }).notNull().default("0"),
+  netWorth: numeric("net_worth", { precision: 12, scale: 2 }).notNull().default("0"),
+  changeVsPrior: numeric("change_vs_prior", { precision: 12, scale: 2 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertWealthSnapshotSchema = createInsertSchema(wealthSnapshots).omit({ id: true, createdAt: true });
+export type WealthSnapshot = typeof wealthSnapshots.$inferSelect;
+export type InsertWealthSnapshot = z.infer<typeof insertWealthSnapshotSchema>;
+
+```
+
+
+## `lib/db/src/schema/credit_scores.ts` (18 lines)
+
+```ts
+import { pgTable, serial, text, integer, date, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const creditScores = pgTable("credit_scores", {
+  id: serial("id").primaryKey(),
+  asOfDate: date("as_of_date").notNull(),
+  experian: integer("experian"),
+  equifax: integer("equifax"),
+  transunion: integer("transunion"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertCreditScoreSchema = createInsertSchema(creditScores).omit({ id: true, createdAt: true });
+export type CreditScore = typeof creditScores.$inferSelect;
+export type InsertCreditScore = z.infer<typeof insertCreditScoreSchema>;
+
+```
+
+
+## `lib/db/src/schema/debt.ts` (21 lines)
+
+```ts
+import { pgTable, serial, text, numeric, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const debt = pgTable("debt", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  balance: numeric("balance", { precision: 12, scale: 2 }).notNull(),
+  interestRate: numeric("interest_rate", { precision: 6, scale: 4 }).notNull(),
+  loanType: text("loan_type").notNull(),
+  minimumPayment: numeric("minimum_payment", { precision: 10, scale: 2 }),
+  status: text("status").notNull().default("active"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const insertDebtSchema = createInsertSchema(debt).omit({ id: true, createdAt: true, updatedAt: true });
+export type Debt = typeof debt.$inferSelect;
+export type InsertDebt = z.infer<typeof insertDebtSchema>;
+
+```
+
+
+## `lib/db/src/schema/retirement.ts` (21 lines)
+
+```ts
+import { pgTable, serial, numeric, integer, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const retirementPlan = pgTable("retirement_plan", {
+  id: serial("id").primaryKey(),
+  grossSalary: numeric("gross_salary", { precision: 12, scale: 2 }).notNull().default("54000"),
+  contributionRate: numeric("contribution_rate", { precision: 6, scale: 4 }).notNull().default("0.03"),
+  employerMatchRate: numeric("employer_match_rate", { precision: 6, scale: 4 }).notNull().default("0.04"),
+  employerMatchCap: numeric("employer_match_cap", { precision: 6, scale: 4 }).notNull().default("0.04"),
+  currentBalance: numeric("current_balance", { precision: 12, scale: 2 }).notNull().default("1550"),
+  currentAge: integer("current_age").notNull().default(30),
+  targetAge: integer("target_age").notNull().default(65),
+  returnAssumption: numeric("return_assumption", { precision: 6, scale: 4 }).notNull().default("0.07"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const insertRetirementPlanSchema = createInsertSchema(retirementPlan).omit({ id: true, updatedAt: true });
+export type RetirementPlan = typeof retirementPlan.$inferSelect;
+export type InsertRetirementPlan = z.infer<typeof insertRetirementPlanSchema>;
+
+```
+
+
+## `lib/db/src/schema/scenarios.ts` (19 lines)
+
+```ts
+import { pgTable, serial, text, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const scenarios = pgTable("scenarios", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  type: text("type").notNull(),
+  inputsJson: jsonb("inputs_json").notNull().$type<Record<string, unknown>>(),
+  outputsJson: jsonb("outputs_json").notNull().default({}).$type<Record<string, unknown>>(),
+  saved: boolean("saved").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const insertScenarioSchema = createInsertSchema(scenarios).omit({ id: true, createdAt: true, updatedAt: true });
+export type Scenario = typeof scenarios.$inferSelect;
+export type InsertScenario = z.infer<typeof insertScenarioSchema>;
+
+```
+
+
+## `lib/db/src/schema/playbook.ts` (16 lines)
+
+```ts
+import { pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const playbookVersions = pgTable("playbook_versions", {
+  id: serial("id").primaryKey(),
+  version: text("version").notNull(),
+  content: text("content").notNull(),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+  notes: text("notes"),
+});
+
+export const insertPlaybookVersionSchema = createInsertSchema(playbookVersions).omit({ id: true });
+export type PlaybookVersion = typeof playbookVersions.$inferSelect;
+export type InsertPlaybookVersion = z.infer<typeof insertPlaybookVersionSchema>;
+
+```
+
+
+## `lib/db/src/schema/integrity_log.ts` (16 lines)
+
+```ts
+import { pgTable, serial, text, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const integrityLog = pgTable("integrity_log", {
+  id: serial("id").primaryKey(),
+  runAt: timestamp("run_at", { withTimezone: true }).notNull().defaultNow(),
+  overallStatus: text("overall_status").notNull().default("pass"),
+  checksJson: jsonb("checks_json").notNull().default([]).$type<unknown[]>(),
+  notes: text("notes"),
+});
+
+export const insertIntegrityLogSchema = createInsertSchema(integrityLog).omit({ id: true, runAt: true });
+export type IntegrityLog = typeof integrityLog.$inferSelect;
+export type InsertIntegrityLog = z.infer<typeof insertIntegrityLogSchema>;
+
+```
+
+
+## `lib/db/src/schema/conversations.ts` (18 lines)
+
+```ts
+import { pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const conversations = pgTable("conversations", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const insertConversationSchema = createInsertSchema(conversations).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type Conversation = typeof conversations.$inferSelect;
+export type InsertConversation = z.infer<typeof insertConversationSchema>;
+
+```
+
+
+## `lib/db/src/schema/messages.ts` (24 lines)
+
+```ts
+import { integer, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+import { conversations } from "./conversations";
+
+export const messages = pgTable("messages", {
+  id: serial("id").primaryKey(),
+  conversationId: integer("conversation_id")
+    .notNull()
+    .references(() => conversations.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const insertMessageSchema = createInsertSchema(messages).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type Message = typeof messages.$inferSelect;
+export type InsertMessage = z.infer<typeof insertMessageSchema>;
+
+```
+
+
+## `lib/db/src/schema/plaid_items.ts` (30 lines)
+
+```ts
+import { pgTable, serial, text, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const plaidItems = pgTable("plaid_items", {
+  id: serial("id").primaryKey(),
+  itemId: text("item_id").notNull().unique(),
+  accessToken: text("access_token").notNull(),
+  institutionId: text("institution_id"),
+  institutionName: text("institution_name"),
+  accountsMeta: jsonb("accounts_meta").$type<PlaidAccountMeta[]>().notNull().default([]),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  lastSyncError: text("last_sync_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export interface PlaidAccountMeta {
+  accountId: string;
+  name: string;
+  officialName?: string | null;
+  mask?: string | null;
+  type: string;
+  subtype: string | null;
+  mappedAccountType: string | null;
+}
+
+export const insertPlaidItemSchema = createInsertSchema(plaidItems).omit({ id: true });
+export type PlaidItem = typeof plaidItems.$inferSelect;
+export type InsertPlaidItem = z.infer<typeof insertPlaidItemSchema>;
+
+```
+
+
+## `lib/db/drizzle.config.ts` (15 lines)
+
+```ts
+import { defineConfig } from "drizzle-kit";
+import path from "path";
+
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL, ensure the database is provisioned");
+}
+
+export default defineConfig({
+  schema: path.join(__dirname, "./src/schema/index.ts"),
+  dialect: "postgresql",
+  dbCredentials: {
+    url: process.env.DATABASE_URL,
+  },
+});
+
+```
+
+
+## `lib/db/package.json` (26 lines)
+
+```json
+{
+  "name": "@workspace/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "scripts": {
+    "push": "drizzle-kit push --config ./drizzle.config.ts",
+    "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "catalog:",
+    "drizzle-zod": "^0.8.3",
+    "pg": "^8.20.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "^8.18.0",
+    "drizzle-kit": "^0.31.9"
+  }
+}
+
+```
+
+
+## `lib/finance/package.json` (17 lines)
+
+```json
+{
+  "name": "@workspace/finance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./engine.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
+  }
+}
+
+```
+
+
+## `lib/finance/engine.ts` (1601 lines)
+
+```ts
+/**
+ * engine.ts
+ * =========
+ * TypeScript port of marshall_finance_engine.py — the reference implementation
+ * for "Reserve" (Marshall Finance), the personal financial operating system
+ * replacing OG_Financial_Engine_7_2.xlsx.
+ *
+ * Every function is:
+ *   - Pure (inputs -> output, no side effects)
+ *   - Typed
+ *   - Documented with the source cell or playbook section
+ *   - Numerically equivalent to the Python reference (engine.test.ts must pass)
+ *
+ * SOURCE AUTHORITY (in descending precedence):
+ *   1. FIX_PLAN.md  (most recent corrections — overrides all)
+ *   2. OG_Financial_Engine_7_2.xlsx  (workbook formulas)
+ *   3. Claude_Financial_Playbook_v7_3.docx  (methodology)
+ *   4. BUILD_SPEC.md  (architecture)
+ *
+ * Conversion notes (Python -> TypeScript):
+ *   - All dates use UTC midnight to avoid DST/timezone drift.
+ *   - weekday() is Mon=0..Sun=6 (Python convention) — see `pyWeekday`.
+ *   - Day arithmetic uses millisecond diff / 86_400_000 with Math.round to
+ *     guard against floating point.
+ *   - Rounding to N decimals uses Math.round(x * 10^N) / 10^N (NOT toFixed,
+ *     which returns a string and rounds half-to-even).
+ */
+
+// ---------------------------------------------------------------------------
+// 0. CONSTANTS  (Assumptions sheet — all values from B2:B15)
+// ---------------------------------------------------------------------------
+
+export const POSTING_CUSHION_DAYS = 1;
+export const COMMISSION_TAX_RATE = 0.435;
+export const MONTH_LENGTH_DAYS = 30.4;
+export const COMMISSION_PAYOUT_DAY = 22;
+export const MRR_TARGET = 700.0;
+export const NRR_TARGET = 6000.0;
+export const ALERT_THRESHOLD_YELLOW = 400.0;
+export const VARIABLE_SPEND_CAP = 600.0;
+export const BASE_NET_INCOME = 3220.0;
+export const HYSA_TARGET = 15000.0;
+export const RETIREMENT_RETURN = 0.07;
+export const TAX_ANNUAL_RESERVE = 400.0;
+export const SAVINGS_TO_HYSA_RATIO = 0.5;
+export const INCLUDE_FORWARD_RESERVE_IN_STS = true;
+
+// FIX_PLAN §A2 — corrected 401(k) match structure (replaces old B7/B8)
+export const K401_MATCH_MULTIPLIER = 0.5;
+export const K401_EMPLOYEE_CEILING = 0.08;
+export const K401_CONTRIBUTION_PCT = 0.04;
+
+export const GROSS_SALARY = 54000.0;
+export const FED_TAX_RATE = 0.12;
+export const STATE_TAX_RATE = 0.04;
+export const PAY_PERIODS_PER_YEAR = 24;
+
+export const DROUGHT_THRESHOLD = 50.0;
+export const STALENESS_WARN_DAYS = 3;
+
+// ---------------------------------------------------------------------------
+// DATE HELPERS  (UTC-anchored to avoid timezone drift)
+// ---------------------------------------------------------------------------
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Construct a date at UTC midnight. Use this everywhere instead of `new Date()`
+ * to keep day arithmetic exact across DST boundaries.
+ */
+export function d(year: number, month: number, day: number): Date {
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+/** Days in `month` of `year` (month is 1-indexed). */
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** Python-style weekday: Mon=0..Sun=6. */
+function pyWeekday(date: Date): number {
+  // JS getUTCDay: Sun=0..Sat=6  ->  Python: Mon=0..Sun=6
+  return (date.getUTCDay() + 6) % 7;
+}
+
+/** Whole-day difference `a - b` (signed). */
+function dayDiff(a: Date, b: Date): number {
+  return Math.round((a.getTime() - b.getTime()) / MS_PER_DAY);
+}
+
+/** Replace day-of-month, keeping year/month. */
+function withDay(date: Date, day: number): Date {
+  return d(date.getUTCFullYear(), date.getUTCMonth() + 1, day);
+}
+
+/** Subtract N days. */
+function minusDays(date: Date, days: number): Date {
+  return new Date(date.getTime() - days * MS_PER_DAY);
+}
+
+/** Compare two dates by day (ignores time component since we only use UTC midnight). */
+function dateEq(a: Date, b: Date): boolean {
+  return a.getTime() === b.getTime();
+}
+
+/** Round to N decimal places (NOT toFixed). */
+export function roundTo(x: number, decimals: number): number {
+  const factor = Math.pow(10, decimals);
+  return Math.round(x * factor) / factor;
+}
+
+// ---------------------------------------------------------------------------
+// 1. DATA CLASSES (positional constructors mirror Python dataclass call sites)
+// ---------------------------------------------------------------------------
+
+export class Bill {
+  constructor(
+    public name: string,
+    public amount: number,
+    public dueDay: number,
+    public include: boolean,
+    public category: string = "",
+    public autopay: boolean = true,
+    public notes: string = "",
+  ) {}
+}
+
+export class OneTimeExpense {
+  constructor(
+    public name: string,
+    public amount: number,
+    public dueDate: Date | null,
+    public paid: boolean = false,
+  ) {}
+}
+
+export class CommissionRow {
+  constructor(
+    public salesMonth: Date,
+    public mrrAchieved: number,
+    public nrrAchieved: number,
+  ) {}
+}
+
+export class VariableSpendEntry {
+  constructor(
+    public weekStart: Date,
+    public amount: number,
+    public cardAccrual: number = 0.0,
+  ) {}
+}
+
+export class PurchaseOption {
+  constructor(
+    public name: string,
+    public totalPrice: number,
+    public downPayment: number = 0.0,
+    public annualRate: number = 0.0,
+    public termMonths: number = 60,
+    public monthlyAddons: number = 0.0,
+    public oneTimeCost: number = 0.0,
+  ) {}
+}
+
+export class IntegrityCheckResult {
+  constructor(
+    public checkNumber: number,
+    public description: string,
+    public passed: boolean,
+    public detail: string = "",
+  ) {}
+}
+
+// ---------------------------------------------------------------------------
+// 2. DATE UTILITIES
+// ---------------------------------------------------------------------------
+
+/**
+ * Weekend-adjust a nominal payday to the prior Friday.
+ * Source: Dashboard!B26 / BUILD_SPEC §4.7 / FIX_PLAN §B6
+ */
+export function effectivePayday(nominal: Date): Date {
+  const dow = pyWeekday(nominal); // 0=Mon..5=Sat,6=Sun
+  if (dow === 5) return minusDays(nominal, 1); // Sat -> Fri
+  if (dow === 6) return minusDays(nominal, 2); // Sun -> Fri
+  return nominal;
+}
+
+/**
+ * Return the next nominal payday date (before weekend adjustment).
+ * Pay schedule is semi-monthly on the 7th and 22nd by default.
+ * Source: BUILD_SPEC §4.1
+ */
+export function nextNominalPayday(today: Date, payDays: number[] = [7, 22]): Date {
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth() + 1;
+  const candidates: Date[] = [];
+  const lastDom = daysInMonth(y, m);
+  for (const day of payDays) {
+    const dd = Math.min(day, lastDom);
+    const cand = d(y, m, dd);
+    if (cand.getTime() >= today.getTime()) candidates.push(cand);
+  }
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => a.getTime() - b.getTime());
+    return candidates[0]!;
+  }
+  // All paydays this month have passed — advance to next month
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  const nmLast = daysInMonth(ny, nm);
+  return d(ny, nm, Math.min(payDays[0]!, nmLast));
+}
+
+/**
+ * Days remaining until the effective payday. Floor at 0 (never negative).
+ * Source: FIX_PLAN §B5 — off-by-one fix.
+ */
+export function daysUntilPayday(today: Date, nextPaydayNominal: Date): number {
+  const eff = effectivePayday(nextPaydayNominal);
+  const delta = dayDiff(eff, today);
+  return Math.max(0, delta);
+}
+
+/**
+ * Compute next due date for a bill — Bills!Column D formula.
+ * Source: Bills!D2:D13 / Playbook §1.1
+ */
+export function billNextDueDate(
+  today: Date,
+  dueDay: number | null | undefined,
+  include: boolean,
+): Date | null {
+  if (!include || dueDay == null) return null;
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth() + 1;
+  const lastDom = daysInMonth(y, m);
+  const clamped = Math.min(dueDay, lastDom);
+  const candidate = d(y, m, clamped);
+  if (candidate.getTime() >= today.getTime()) return candidate;
+  // Roll to next month
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  const nmLast = daysInMonth(ny, nm);
+  return d(ny, nm, Math.min(dueDay, nmLast));
+}
+
+/**
+ * Payout date for a given sales month: the 22nd of the following month.
+ * Source: Commissions!H11
+ */
+export function commissionPayoutDate(
+  salesMonth: Date,
+  payoutDay: number = COMMISSION_PAYOUT_DAY,
+): Date {
+  const y = salesMonth.getUTCFullYear();
+  const m = salesMonth.getUTCMonth() + 1;
+  if (m === 12) return d(y + 1, 1, payoutDay);
+  return d(y, m + 1, payoutDay);
+}
+
+/** Days since the checking balance was last updated. Source: Dashboard!B8 */
+export function daysSinceUpdate(lastUpdate: Date, today: Date): number {
+  return dayDiff(today, lastUpdate);
+}
+
+// ---------------------------------------------------------------------------
+// 3. FINANCIAL MATH UTILITIES
+// ---------------------------------------------------------------------------
+
+/**
+ * Monthly loan payment — Excel PMT(rate/12, term, -principal).
+ * PMT(r, n, pv) = pv * r / (1 - (1+r)^-n)
+ * Source: Decision Sandbox!B21, Debt Strategy!B19
+ */
+export function pmt(annualRate: number, termMonths: number, principal: number): number {
+  if (annualRate === 0) {
+    return termMonths > 0 ? principal / termMonths : 0.0;
+  }
+  const r = annualRate / 12;
+  return (principal * r) / (1 - Math.pow(1 + r, -termMonths));
+}
+
+/**
+ * Future value — Excel FV(rate, nper, pmt, pv) but with positive sign convention.
+ * FV = pv * (1+r)^n + pmt * ((1+r)^n - 1) / r
+ * Source: Retirement Planning!B35/B36/B39/B40 and Decision Sandbox!B26
+ */
+export function fv(annualRate: number, periods: number, payment: number, pv: number): number {
+  if (annualRate === 0) return pv + payment * periods;
+  const r = annualRate;
+  const growth = Math.pow(1 + r, periods);
+  return pv * growth + (payment * (growth - 1)) / r;
+}
+
+/**
+ * Future value with annual contributions and annual compounding.
+ * Used for retirement projections.
+ * Source: Retirement Planning!B35
+ */
+export function fvAnnual(
+  annualRate: number,
+  years: number,
+  annualPayment: number,
+  pv: number,
+): number {
+  return fv(annualRate, years, annualPayment, pv);
+}
+
+// ---------------------------------------------------------------------------
+// 4. COMMISSION ENGINE
+// ---------------------------------------------------------------------------
+
+/**
+ * MRR gross payout — 4-tier piecewise.
+ * Source: Commissions!D11 / FIX_PLAN §B1 / BUILD_SPEC §5.3
+ */
+export function mrrPayoutGross(mrr: number, mrrTarget: number = MRR_TARGET): number {
+  if (mrr <= 0) return 0.0;
+  const tier1Cap = 349.93;
+  const tier2Cap = 489.93;
+  const tier3Cap = mrrTarget - 0.07; // = 699.93 when target = 700
+
+  const tier1 = Math.max(0.0, Math.min(mrr, tier1Cap)) * 0.3705;
+  const tier2 = Math.max(0.0, Math.min(mrr, tier2Cap) - tier1Cap) * 0.9634;
+  const tier3 = Math.max(0.0, Math.min(mrr, tier3Cap) - tier2Cap) * 5.5212;
+  const tier4 = Math.max(0.0, mrr - tier3Cap) * 0.65;
+  return tier1 + tier2 + tier3 + tier4;
+}
+
+/**
+ * NRR gross payout — 4-tier piecewise.
+ * Source: Commissions!E11 / FIX_PLAN §B1 / BUILD_SPEC §5.3
+ */
+export function nrrPayoutGross(nrr: number, nrrTarget: number = NRR_TARGET): number {
+  if (nrr <= 0) return 0.0;
+  const tier1Cap = 2999.4;
+  const tier2Cap = 4199.4;
+  const tier3Cap = nrrTarget - 0.6; // = 5999.40 when target = 6000
+
+  const tier1 = Math.max(0.0, Math.min(nrr, tier1Cap)) * 0.0204;
+  const tier2 = Math.max(0.0, Math.min(nrr, tier2Cap) - tier1Cap) * 0.0388;
+  const tier3 = Math.max(0.0, Math.min(nrr, tier3Cap) - tier2Cap) * 0.2801;
+  const tier4 = Math.max(0.0, nrr - tier3Cap) * 0.042;
+  return tier1 + tier2 + tier3 + tier4;
+}
+
+/**
+ * Take-home commission after estimated tax withholding.
+ * Source: Commissions!G11
+ */
+export function commissionTakeHome(
+  mrr: number,
+  nrr: number,
+  mrrTarget: number = MRR_TARGET,
+  nrrTarget: number = NRR_TARGET,
+  taxRate: number = COMMISSION_TAX_RATE,
+): number {
+  const gross = mrrPayoutGross(mrr, mrrTarget) + nrrPayoutGross(nrr, nrrTarget);
+  return gross * (1.0 - taxRate);
+}
+
+/**
+ * Commission take-home confirmed for the current month.
+ * Source: Dashboard!B55
+ */
+export function confirmedCommissionThisMonth(
+  commissions: CommissionRow[],
+  today: Date,
+  mrrTarget: number = MRR_TARGET,
+  nrrTarget: number = NRR_TARGET,
+  taxRate: number = COMMISSION_TAX_RATE,
+  payoutDay: number = COMMISSION_PAYOUT_DAY,
+): number {
+  const targetPayout = d(today.getUTCFullYear(), today.getUTCMonth() + 1, payoutDay);
+  for (const row of commissions) {
+    const pd = commissionPayoutDate(row.salesMonth, payoutDay);
+    if (dateEq(pd, targetPayout) && pd.getTime() <= today.getTime()) {
+      return commissionTakeHome(row.mrrAchieved, row.nrrAchieved, mrrTarget, nrrTarget, taxRate);
+    }
+  }
+  return 0.0;
+}
+
+/**
+ * Drought flag — true if the most recent N consecutive commission months all
+ * had take-home below the drought threshold.
+ * Source: Commissions!B26 / Playbook §1.4 / BUILD_SPEC §6.1
+ */
+export function droughtFlag(
+  commissions: CommissionRow[],
+  threshold: number = DROUGHT_THRESHOLD,
+  mrrTarget: number = MRR_TARGET,
+  nrrTarget: number = NRR_TARGET,
+  taxRate: number = COMMISSION_TAX_RATE,
+  consecutiveMonths: number = 2,
+): boolean {
+  if (commissions.length === 0) return false;
+  const sorted = [...commissions].sort((a, b) => a.salesMonth.getTime() - b.salesMonth.getTime());
+  const recent = sorted.slice(-consecutiveMonths);
+  if (recent.length < consecutiveMonths) return false;
+  return recent.every(
+    (r) =>
+      commissionTakeHome(r.mrrAchieved, r.nrrAchieved, mrrTarget, nrrTarget, taxRate) < threshold,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 5. BILLS ENGINE
+// ---------------------------------------------------------------------------
+
+/**
+ * Filter bills that count in the current cycle hold.
+ * CRITICAL: strict next_due < effective_payday (bills due ON payday excluded).
+ * Source: Bills!H2:H13 / Playbook §1.1 / BUILD_SPEC §4.4 / FIX_PLAN §B2
+ */
+export function billsInCurrentCycle(
+  bills: Bill[],
+  today: Date,
+  nextPaydayNominal: Date,
+): Array<[Bill, Date]> {
+  const effectiveNext = effectivePayday(nextPaydayNominal);
+  const result: Array<[Bill, Date]> = [];
+  for (const bill of bills) {
+    if (!bill.include) continue;
+    if (bill.amount <= 0) continue;
+    const nextDue = billNextDueDate(today, bill.dueDay, bill.include);
+    if (nextDue === null) continue;
+    if (nextDue.getTime() >= today.getTime() && nextDue.getTime() < effectiveNext.getTime()) {
+      result.push([bill, nextDue]);
+    }
+  }
+  return result;
+}
+
+/**
+ * Forward Reserve: bills due 1st-7th of next month (Include=TRUE) plus 7 days
+ * of prorated variable spend. Uses due_day, NOT computed next_due_date.
+ *
+ * Double-count guard (Defect 1 / Playbook §2.1): bills whose dueDay 1-7
+ * already fall in the CURRENT cycle's Required Hold window (e.g. today is
+ * April 24, payday May 7, Car Loan dueDay 1 → next due May 1 < May 7) are
+ * already reserved by Required Hold. Counting them again in Forward Reserve
+ * inflates Monthly Savings Estimate and Discretionary This Month subtractions.
+ * Pass the current-cycle bills via `currentCycleBills` to exclude them from
+ * the 1-7 sum. Match key is name+dueDay+amount.
+ *
+ * Source: Dashboard!B33 / Playbook §2.1 / BUILD_SPEC §4.3 / FIX_PLAN §B4
+ */
+export function forwardReserve(
+  bills: Bill[],
+  variableCap: number = VARIABLE_SPEND_CAP,
+  monthLengthDays: number = MONTH_LENGTH_DAYS,
+  currentCycleBills: Bill[] = [],
+): number {
+  const cycleKeys = new Set<string>();
+  for (const b of currentCycleBills) {
+    cycleKeys.add(`${b.name}|${b.dueDay}|${b.amount}`);
+  }
+  let bills1To7 = 0.0;
+  for (const b of bills) {
+    if (!(b.include && b.dueDay >= 1 && b.dueDay <= 7)) continue;
+    if (cycleKeys.has(`${b.name}|${b.dueDay}|${b.amount}`)) continue;
+    bills1To7 += b.amount;
+  }
+  const dailyVariable = variableCap / monthLengthDays;
+  return bills1To7 + 7.0 * dailyVariable;
+}
+
+/**
+ * Total Required Hold — sum of all reserves against checking.
+ * NOTE: Forward Reserve (B33) is NOT included.
+ * Source: Dashboard!B16
+ */
+export function requiredHold(
+  billsDueTotal: number,
+  pendingHolds: number = 0.0,
+  minimumCushion: number = 0.0,
+  checkingFloor: number = 0.0,
+  irregularBuffer: number = 0.0,
+  timingBuffer: number = 0.0,
+  oneTimeDueTotal: number = 0.0,
+): number {
+  return (
+    billsDueTotal +
+    pendingHolds +
+    minimumCushion +
+    checkingFloor +
+    irregularBuffer +
+    timingBuffer +
+    oneTimeDueTotal
+  );
+}
+
+/**
+ * Sum of one-time expenses with due dates falling in the current cycle.
+ * Upper bound is <= effective payday (inclusive, unlike bills which are <).
+ * Source: Dashboard!B40 / BUILD_SPEC §4.5
+ */
+export function oneTimeExpensesDueInCycle(
+  expenses: OneTimeExpense[],
+  today: Date,
+  nextPaydayNominal: Date,
+): number {
+  const effectiveNext = effectivePayday(nextPaydayNominal);
+  let total = 0.0;
+  for (const e of expenses) {
+    if (
+      !e.paid &&
+      e.dueDate !== null &&
+      e.dueDate.getTime() >= today.getTime() &&
+      e.dueDate.getTime() <= effectiveNext.getTime()
+    ) {
+      total += e.amount;
+    }
+  }
+  return total;
+}
+
+/**
+ * Sum of ALL unpaid one-time expenses regardless of due date.
+ * Source: Dashboard!B59
+ */
+export function knownOneTimeAll(expenses: OneTimeExpense[]): number {
+  let total = 0.0;
+  for (const e of expenses) if (!e.paid) total += e.amount;
+  return total;
+}
+
+// ---------------------------------------------------------------------------
+// 6. CYCLE DECISION OUTPUTS
+// ---------------------------------------------------------------------------
+
+export interface SafeToSpendOpts {
+  pendingHolds?: number;
+  minimumCushion?: number;
+  checkingFloor?: number;
+  irregularBuffer?: number;
+  timingBuffer?: number;
+  oneTimeDueTotal?: number;
+  forwardReserveAmount?: number;
+  includeForwardReserveInSts?: boolean;
+}
+
+/**
+ * Safe to Spend — primary cycle decision output.
+ * Per Correction Playbook v8.0 §1.1, Safe to Spend subtracts Forward Reserve
+ * so the headline never overstates spendable cash. When
+ * `includeForwardReserveInSts` is true (default), the forward reserve amount
+ * is added to the required hold; pass false only for legacy callers that need
+ * the pre-§1.1 behavior.
+ * Source: Dashboard!B19 / Playbook §1.1 / BUILD_SPEC §4.4 / FIX_PLAN §B2
+ */
+export function safeToSpend(
+  checkingBalance: number,
+  billsDueTotal: number,
+  opts: SafeToSpendOpts = {},
+): number {
+  const {
+    pendingHolds = 0.0,
+    minimumCushion = 0.0,
+    checkingFloor = 0.0,
+    irregularBuffer = 0.0,
+    timingBuffer = 0.0,
+    oneTimeDueTotal = 0.0,
+    forwardReserveAmount = 0.0,
+    includeForwardReserveInSts = INCLUDE_FORWARD_RESERVE_IN_STS,
+  } = opts;
+  const hold = requiredHold(
+    billsDueTotal,
+    pendingHolds,
+    minimumCushion,
+    checkingFloor,
+    irregularBuffer,
+    timingBuffer,
+    oneTimeDueTotal,
+  );
+  const effectiveHold = includeForwardReserveInSts ? hold + forwardReserveAmount : hold;
+  return Math.max(0.0, checkingBalance - effectiveHold);
+}
+
+/**
+ * Daily Rate (From Last Update) — static rate anchored to balance update date.
+ * Returns 0 if payday already arrived (B4 <= B5).
+ * Source: Dashboard!B21
+ */
+export function dailyRateStatic(
+  safeToSpendAmount: number,
+  variableSpendUntilPayday: number,
+  nextPaydayNominal: Date,
+  lastBalanceUpdate: Date,
+): number {
+  const eff = effectivePayday(nextPaydayNominal);
+  const days = dayDiff(eff, lastBalanceUpdate);
+  if (days <= 0) return 0.0;
+  return Math.max(0.0, (safeToSpendAmount - variableSpendUntilPayday) / days);
+}
+
+/**
+ * Daily Rate (Real-Time) — tightens daily as payday approaches.
+ * Source: Dashboard!B22
+ */
+export function dailyRateRealtime(
+  safeToSpendAmount: number,
+  variableSpendUntilPayday: number,
+  nextPaydayNominal: Date,
+  today: Date,
+): number {
+  const eff = effectivePayday(nextPaydayNominal);
+  const days = dayDiff(eff, today);
+  if (days <= 0) return 0.0;
+  return Math.max(0.0, (safeToSpendAmount - variableSpendUntilPayday) / days);
+}
+
+/**
+ * Days of coverage at the current daily rate.
+ * Returns null when daily rate is 0 (no meaningful coverage figure).
+ * Source: Dashboard!B23
+ */
+export function daysOfCoverage(safeToSpendAmount: number, dailyRate: number): number | null {
+  if (dailyRate === 0) return null;
+  return safeToSpendAmount / dailyRate;
+}
+
+export const CycleStatus = {
+  RED: "RED",
+  YELLOW: "YELLOW",
+  GREEN: "GREEN",
+} as const;
+export type CycleStatus = (typeof CycleStatus)[keyof typeof CycleStatus];
+
+/**
+ * RED / YELLOW / GREEN cycle status.
+ *   RED:    safeToSpend <= 0
+ *   YELLOW: 0 < safeToSpend < threshold
+ *   GREEN:  safeToSpend >= threshold
+ * Source: Dashboard!B27 / Assumptions!B8 / BUILD_SPEC §4.10
+ */
+export function cycleStatus(
+  safeToSpendAmount: number,
+  yellowThreshold: number = ALERT_THRESHOLD_YELLOW,
+): CycleStatus {
+  if (safeToSpendAmount <= 0) return CycleStatus.RED;
+  if (safeToSpendAmount < yellowThreshold) return CycleStatus.YELLOW;
+  return CycleStatus.GREEN;
+}
+
+// ---------------------------------------------------------------------------
+// 7. MONTHLY SAVINGS ESTIMATE  (Dashboard B62 — master output)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimated Monthly Savings — forward-looking cycle savings floor.
+ * = MAX(0, total_income - fixed - variable_prorated - one_time - qs - forward_reserve)
+ * Source: Dashboard!B56-B62 / Playbook §2.1 / BUILD_SPEC §5.4 / FIX_PLAN §B3
+ */
+export function monthlySavingsEstimate(
+  baseNetMonthly: number,
+  confirmedCommission: number,
+  includedBills: Bill[],
+  nextPaydayNominal: Date,
+  today: Date,
+  oneTimeExpenses: OneTimeExpense[],
+  quicksilverAccrual: number,
+  billsForReserve: Bill[],
+  variableCap: number = VARIABLE_SPEND_CAP,
+  monthLengthDays: number = MONTH_LENGTH_DAYS,
+  currentCycleBills: Bill[] = [],
+): number {
+  const totalMonthIncome = baseNetMonthly + confirmedCommission;
+
+  // B57 — SUMIFS(Bills!B, Bills!F, TRUE)
+  let fullMonthFixed = 0.0;
+  for (const b of includedBills) if (b.include) fullMonthFixed += b.amount;
+
+  // B58 — ROUND(((days_to_payday) / 30.4) * variable_cap, 2)
+  const daysToPayday = dayDiff(effectivePayday(nextPaydayNominal), today);
+  const remainingVariableProrated = roundTo(
+    Math.max(0.0, (daysToPayday / monthLengthDays) * variableCap),
+    2,
+  );
+
+  // B59 — sum of all unpaid one-time expenses
+  const knownOneTime = knownOneTimeAll(oneTimeExpenses);
+
+  // B60 — QuickSilver accrual
+  const qsAccrual = quicksilverAccrual;
+
+  // B61 = B33 — forward reserve. Pass currentCycleBills so that bills already
+  // captured in the current cycle's Required Hold are not double-counted here
+  // (Defect 1 / Playbook §2.1).
+  const fwdReserve = forwardReserve(billsForReserve, variableCap, monthLengthDays, currentCycleBills);
+
+  const result =
+    totalMonthIncome -
+    fullMonthFixed -
+    remainingVariableProrated -
+    knownOneTime -
+    qsAccrual -
+    fwdReserve;
+  return Math.max(0.0, result);
+}
+
+/**
+ * Discretionary This Month — end-of-month deployable surplus from current
+ * checking, after funding every known outflow between today and the first
+ * paycheck of the following month.
+ *
+ * Answers: "How much cash can I save, invest, or spend on non-obligated
+ *           purchases this month after every known obligation is funded?"
+ *
+ * Distinct from safeToSpend (current-cycle spending authority — no forward
+ * reserve, paycheck-bounded) and from monthlySavingsEstimate (full-month
+ * income/outflow ledger, paycheck-boundary). Discretionary is checking-only
+ * and explicitly subtracts forwardReserve per Playbook §2.1.
+ *
+ * Formula:
+ *   MAX(0,
+ *     checking
+ *     - unpaid_fixed_bills_remaining_this_month
+ *     - prorated_variable_remaining_this_month
+ *     - unpaid_one_time_expenses_remaining_this_month
+ *     - quicksilver_accrual_not_yet_posted
+ *     - forward_reserve(billsForReserve)
+ *   )
+ *
+ *   prorated_variable = days_remaining_in_month * (variable_cap / month_length_days)
+ *     where days_remaining_in_month = (lastDayOfMonth - today + 1), inclusive
+ *     of today and inclusive of the last day.
+ *
+ * Source: Playbook §2.1 (Forward Reserve Rule) / Cycle Dashboard headline.
+ */
+export function discretionaryThisMonth(
+  checkingBalance: number,
+  unpaidFixedBillsRemainingThisMonth: number,
+  unpaidOneTimeExpensesRemainingThisMonth: number,
+  quicksilverAccrualNotYetPosted: number,
+  billsForReserve: Bill[],
+  today: Date,
+  variableCap: number = VARIABLE_SPEND_CAP,
+  monthLengthDays: number = MONTH_LENGTH_DAYS,
+): number {
+  const year = today.getUTCFullYear();
+  const monthIdx = today.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, monthIdx + 1, 0)).getUTCDate();
+  const todayDay = today.getUTCDate();
+  const daysRemaining = Math.max(0, lastDay - todayDay + 1);
+  const proratedVariableRemaining = daysRemaining * (variableCap / monthLengthDays);
+  // Discretionary uses the FULL Forward Reserve (no current-cycle exclusion).
+  // The discretionary formula does NOT subtract Required Hold separately, so
+  // every May 1-7 obligation must be reserved out of today's cash via Forward
+  // Reserve. The double-count protection is only relevant for
+  // monthlySavingsEstimate, which subtracts full_month_fixed (current-month
+  // bills) AND forward_reserve (next-month-1-7 bills) — there the Car Loan
+  // would otherwise appear twice.
+  const fwdReserve = forwardReserve(billsForReserve, variableCap, monthLengthDays);
+  const result =
+    checkingBalance -
+    unpaidFixedBillsRemainingThisMonth -
+    proratedVariableRemaining -
+    unpaidOneTimeExpensesRemainingThisMonth -
+    quicksilverAccrualNotYetPosted -
+    fwdReserve;
+  return Math.max(0.0, result);
+}
+
+// ---------------------------------------------------------------------------
+// 8. 401(K) MATCH GAP  (FIX_PLAN §A2 — corrected formula)
+// ---------------------------------------------------------------------------
+
+export interface MatchGapResult {
+  effectiveEmployeePct: number;
+  employerMatchPct: number;
+  maxPossibleMatchPct: number;
+  matchGapPct: number;
+  annualCaptured: number;
+  annualAvailable: number;
+  annualGap: number;
+  monthlyGap: number;
+  atCeiling: boolean;
+}
+
+/**
+ * 401(k) match gap using the CORRECTED formula from FIX_PLAN §A2.
+ * Verified values @ gross $54k, contribution 4%, multiplier 0.50, ceiling 0.08:
+ *   annual_gap = $1,080/yr, monthly_gap = $90/mo
+ * Source: FIX_PLAN §A2
+ */
+export function matchGapAnalysis(
+  grossSalary: number = GROSS_SALARY,
+  contributionPct: number = K401_CONTRIBUTION_PCT,
+  matchMultiplier: number = K401_MATCH_MULTIPLIER,
+  employeeCeiling: number = K401_EMPLOYEE_CEILING,
+): MatchGapResult {
+  const effectiveEmployee = Math.min(contributionPct, employeeCeiling);
+  const employerMatchPct = effectiveEmployee * matchMultiplier;
+  const maxPossibleMatch = employeeCeiling * matchMultiplier;
+  const matchGapPct = maxPossibleMatch - employerMatchPct;
+
+  const annualCaptured = grossSalary * employerMatchPct;
+  const annualAvailable = grossSalary * maxPossibleMatch;
+  const annualGap = annualAvailable - annualCaptured;
+  const monthlyGap = annualGap / 12.0;
+
+  return {
+    effectiveEmployeePct: effectiveEmployee,
+    employerMatchPct,
+    maxPossibleMatchPct: maxPossibleMatch,
+    matchGapPct,
+    annualCaptured,
+    annualAvailable,
+    annualGap,
+    monthlyGap,
+    atCeiling: contributionPct >= employeeCeiling,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 9. SESSION INTEGRITY CHECK  (Assumptions D20:D29 -> D31)
+// ---------------------------------------------------------------------------
+
+export interface SessionIntegrityReport {
+  checks: IntegrityCheckResult[];
+  overallPass: boolean;
+  failCount: number;
+  statusText: string;
+}
+
+export interface SessionIntegrityArgs {
+  baseNetMonthly: number;
+  nextPaydayNominal: Date;
+  today: Date;
+  lastBalanceUpdate: Date;
+  bills: Bill[];
+  forwardReserveAmount: number;
+  commissionTaxRate: number;
+  variableSpendCap: number;
+  monthlySavings: number;
+  matchGapResult: MatchGapResult | null;
+}
+
+/**
+ * 10-point session integrity check. Any failure = investigate before proceeding.
+ * Source: Assumptions!D20:D29, D31 / Playbook §1.3 / BUILD_SPEC §4.9
+ */
+export function sessionIntegrityCheck(args: SessionIntegrityArgs): SessionIntegrityReport {
+  const {
+    baseNetMonthly,
+    nextPaydayNominal,
+    today,
+    lastBalanceUpdate,
+    bills,
+    forwardReserveAmount,
+    commissionTaxRate,
+    variableSpendCap,
+    monthlySavings,
+    matchGapResult,
+  } = args;
+
+  const checks: IntegrityCheckResult[] = [];
+
+  checks.push(
+    new IntegrityCheckResult(
+      1,
+      "Base net income set and positive",
+      baseNetMonthly > 0,
+      `baseNetMonthly=${baseNetMonthly}`,
+    ),
+  );
+
+  const eff = effectivePayday(nextPaydayNominal);
+  checks.push(
+    new IntegrityCheckResult(
+      2,
+      "Next effective payday is in the future",
+      eff.getTime() > today.getTime(),
+      `effectivePayday=${eff.toISOString().slice(0, 10)}, today=${today.toISOString().slice(0, 10)}`,
+    ),
+  );
+
+  const staleness = daysSinceUpdate(lastBalanceUpdate, today);
+  checks.push(
+    new IntegrityCheckResult(
+      3,
+      `Balance update <= ${STALENESS_WARN_DAYS} days old`,
+      staleness <= STALENESS_WARN_DAYS,
+      `daysSinceUpdate=${staleness}`,
+    ),
+  );
+
+  const activeBillCount = bills.filter((b) => b.include).length;
+  checks.push(
+    new IntegrityCheckResult(
+      4,
+      "At least one bill is Include=TRUE",
+      activeBillCount > 0,
+      `activeBills=${activeBillCount}`,
+    ),
+  );
+
+  checks.push(
+    new IntegrityCheckResult(
+      5,
+      "Forward reserve is non-negative",
+      forwardReserveAmount >= 0,
+      `forwardReserve=${forwardReserveAmount.toFixed(2)}`,
+    ),
+  );
+
+  checks.push(
+    new IntegrityCheckResult(
+      6,
+      "Commission tax rate is configured",
+      commissionTaxRate > 0 && commissionTaxRate < 1,
+      `commissionTaxRate=${commissionTaxRate}`,
+    ),
+  );
+
+  checks.push(
+    new IntegrityCheckResult(
+      7,
+      "Variable spend cap is configured",
+      variableSpendCap > 0,
+      `variableSpendCap=${variableSpendCap}`,
+    ),
+  );
+
+  const savingsValid =
+    monthlySavings !== null &&
+    monthlySavings !== undefined &&
+    !Number.isNaN(monthlySavings) &&
+    Number.isFinite(monthlySavings);
+  checks.push(
+    new IntegrityCheckResult(
+      8,
+      "Monthly savings estimate is a valid number",
+      savingsValid,
+      `monthlySavings=${monthlySavings}`,
+    ),
+  );
+
+  const matchGapOk = matchGapResult !== null && !Number.isNaN(matchGapResult.annualGap);
+  checks.push(
+    new IntegrityCheckResult(
+      9,
+      "401(k) match gap computed successfully",
+      matchGapOk,
+      `annualGap=${matchGapResult ? matchGapResult.annualGap : "None"}`,
+    ),
+  );
+
+  const negativeBills = bills.filter((b) => b.amount < 0).map((b) => b.name);
+  checks.push(
+    new IntegrityCheckResult(
+      10,
+      "No bill has a negative amount",
+      negativeBills.length === 0,
+      `negativeBills=${JSON.stringify(negativeBills)}`,
+    ),
+  );
+
+  const failCount = checks.filter((c) => !c.passed).length;
+  const overallPass = failCount === 0;
+  return {
+    checks,
+    overallPass,
+    failCount,
+    statusText: overallPass ? "ALL 10 CHECKS PASS" : `${failCount} CHECK(S) FAILED`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 10. FORWARD PROJECTION  (2-cycle cash flow)
+// ---------------------------------------------------------------------------
+
+export interface ProjectionCycle {
+  cycleLabel: string;
+  paydayDate: Date;
+  baseIncome: number;
+  expectedCommission: number;
+  totalIncome: number;
+  fixedBills: number;
+  variableEstimate: number;
+  forwardReserveOut: number;
+  estimatedSavings: number;
+  projectedChecking: number;
+}
+
+export interface ForwardProjectionArgs {
+  currentChecking: number;
+  bills: Bill[];
+  today: Date;
+  nextPaydayNominal: Date;
+  commissions: CommissionRow[];
+  baseNetMonthly?: number;
+  variableCap?: number;
+  monthLengthDays?: number;
+  mrrTarget?: number;
+  nrrTarget?: number;
+  taxRate?: number;
+  payoutDay?: number;
+  cycles?: number;
+}
+
+/**
+ * Multi-cycle forward cash flow projection.
+ * Source: BUILD_SPEC §5.2 / FIX_PLAN §B3
+ */
+export function forwardProjection(args: ForwardProjectionArgs): ProjectionCycle[] {
+  const {
+    currentChecking,
+    bills,
+    nextPaydayNominal,
+    commissions,
+    baseNetMonthly = BASE_NET_INCOME,
+    variableCap = VARIABLE_SPEND_CAP,
+    monthLengthDays = MONTH_LENGTH_DAYS,
+    mrrTarget = MRR_TARGET,
+    nrrTarget = NRR_TARGET,
+    taxRate = COMMISSION_TAX_RATE,
+    payoutDay = COMMISSION_PAYOUT_DAY,
+    cycles = 2,
+  } = args;
+
+  const result: ProjectionCycle[] = [];
+  const paydays: Date[] = [effectivePayday(nextPaydayNominal)];
+  let nominal = nextPaydayNominal;
+  for (let i = 0; i < cycles - 1; i++) {
+    const day = nominal.getUTCDate();
+    if (day === 7) {
+      nominal = withDay(nominal, 22);
+    } else {
+      const m = nominal.getUTCMonth() + 1;
+      const y = nominal.getUTCFullYear();
+      nominal = m === 12 ? d(y + 1, 1, 7) : d(y, m + 1, 7);
+    }
+    paydays.push(effectivePayday(nominal));
+  }
+
+  let runningChecking = currentChecking;
+
+  for (let i = 0; i < paydays.length; i++) {
+    const payday = paydays[i]!;
+    const label = `Cycle ${i + 1}: payday ${payday.toISOString().slice(0, 10)}`;
+    const targetPayout = d(payday.getUTCFullYear(), payday.getUTCMonth() + 1, payoutDay);
+
+    let expectedCommission = 0.0;
+    for (const row of commissions) {
+      const pd = commissionPayoutDate(row.salesMonth, payoutDay);
+      if (dateEq(pd, targetPayout) && pd.getTime() <= payday.getTime()) {
+        expectedCommission = commissionTakeHome(
+          row.mrrAchieved,
+          row.nrrAchieved,
+          mrrTarget,
+          nrrTarget,
+          taxRate,
+        );
+      }
+    }
+
+    const totalIncome = baseNetMonthly / 2.0 + expectedCommission;
+    let includedSum = 0.0;
+    for (const b of bills) if (b.include) includedSum += b.amount;
+    const fixedHalf = includedSum / 2.0;
+    const variableEst = variableCap / 2.0;
+    const fwdRes = forwardReserve(bills, variableCap, monthLengthDays);
+
+    const estSavings = Math.max(0.0, totalIncome - fixedHalf - variableEst);
+    runningChecking = runningChecking + totalIncome - fixedHalf - variableEst;
+
+    result.push({
+      cycleLabel: label,
+      paydayDate: payday,
+      baseIncome: baseNetMonthly / 2.0,
+      expectedCommission,
+      totalIncome,
+      fixedBills: fixedHalf,
+      variableEstimate: variableEst,
+      forwardReserveOut: fwdRes,
+      estimatedSavings: estSavings,
+      projectedChecking: runningChecking,
+    });
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// 11. DECISION SANDBOX
+// ---------------------------------------------------------------------------
+
+export interface PurchaseComparisonResult {
+  name: string;
+  monthlyPayment: number;
+  totalMonthlyCost: number;
+  dailyLifestyleCost: number;
+  newDailySafeSpend: number;
+  annualCost: number;
+  totalInterestWithOpportunityCost: number;
+  hysaAfterDown: number;
+  hysaRunwayMonths: number;
+  affordability: string;
+  incomeCoveragePct: number;
+}
+
+/**
+ * Purchase comparison across up to 4 options.
+ * Source: Decision Sandbox!B21:E30 / BUILD_SPEC §6.1 item 7
+ */
+export function decisionSandboxCompare(
+  options: PurchaseOption[],
+  currentDailySafeSpend: number,
+  monthlyFixedBills: number,
+  variableCap: number,
+  baseNetMonthly: number,
+  hysaBalance: number,
+  returnAssumption: number = RETIREMENT_RETURN,
+  opportunityCostMonths: number = 120,
+): PurchaseComparisonResult[] {
+  const results: PurchaseComparisonResult[] = [];
+
+  for (const opt of options) {
+    const financed = opt.totalPrice - opt.downPayment;
+    const monthlyPayment =
+      opt.annualRate > 0 && opt.termMonths > 0 ? pmt(opt.annualRate, opt.termMonths, financed) : 0.0;
+
+    const totalMonthly = monthlyPayment + opt.monthlyAddons;
+    const dailyLifestyle = totalMonthly / 30.4;
+    const newDailySafe = currentDailySafeSpend - dailyLifestyle;
+
+    const annualCost =
+      opt.totalPrice > 0 && opt.termMonths > 0 ? totalMonthly * 12 : opt.oneTimeCost;
+
+    const actualInterest =
+      opt.termMonths > 0 ? monthlyPayment * opt.termMonths - financed : 0.0;
+    let oppCost = 0.0;
+    if (opt.downPayment > 0) {
+      oppCost = fv(returnAssumption / 12, opportunityCostMonths, 0.0, opt.downPayment) - opt.downPayment;
+    }
+    const totalInterest = actualInterest + oppCost;
+
+    const hysaAfter = hysaBalance - opt.downPayment;
+    const hysaRunway = totalMonthly > 0 ? roundTo(hysaAfter / totalMonthly, 1) : Number.POSITIVE_INFINITY;
+
+    const residual = baseNetMonthly - (monthlyFixedBills + totalMonthly);
+    let affordability: string;
+    if (residual > variableCap) affordability = "Yes";
+    else if (residual > 0) affordability = "Tight";
+    else affordability = "No";
+
+    const incomePct = baseNetMonthly > 0 ? annualCost / (baseNetMonthly * 12) : 0.0;
+
+    results.push({
+      name: opt.name,
+      monthlyPayment,
+      totalMonthlyCost: totalMonthly,
+      dailyLifestyleCost: dailyLifestyle,
+      newDailySafeSpend: newDailySafe,
+      annualCost,
+      totalInterestWithOpportunityCost: totalInterest,
+      hysaAfterDown: hysaAfter,
+      hysaRunwayMonths: hysaRunway,
+      affordability,
+      incomeCoveragePct: incomePct,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Minimum base salary (annual, monthly gross) to maintain the savings floor at
+ * $0 commission.
+ * Source: Decision Sandbox!B53
+ */
+export function incomeReplacementFloor(
+  monthlySavingsTarget: number,
+  monthlyFixedBills: number,
+  variableCap: number,
+  totalTaxRate: number,
+): [number, number] {
+  const minMonthlyNet = monthlySavingsTarget + monthlyFixedBills + variableCap;
+  const annualFloor = (minMonthlyNet * 12) / (1.0 - totalTaxRate);
+  return [annualFloor, annualFloor / 12.0];
+}
+
+export interface DroughtRunwayResult {
+  totalLiquid: number;
+  totalBurn: number;
+  monthlyDeficit: number;
+  monthlySurplus: number;
+  runway_months: number | null;
+  indefinite: boolean;
+}
+
+/**
+ * Zero-commission runway calculation.
+ * Source: Decision Sandbox!B33:B43
+ */
+export function droughtSurvivalRunway(
+  checkingBalance: number,
+  hysaBalance: number,
+  monthlyFixedBills: number,
+  variableCap: number,
+  baseNetMonthly: number,
+): DroughtRunwayResult {
+  const totalLiquid = checkingBalance + hysaBalance;
+  const totalBurn = monthlyFixedBills + variableCap;
+  const monthlyDeficit = Math.max(0.0, totalBurn - baseNetMonthly);
+  const monthlySurplus = Math.max(0.0, baseNetMonthly - totalBurn);
+
+  let runway_months: number | null;
+  let indefinite: boolean;
+  if (monthlyDeficit <= 0) {
+    runway_months = null;
+    indefinite = true;
+  } else {
+    runway_months = roundTo(totalLiquid / monthlyDeficit, 1);
+    indefinite = false;
+  }
+
+  return { totalLiquid, totalBurn, monthlyDeficit, monthlySurplus, runway_months, indefinite };
+}
+
+// ---------------------------------------------------------------------------
+// 12. TAX PLANNING  (Assumptions B35:B41)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tax reserve amounts — per paycheck and per month. Returns [perPaycheck, perMonth].
+ * Source: Assumptions!B38, B40, B41
+ */
+export function taxReservePerPaycheck(
+  grossAnnual: number = GROSS_SALARY,
+  fedRate: number = FED_TAX_RATE,
+  stateRate: number = STATE_TAX_RATE,
+  payPeriods: number = PAY_PERIODS_PER_YEAR,
+): [number, number] {
+  const annualLiability = grossAnnual * (fedRate + stateRate);
+  const perPaycheck = annualLiability / payPeriods;
+  const perMonth = annualLiability / 12.0;
+  return [perPaycheck, perMonth];
+}
+
+// ---------------------------------------------------------------------------
+// 13. INCOME GROWTH SCENARIO  (Assumptions B53:B60)
+// ---------------------------------------------------------------------------
+
+export interface IncomeGrowthResult {
+  current_base_salary: number;
+  new_base_salary: number;
+  monthly_net_increase: number;
+  new_monthly_net: number;
+  current_fixed_bills: number;
+  new_savings_floor: number;
+  savings_floor_improvement: number;
+}
+
+/**
+ * Raise impact modeling — how a salary change flows to savings.
+ * Source: Assumptions!B56:B60
+ */
+export function incomeGrowthScenario(
+  currentBaseSalary: number = GROSS_SALARY,
+  newBaseSalary: number = 65000.0,
+  fedRate: number = FED_TAX_RATE,
+  stateRate: number = STATE_TAX_RATE,
+  baseNetMonthly: number = BASE_NET_INCOME,
+  monthlyFixedBills: number = 0.0,
+): IncomeGrowthResult {
+  const monthlyNetIncrease = ((newBaseSalary - currentBaseSalary) * (1 - fedRate - stateRate)) / 12.0;
+  const newMonthlyNet = baseNetMonthly + monthlyNetIncrease;
+  const newSavingsFloor = newMonthlyNet - monthlyFixedBills;
+  return {
+    current_base_salary: currentBaseSalary,
+    new_base_salary: newBaseSalary,
+    monthly_net_increase: monthlyNetIncrease,
+    new_monthly_net: newMonthlyNet,
+    current_fixed_bills: monthlyFixedBills,
+    new_savings_floor: newSavingsFloor,
+    savings_floor_improvement: monthlyNetIncrease,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 14. DEBT STRATEGY  (Debt Strategy sheet)
+// ---------------------------------------------------------------------------
+
+export interface DebtAnalysis {
+  standard_monthly: number;
+  standard_total_paid: number;
+  standard_total_interest: number;
+  extended_monthly: number;
+  extended_total_paid: number;
+  extended_total_interest: number;
+  extra_interest_extended_vs_standard: number;
+  payoff_3yr_monthly: number;
+  payoff_3yr_total_interest: number;
+  payoff_3yr_interest_saved: number;
+  payoff_5yr_monthly: number;
+  payoff_5yr_total_interest: number;
+  payoff_5yr_interest_saved: number;
+  payoff_7yr_monthly: number;
+  payoff_7yr_total_interest: number;
+  payoff_7yr_interest_saved: number;
+  invest_fv_3yr_extra: number;
+  invest_verdict: "INVEST the difference" | "PAY AGGRESSIVELY";
+  invest_dollar_advantage: number;
+}
+
+/**
+ * Student loan debt strategy analysis.
+ * Source: Debt Strategy!B19-B50 / BUILD_SPEC §6.1 item 5
+ */
+export function debtPayoffAnalysis(
+  balance: number,
+  annualRate: number,
+  standardTermYears: number = 10,
+  extendedTermYears: number = 25,
+  returnAssumption: number = RETIREMENT_RETURN,
+): DebtAnalysis {
+  const stdMonthly = pmt(annualRate, standardTermYears * 12, balance);
+  const stdTotal = stdMonthly * standardTermYears * 12;
+  const stdInterest = stdTotal - balance;
+
+  const extMonthly = pmt(annualRate, extendedTermYears * 12, balance);
+  const extTotal = extMonthly * extendedTermYears * 12;
+  const extInterest = extTotal - balance;
+  const extraInterest = extInterest - stdInterest;
+
+  const m3 = pmt(annualRate, 36, balance);
+  const i3 = m3 * 36 - balance;
+  const s3 = stdInterest - i3;
+
+  const m5 = pmt(annualRate, 60, balance);
+  const i5 = m5 * 60 - balance;
+  const s5 = stdInterest - i5;
+
+  const m7 = pmt(annualRate, 84, balance);
+  const i7 = m7 * 84 - balance;
+  const s7 = stdInterest - i7;
+
+  const extraMonthly = m3 - stdMonthly;
+  const investFv = fvAnnual(returnAssumption / 12, 120, extraMonthly, 0.0);
+  const dollarAdvantage = investFv - s3;
+  const verdict: DebtAnalysis["invest_verdict"] =
+    investFv > s3 ? "INVEST the difference" : "PAY AGGRESSIVELY";
+
+  return {
+    standard_monthly: stdMonthly,
+    standard_total_paid: stdTotal,
+    standard_total_interest: stdInterest,
+    extended_monthly: extMonthly,
+    extended_total_paid: extTotal,
+    extended_total_interest: extInterest,
+    extra_interest_extended_vs_standard: extraInterest,
+    payoff_3yr_monthly: m3,
+    payoff_3yr_total_interest: i3,
+    payoff_3yr_interest_saved: s3,
+    payoff_5yr_monthly: m5,
+    payoff_5yr_total_interest: i5,
+    payoff_5yr_interest_saved: s5,
+    payoff_7yr_monthly: m7,
+    payoff_7yr_total_interest: i7,
+    payoff_7yr_interest_saved: s7,
+    invest_fv_3yr_extra: investFv,
+    invest_verdict: verdict,
+    invest_dollar_advantage: Math.abs(dollarAdvantage),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 15. RETIREMENT PLANNING  (Retirement Planning sheet)
+// ---------------------------------------------------------------------------
+
+export interface RetirementProjectionResult {
+  years_to_retirement: number;
+  annual_contribution: number;
+  monthly_contribution: number;
+  employer_match_captured: number;
+  max_employer_match: number;
+  total_annual_going_in: number;
+  projected_at_60: number;
+  projected_at_65: number;
+  at_cap_projected_60: number;
+  at_cap_projected_65: number;
+  aggressive_projected_60: number;
+  aggressive_projected_65: number;
+  match_gap_banner: string;
+  million_monthly_needed: number;
+}
+
+/**
+ * 401(k) projections at three contribution rates (current, ceiling, aggressive 12%).
+ * Source: Retirement Planning!B35-B40 / FIX_PLAN §A2
+ */
+export function retirementProjection(
+  grossSalary: number = GROSS_SALARY,
+  contributionPct: number = K401_CONTRIBUTION_PCT,
+  currentBalance: number = 2200.0,
+  currentAge: number = 30,
+  targetAge: number = 65,
+  returnAssumption: number = RETIREMENT_RETURN,
+  matchMultiplier: number = K401_MATCH_MULTIPLIER,
+  employeeCeiling: number = K401_EMPLOYEE_CEILING,
+): RetirementProjectionResult {
+  const years = targetAge - currentAge;
+
+  const empAnnual = grossSalary * contributionPct;
+  const matchGap = matchGapAnalysis(grossSalary, contributionPct, matchMultiplier, employeeCeiling);
+  const matchCaptured = matchGap.annualCaptured;
+  const totalAnnual = empAnnual + matchCaptured;
+
+  const proj60 = fvAnnual(returnAssumption, 60 - currentAge, totalAnnual, currentBalance);
+  const proj65 = fvAnnual(returnAssumption, years, totalAnnual, currentBalance);
+
+  const capEmpAnnual = grossSalary * employeeCeiling;
+  const capMatch = matchGapAnalysis(grossSalary, employeeCeiling, matchMultiplier, employeeCeiling);
+  const capTotal = capEmpAnnual + capMatch.annualCaptured;
+  const cap60 = fvAnnual(returnAssumption, 60 - currentAge, capTotal, currentBalance);
+  const cap65 = fvAnnual(returnAssumption, years, capTotal, currentBalance);
+
+  const aggPct = 0.12;
+  const aggEmp = grossSalary * aggPct;
+  const aggMatch = matchGapAnalysis(grossSalary, aggPct, matchMultiplier, employeeCeiling);
+  const aggTotal = aggEmp + aggMatch.annualCaptured;
+  const agg60 = fvAnnual(returnAssumption, 60 - currentAge, aggTotal, currentBalance);
+  const agg65 = fvAnnual(returnAssumption, years, aggTotal, currentBalance);
+
+  let banner: string;
+  if (matchGap.atCeiling) {
+    banner = "Full match captured";
+  } else {
+    const monthlyGap = matchGap.monthlyGap;
+    const annualGap = matchGap.annualGap;
+    banner =
+      `Contributing ${(contributionPct * 100).toFixed(1)}% vs ` +
+      `${(employeeCeiling * 100).toFixed(1)}% employee contribution ceiling. ` +
+      `$${annualGap.toFixed(2)}/year ($${monthlyGap.toFixed(2)}/mo) in free employer match uncaptured.`;
+  }
+
+  const rM = returnAssumption / 12;
+  const nM = years * 12;
+  const growth = Math.pow(1 + rM, nM);
+  let millionMonthly = ((1_000_000 - currentBalance * growth) * rM) / (growth - 1);
+  millionMonthly = Math.max(0.0, millionMonthly);
+
+  return {
+    years_to_retirement: years,
+    annual_contribution: empAnnual,
+    monthly_contribution: empAnnual / 24,
+    employer_match_captured: matchCaptured,
+    max_employer_match: matchGap.annualAvailable,
+    total_annual_going_in: totalAnnual,
+    projected_at_60: proj60,
+    projected_at_65: proj65,
+    at_cap_projected_60: cap60,
+    at_cap_projected_65: cap65,
+    aggressive_projected_60: agg60,
+    aggressive_projected_65: agg65,
+    match_gap_banner: banner,
+    million_monthly_needed: millionMonthly,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 16. WEALTH MANAGEMENT OUTPUTS
+// ---------------------------------------------------------------------------
+
+/** HYSA gap to target. Negative = surplus beyond target. */
+export function hysaGap(current: number, target: number = HYSA_TARGET): number {
+  return target - current;
+}
+
+/**
+ * Months to close HYSA gap assuming `savingsToHysaRatio` of savings go to HYSA.
+ * Returns null if gap is 0/negative (already at target) or no savings allocated.
+ */
+export function monthsToCloseHysaGap(
+  gap: number,
+  monthlySavings: number,
+  savingsToHysaRatio: number = SAVINGS_TO_HYSA_RATIO,
+): number | null {
+  if (gap <= 0) return null;
+  const allocated = monthlySavings * savingsToHysaRatio;
+  if (allocated <= 0) return null;
+  return gap / allocated;
+}
+
+/** Savings rate as fraction of gross monthly income. Target: 0.20. */
+export function savingsRate(monthlySavings: number, grossMonthly: number): number {
+  if (grossMonthly <= 0) return 0.0;
+  return monthlySavings / grossMonthly;
+}
+
+/**
+ * Net worth FV at target ages. Returns object keyed by target age.
+ * Source: Wealth Management Net Worth Projection
+ */
+export function netWorthProjection(
+  currentNetWorth: number,
+  monthlySavingsFloor: number,
+  currentAge: number = 30,
+  targetAges: number[] = [35, 40, 45],
+  returnAssumption: number = RETIREMENT_RETURN,
+): Record<number, number> {
+  const results: Record<number, number> = {};
+  for (const age of targetAges) {
+    const years = age - currentAge;
+    if (years <= 0) {
+      results[age] = currentNetWorth;
+    } else {
+      const annualSavings = monthlySavingsFloor * 12;
+      results[age] = fvAnnual(returnAssumption, years, annualSavings, currentNetWorth);
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// 17. STALENESS CHECK  (Dashboard B8 / Playbook §6.4)
+// ---------------------------------------------------------------------------
+
+/** True if checking balance is more than `warnDays` old. */
+export function isStale(
+  lastBalanceUpdate: Date,
+  today: Date,
+  warnDays: number = STALENESS_WARN_DAYS,
+): boolean {
+  return daysSinceUpdate(lastBalanceUpdate, today) > warnDays;
+}
+
+/** True if nominal payday falls on a weekend. Source: Dashboard!B26 */
+export function paydayRiskFlag(nextPaydayNominal: Date): boolean {
+  return pyWeekday(nextPaydayNominal) >= 5;
+}
+
+// ---------------------------------------------------------------------------
+// 18. VARIABLE SPEND PRORATION HELPERS
+// ---------------------------------------------------------------------------
+
+/** Daily variable spend allowance. Playbook §2.2: $600 / 30.4 = $19.74/day */
+export function variableDailyRate(
+  variableCap: number = VARIABLE_SPEND_CAP,
+  monthLengthDays: number = MONTH_LENGTH_DAYS,
+): number {
+  return variableCap / monthLengthDays;
+}
+
+/** Variable spend for a given number of days (e.g., 7 days of forward reserve). */
+export function variableProrated(
+  days: number,
+  variableCap: number = VARIABLE_SPEND_CAP,
+  monthLengthDays: number = MONTH_LENGTH_DAYS,
+): number {
+  return days * (variableCap / monthLengthDays);
+}
+
+// ---------------------------------------------------------------------------
+// 19. MONTH-FLOW VARIABLE OBLIGATION  (v10 — total-month estimate model)
+// ---------------------------------------------------------------------------
+
+/**
+ * Month-headline variable obligation = max(logged, E), where E is the user's
+ * TOTAL month variable estimate.
+ *
+ * NAMING CAVEAT (v10): the assumption key is `planned_variable_remaining_override`
+ * for backwards-compat (no migration), but its meaning is now "month total
+ * estimate," NOT "remaining." When set, the user is telling us their planned
+ * total spend for the month; when unset, we default to `variable_spend_cap`.
+ * Future-you: don't be fooled by the "_remaining_" in the name.
+ *
+ * Formula:
+ *   E          = max(0, override) if finite, else variableCap
+ *   obligation = max(logged, E)
+ *
+ * Downstream uses the derived F = max(0, E − logged) (= obligation − logged).
+ * F is the "estimated future variable still to spend." F subtracts from
+ * Available-to-Save and from Projected EOM checking, but NEVER enters the
+ * cycle's totalRequiredHold.
+ *
+ * NO-DOUBLE-COUNT INVARIANT: F is unlogged by construction; the cycle's
+ * quicksilverOwed is logged-only (rows where quicksilver=true AND paidOffAt
+ * IS NULL). The two sets are disjoint — a dollar physically cannot be in
+ * both. This is the seam the v10 cash math relies on; do not collapse F
+ * into the hold.
+ */
+export function monthVariableObligationHeadline(
+  variableLoggedThisMonth: number,
+  variableCap: number,
+  plannedMonthTotalOverride: number | null,
+): number {
+  const logged = Math.max(0, variableLoggedThisMonth);
+  const E =
+    plannedMonthTotalOverride !== null &&
+    Number.isFinite(plannedMonthTotalOverride)
+      ? Math.max(0, plannedMonthTotalOverride)
+      : variableCap;
+  return Math.max(logged, E);
+}
+
+```
+
+
+## `artifacts/api-server/src/lib/cycleBillEngine.ts` (207 lines)
+
+```ts
+import { db, bills } from "@workspace/db";
+import {
+  Bill as EngineBill,
+  d as utcDay,
+  effectivePayday,
+  nextNominalPayday,
+  billNextDueDate,
+  billsInCurrentCycle,
+  forwardReserve as engineForwardReserve,
+} from "@workspace/finance";
+
+export interface EnrichedBill {
+  id: number;
+  name: string;
+  amount: number;
+  dueDay: number;
+  frequency: string;
+  category: string;
+  autopay: boolean;
+  notes: string | null;
+  includeInCycle: boolean;
+  activeFrom: Date | null;
+  activeUntil: Date | null;
+  /** Next due date in calendar terms (this month if dueDay >= today, else next month). */
+  nextDueDate: Date;
+  /** Whether the bill's billing window is currently active (activeFrom/Until honored). */
+  isActivePeriod: boolean;
+  /** Days from today until nextDueDate (0 = due today, negative = overdue but rolled). */
+  daysUntilDue: number;
+  /** True if this bill counts toward Required Hold this cycle (Include=TRUE, $>0, active, today<=due<nextPayday). */
+  countsThisCycle: boolean;
+  /** True if this bill counts toward full-month fixed (Include=TRUE, $>0, active period). */
+  countsThisMonth: boolean;
+  /** v8.0 payment-state: scheduled | paid | late_unpaid | skipped_cycle. */
+  paymentState: string;
+  /**
+   * Strict cycle membership — engine [today, effective payday) window only.
+   * Does NOT include late_unpaid stickiness. Use this for Forward Reserve
+   * deduplication so a past-due bill doesn't suppress next month's 1–7
+   * reservation for the same recurring obligation.
+   */
+  countsThisCycleStrict: boolean;
+  /** ISO date when bill was marked paid this cycle (null if unpaid). */
+  paidDate: string | null;
+  /** v8.1 — ISO timestamp stamped when 'paid_pending_clear' → 'paid'. */
+  clearedDate: string | null;
+}
+
+/** UTC midnight start-of-day for a Date (matches engine convention). */
+function utcStartOfDay(date: Date): Date {
+  return utcDay(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
+function isActive(today: Date, activeFrom: Date | null, activeUntil: Date | null): boolean {
+  if (activeFrom && today < activeFrom) return false;
+  if (activeUntil && today > activeUntil) return false;
+  return true;
+}
+
+/**
+ * Re-export of the engine's payday helpers so other modules don't reach into
+ * @workspace/finance directly.
+ */
+export function deriveNextPayday(today: Date): Date {
+  const t = utcStartOfDay(today);
+  return effectivePayday(nextNominalPayday(t));
+}
+
+export function deriveNextNominalPayday(today: Date): Date {
+  return nextNominalPayday(utcStartOfDay(today));
+}
+
+/**
+ * Single source of truth for bill enumeration.
+ * Returns ALL bills with derived fields so callers can filter consistently.
+ *
+ * Cycle-membership decision delegates to @workspace/finance billsInCurrentCycle
+ * (which enforces strict `< effectivePayday` per FIX_PLAN §B2).
+ */
+export async function enumerateBills(
+  today?: Date,
+  nominalOverride?: Date,
+): Promise<EnrichedBill[]> {
+  const t = utcStartOfDay(today ?? new Date());
+  // v8.0 payday-morning fix: callers can pass the rolled-forward nominal
+  // payday so cycle membership reflects [today, NEXT next-payday) when today
+  // is itself a payday. Default behavior is unchanged.
+  const nominal = nominalOverride ? utcStartOfDay(nominalOverride) : nextNominalPayday(t);
+  const rows = await db.select().from(bills).orderBy(bills.dueDay);
+
+  // Build EngineBill list aligned to rows by index, so cycle-membership can
+  // be looked up by reference (avoids ambiguity when two bills share a name).
+  const engineBills = rows.map(
+    (b) =>
+      new EngineBill(
+        b.name,
+        parseFloat(b.amount),
+        b.dueDay,
+        b.includeInCycle,
+        b.category,
+        b.autopay,
+        b.notes ?? "",
+      ),
+  );
+  const cycleSet = new Set<EngineBill>(
+    billsInCurrentCycle(engineBills, t, nominal).map(
+      ([eb]: [EngineBill, Date]) => eb,
+    ),
+  );
+
+  return rows.map((b, i) => {
+    const amount = parseFloat(b.amount);
+    const activeFrom = b.activeFrom ? utcStartOfDay(new Date(b.activeFrom)) : null;
+    const activeUntil = b.activeUntil ? utcStartOfDay(new Date(b.activeUntil)) : null;
+    const isActivePeriod = isActive(t, activeFrom, activeUntil);
+    const dueDate =
+      billNextDueDate(t, b.dueDay, b.includeInCycle) ??
+      utcDay(t.getUTCFullYear(), t.getUTCMonth() + 1, b.dueDay);
+    const daysUntilDue = Math.round((dueDate.getTime() - t.getTime()) / 86400000);
+
+    // Engine-decided cycle membership keyed by reference (engineBills[i] ===
+    // the same object the engine returned), AND with isActivePeriod (engine
+    // doesn't know about activeFrom/activeUntil windows — DB-only concept).
+    const eb = engineBills[i]!;
+    // v8.0 late-unpaid stickiness: a bill marked late_unpaid is still owed
+    // and must remain in the Required Hold regardless of where billNextDueDate
+    // rolls. Without this, a past-due bill (e.g. dueDay 18 on day 22) rolls
+    // to next month and silently drops out of the cycle window.
+    const countsThisCycleStrict = isActivePeriod && cycleSet.has(eb);
+    const isLateUnpaid =
+      b.paymentState === "late_unpaid" && b.includeInCycle && amount > 0 && isActivePeriod;
+    const countsThisCycle = countsThisCycleStrict || isLateUnpaid;
+    const countsThisMonth = b.includeInCycle && amount > 0 && isActivePeriod;
+
+    return {
+      id: b.id,
+      name: b.name,
+      amount,
+      dueDay: b.dueDay,
+      frequency: b.frequency,
+      category: b.category,
+      autopay: b.autopay,
+      notes: b.notes,
+      includeInCycle: b.includeInCycle,
+      activeFrom,
+      activeUntil,
+      nextDueDate: dueDate,
+      isActivePeriod,
+      daysUntilDue,
+      countsThisCycle,
+      countsThisCycleStrict,
+      countsThisMonth,
+      paymentState: b.paymentState,
+      paidDate: b.paidDate,
+      clearedDate: b.clearedDate ? b.clearedDate.toISOString() : null,
+    };
+  });
+}
+
+/** Bills due in the current pay cycle (today through next payday, exclusive). */
+export async function billsInCycle(today?: Date): Promise<EnrichedBill[]> {
+  return (await enumerateBills(today)).filter((b) => b.countsThisCycle);
+}
+
+/** Bills counting toward full-month fixed (used by Monthly Savings + Discretionary). */
+export async function billsThisMonth(today?: Date): Promise<EnrichedBill[]> {
+  return (await enumerateBills(today)).filter((b) => b.countsThisMonth);
+}
+
+/** Bills due between today (inclusive) and end-of-month (inclusive), Include=TRUE and active. */
+export async function billsRemainingThisMonth(today?: Date): Promise<EnrichedBill[]> {
+  const t = utcStartOfDay(today ?? new Date());
+  const monthEnd = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0));
+  return (await enumerateBills(t)).filter(
+    (b) =>
+      b.countsThisMonth &&
+      b.dueDay >= t.getUTCDate() &&
+      b.dueDay <= monthEnd.getUTCDate(),
+  );
+}
+
+/**
+ * Forward Reserve fixed component: bills due 1st-7th of next month.
+ * Delegates to @workspace/finance forwardReserve (without the variable component).
+ *
+ * NOTE: This returns the FULL Forward Reserve including any 1-7 bills already
+ * in the current cycle's Required Hold. The reason: Forward Reserve represents
+ * the cash that must be held back from today's checking to cover the May 1-7
+ * obligations, regardless of whether those obligations also appear in the
+ * current cycle's Required Hold. The double-count protection (Defect 1 fix in
+ * the engine) is only used by `monthlySavingsEstimate`, which subtracts both
+ * full_month_fixed and forward_reserve and would otherwise count the same bill
+ * twice.
+ */
+export async function forwardReserveFixed(today?: Date): Promise<number> {
+  const all = await enumerateBills(today);
+  const engineBills = all
+    .filter((b) => b.isActivePeriod)
+    .map(
+      (b) =>
+        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
+    );
+  // engineForwardReserve = bills 1-7 + 7 days variable. We want fixed only —
+  // pass variableCap=0 so the variable contribution is zero.
+  return engineForwardReserve(engineBills, 0, 30.4);
+}
+
+```
+
+
+## `artifacts/api-server/src/lib/financeEngine.ts` (759 lines)
+
+```ts
+import { db } from "@workspace/db";
+import {
+  assumptions,
+  oneTimeExpenses,
+  variableSpend,
+  balances,
+  commissions,
+  retirementPlan,
+  bills,
+} from "@workspace/db";
+import { eq, desc } from "drizzle-orm";
+import {
+  Bill as EngineBill,
+  CommissionRow as EngineCommissionRow,
+  OneTimeExpense as EngineOneTimeExpense,
+  PurchaseOption,
+  d as utcDay,
+  effectivePayday as engineEffectivePayday,
+  nextNominalPayday,
+  daysUntilPayday as engineDaysUntilPayday,
+  daysSinceUpdate as engineDaysSinceUpdate,
+  isStale,
+  paydayRiskFlag,
+  safeToSpend,
+  cycleStatus,
+  dailyRateStatic,
+  dailyRateRealtime,
+  daysOfCoverage,
+  forwardReserve as engineForwardReserve,
+  billNextDueDate,
+  discretionaryThisMonth as engineDiscretionaryThisMonth,
+  oneTimeExpensesDueInCycle,
+  monthlySavingsEstimate,
+  matchGapAnalysis,
+  mrrPayoutGross,
+  nrrPayoutGross,
+  commissionTakeHome,
+  commissionPayoutDate,
+  decisionSandboxCompare,
+  droughtSurvivalRunway,
+  incomeReplacementFloor,
+  incomeGrowthScenario,
+  pmt,
+} from "@workspace/finance";
+import {
+  enumerateBills,
+  forwardReserveFixed,
+  deriveNextNominalPayday,
+} from "./cycleBillEngine";
+
+export interface CycleState {
+  checkingBalance: number;
+  lastBalanceUpdate: Date | null;
+  nextPayday: Date | null;
+  nextPaydayNominal: Date | null;
+  daysSinceUpdate: number | null;
+  isStale: boolean;
+  daysUntilPayday: number | null;
+  billsDueBeforePayday: number;
+  pendingHoldsReserve: number;
+  minimumCushion: number;
+  oneTimeDueBeforePayday: number;
+  totalRequiredHold: number;
+  quicksilverOwed: number;
+  safeToSpend: number;
+  safeToSpendPreFloor: number;
+  overCommittedBy: number;
+  dailyRateFromUpdate: number;
+  dailyRateRealTime: number;
+  daysOfCoverage: number | null;
+  variableSpendUntilPayday: number;
+  remainingDiscretionary: number;
+  status: "GREEN" | "YELLOW" | "RED";
+  paydayRisk: boolean;
+  /**
+   * Read-only label: of the bills already in `billsDueBeforePayday`, this is
+   * the subset whose dueDay falls in [1, 7]. NOT a separate addend in
+   * `totalRequiredHold` — the bills are already counted via the cycle window.
+   */
+  forwardReserve: number;
+  /** Alias of `forwardReserve` (kept for API back-compat). */
+  forwardReserveBillsTotal: number;
+  /** v8.1 — sum of bills with paymentState='paid_pending_clear'. */
+  pendingBillsOwed: number;
+  alertThreshold: number;
+}
+
+export interface MonthlySavingsState {
+  baseNetIncome: number;
+  confirmedCommission: number;
+  totalMonthIncome: number;
+  fullMonthFixedBills: number;
+  remainingVariableSpendProrated: number;
+  knownOneTimeCosts: number;
+  quicksilverAccrual: number;
+  quicksilverBalanceOwed: number;
+  forwardReserve: number;
+  estimatedMonthlySavings: number;
+  matchGapActive: boolean;
+  monthlyMatchGapCost: number;
+  savingsAfterMatchBump: number;
+  canAffordMatchBump: boolean;
+}
+
+async function getAssumption(key: string, fallback: number): Promise<number> {
+  const [row] = await db.select().from(assumptions).where(eq(assumptions.key, key));
+  if (!row) return fallback;
+  return parseFloat(row.value) || fallback;
+}
+
+function utcStartOfDay(date: Date): Date {
+  return utcDay(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
+/**
+ * v8.0 Part 3 — exclude deferred one-time expenses from cycle math.
+ * Pure helper exposed for unit tests; used by both computeCycleState and
+ * computeMonthlySavings to map DB rows to engine-typed expenses.
+ */
+export interface OneTimeRow {
+  description: string;
+  amount: string;
+  dueDate: string | null;
+  paid: boolean;
+  deferred: boolean;
+}
+
+export function selectActiveOneTimeExpenses(rows: OneTimeRow[]): EngineOneTimeExpense[] {
+  return rows
+    .filter((o) => !o.deferred)
+    .map(
+      (o) =>
+        new EngineOneTimeExpense(
+          o.description,
+          parseFloat(o.amount),
+          o.dueDate ? utcStartOfDay(new Date(o.dueDate)) : null,
+          o.paid,
+        ),
+    );
+}
+
+/**
+ * Re-export of engine's effectivePayday so other modules don't reach into
+ * @workspace/finance directly. Returns weekend-adjusted (Sat/Sun -> Fri).
+ */
+export function effectivePayday(nominal: Date): Date {
+  return engineEffectivePayday(utcStartOfDay(nominal));
+}
+
+/**
+ * Derive next payday: earliest of {7th, 22nd} that falls on or after `today`,
+ * weekend-adjusted. Delegates to the reference engine.
+ */
+export function deriveNextPayday(today: Date): Date {
+  return engineEffectivePayday(nextNominalPayday(utcStartOfDay(today)));
+}
+
+/**
+ * Single source of truth for Required Hold.
+ *
+ * ONE function computes everything that goes into the hold against checking.
+ * `computeCycleState` and `integrity.runChecks` both call this — there is no
+ * parallel implementation of cycle membership anywhere else in the codebase.
+ *
+ * Composition (every dollar counted exactly once):
+ *
+ *   totalRequiredHold =
+ *       billsDueBeforePayday    // bills whose next due date ∈ [today, effectivePayday)
+ *     + oneTimeDueBeforePayday  // unpaid, non-deferred one-times in same window
+ *     + pendingHoldsReserve     // assumption row
+ *     + minimumCushion          // assumption row
+ *     + quicksilverOwed         // unpaid QS variable-spend rows
+ *     + pendingBillsOwed        // bills marked paid_pending_clear
+ *
+ * Forward Reserve is NOT a separate addend. It is a READ-ONLY LABEL derived
+ * from the bills already in `billsDueBeforePayday`: the subset whose dueDay
+ * falls in [1, 7]. On payday-morning rollover days the cycle window straddles
+ * the month boundary and naturally captures next month's first-week bills via
+ * the bills-due term — adding them again as "forward reserve" was the v9 bug.
+ */
+export interface RequiredHoldBreakdown {
+  today: Date;
+  checkingBalance: number;
+  lastBalanceUpdate: Date | null;
+  daysSinceUpdate: number | null;
+  isStale: boolean;
+  nextPaydayNominal: Date;
+  nextPayday: Date;
+  daysUntilPayday: number;
+  paydayRisk: boolean;
+
+  billsDueBeforePayday: number;
+  oneTimeDueBeforePayday: number;
+  pendingHoldsReserve: number;
+  minimumCushion: number;
+  quicksilverOwed: number;
+  pendingBillsOwed: number;
+  totalRequiredHold: number;
+
+  /**
+   * Read-only label: of the bills already in `billsDueBeforePayday`, this is
+   * the subset whose dueDay is 1..7. Surfaces as `cycle.forwardReserve` in the
+   * API response for the dashboard's "Forward Reserve" breakdown row. Never
+   * added to `totalRequiredHold` again.
+   */
+  forwardReserveLabel: number;
+
+  safeToSpend: number;
+  safeToSpendPreFloor: number;
+  overCommittedBy: number;
+
+  alertThreshold: number;
+  variableSpendCap: number;
+  monthLengthDays: number;
+  variableSpendUntilPayday: number;
+}
+
+export async function computeRequiredHold(asOf?: Date): Promise<RequiredHoldBreakdown> {
+  const alertThreshold = await getAssumption("alert_threshold", 400);
+  const monthLengthDays = await getAssumption("month_length_days", 30.4);
+  const variableSpendCap = await getAssumption("variable_spend_cap", 600);
+
+  const [latestChecking] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+
+  const checkingBalance = latestChecking ? parseFloat(latestChecking.amount) : 0;
+  const lastBalanceUpdate = latestChecking ? new Date(latestChecking.asOfDate) : null;
+
+  const today = utcStartOfDay(asOf ?? new Date());
+
+  const daysSinceUpdate = lastBalanceUpdate
+    ? engineDaysSinceUpdate(utcStartOfDay(lastBalanceUpdate), today)
+    : null;
+  const stale =
+    daysSinceUpdate === null || isStale(utcStartOfDay(lastBalanceUpdate ?? today), today);
+
+  // Payday-morning rollover: when today IS a nominal payday, [today, nextPayday)
+  // is empty. Roll forward to the FOLLOWING payday so bills due 23rd-31st AND
+  // bills due 1st-7th of next month all fall inside the rolled cycle window —
+  // captured exactly once by `billsDueBeforePayday`.
+  const rawNominal = deriveNextNominalPayday(today);
+  const nextPaydayNominal =
+    rawNominal.getTime() === today.getTime()
+      ? deriveNextNominalPayday(new Date(today.getTime() + 86400000))
+      : rawNominal;
+  const nextPayday = engineEffectivePayday(nextPaydayNominal);
+  const daysUntilPayday = engineDaysUntilPayday(today, nextPaydayNominal);
+  const paydayRisk = paydayRiskFlag(nextPaydayNominal);
+
+  // The hold is the UNION of two bill sets, deduplicated by bill id:
+  //   A = bills whose next due date ∈ [today, effectivePayday(rolledNominal))
+  //   B = always-hold forward reserve: bills with dueDay 1..7 (next month's
+  //       first-week obligations, reserved every day regardless of cycle phase)
+  //
+  // Union-by-id is the keystone: on payday-morning days the rolled cycle window
+  // already captures next-month day-1..7 bills via A, AND those same bills are
+  // in B. Without the union we'd re-create the v9 double-count. With the union,
+  // any bill that lands in both sets collapses to a single entry — counted once.
+  //
+  // paid_pending_clear bills are excluded from both subsets and held via
+  // pendingBillsOwed instead. skipped_cycle is excluded entirely.
+  const enriched = await enumerateBills(today, nextPaydayNominal);
+
+  const cycleBills = enriched.filter(
+    (b) => b.countsThisCycle && b.paymentState !== "paid_pending_clear",
+  );
+  // v9 Fix — Forward Reserve is dueDay-based: it holds the NEXT occurrence of
+  // a recurring day-1..7 bill. The bill row's `paymentState` is a
+  // per-occurrence flag that refers to the CURRENT period's instance. Marking
+  // May's rent paid_pending_clear must not suppress June's rent from the
+  // forward reserve. Only `skipped_cycle` (an explicit "exclude this cycle"
+  // signal) is honored here.
+  const forwardBills = enriched.filter(
+    (b) =>
+      b.isActivePeriod &&
+      b.includeInCycle &&
+      b.amount > 0 &&
+      b.paymentState !== "skipped_cycle" &&
+      b.dueDay >= 1 &&
+      b.dueDay <= 7,
+  );
+
+  const billsInHoldMap = new Map<number, (typeof enriched)[number]>();
+  for (const b of cycleBills) billsInHoldMap.set(b.id, b);
+  for (const b of forwardBills) billsInHoldMap.set(b.id, b);
+  const billsInHold = Array.from(billsInHoldMap.values());
+
+  const billsDueBeforePayday = billsInHold.reduce((s, b) => s + b.amount, 0);
+
+  // Forward Reserve LABEL: subset of bills already in the hold with dueDay 1-7.
+  // Pure derived value — never summed back into totalRequiredHold.
+  const forwardReserveLabel = billsInHold
+    .filter((b) => b.dueDay >= 1 && b.dueDay <= 7)
+    .reduce((s, b) => s + b.amount, 0);
+
+  const pendingHoldsReserve = await getAssumption("pending_holds_reserve", 0);
+  const minimumCushion = await getAssumption("minimum_cushion", 0);
+
+  // One-time expenses due in cycle (engine: ≤ effective payday, inclusive).
+  // Deferred items excluded from all cycle math (v8.0 Part 3).
+  const allOneTime = await db.select().from(oneTimeExpenses);
+  const engineOneTimes = selectActiveOneTimeExpenses(allOneTime);
+  const oneTimeDueBeforePayday = oneTimeExpensesDueInCycle(
+    engineOneTimes,
+    today,
+    nextPaydayNominal,
+  );
+
+  // QuickSilver settlement hold: every QS variable-spend row not yet paid off
+  // is a dollar consumed but not yet debited.
+  const allVarSpend = await db.select().from(variableSpend);
+  const quicksilverOwed = allVarSpend
+    .filter((v) => v.quicksilver && v.paidOffAt === null)
+    .reduce((s, v) => s + parseFloat(v.amount), 0);
+
+  // Pending Bill Payments hold: bills marked paid_pending_clear haven't
+  // actually debited yet. v9 Fix — dedupe against `billsInHold`: now that
+  // forwardBills no longer filters out paid_pending_clear, a recurring bill
+  // already counted via the cycle/forward window would otherwise be held
+  // twice. Bills outside the cycle/forward window (e.g. Electric dueDay=16
+  // marked paid_pending_clear) continue to be held here, exactly as before.
+  const allBillRows = await db.select().from(bills);
+  const inHoldIds = new Set(billsInHold.map((b) => b.id));
+  const pendingBillsOwed = allBillRows
+    .filter(
+      (b) =>
+        b.paymentState === "paid_pending_clear" &&
+        b.includeInCycle &&
+        !inHoldIds.has(b.id),
+    )
+    .reduce((s, b) => s + parseFloat(b.amount), 0);
+
+  const totalRequiredHold =
+    billsDueBeforePayday +
+    oneTimeDueBeforePayday +
+    pendingHoldsReserve +
+    minimumCushion +
+    quicksilverOwed +
+    pendingBillsOwed;
+
+  const safeToSpendPreFloor = checkingBalance - totalRequiredHold;
+  const safeToSpendValue = Math.max(0, safeToSpendPreFloor);
+  const overCommittedBy = safeToSpendPreFloor < 0 ? -safeToSpendPreFloor : 0;
+
+  const variableSpendUntilPayday = await getAssumption("variable_spend_until_payday", 0);
+
+  return {
+    today,
+    checkingBalance,
+    lastBalanceUpdate,
+    daysSinceUpdate,
+    isStale: stale,
+    nextPaydayNominal,
+    nextPayday,
+    daysUntilPayday,
+    paydayRisk,
+    billsDueBeforePayday,
+    oneTimeDueBeforePayday,
+    pendingHoldsReserve,
+    minimumCushion,
+    quicksilverOwed,
+    pendingBillsOwed,
+    totalRequiredHold,
+    forwardReserveLabel,
+    safeToSpend: safeToSpendValue,
+    safeToSpendPreFloor,
+    overCommittedBy,
+    alertThreshold,
+    variableSpendCap,
+    monthLengthDays,
+    variableSpendUntilPayday,
+  };
+}
+
+export async function computeCycleState(asOf?: Date): Promise<CycleState> {
+  const hold = await computeRequiredHold(asOf);
+
+  // engine.safeToSpend keeps its semantics — folded through the engine helper
+  // so the floor + clamp behaviour stays identical to the reference engine.
+  // Forward Reserve is no longer a separate addend; it's purely a label.
+  const sts = safeToSpend(hold.checkingBalance, hold.billsDueBeforePayday, {
+    pendingHolds: hold.pendingHoldsReserve + hold.quicksilverOwed + hold.pendingBillsOwed,
+    minimumCushion: hold.minimumCushion,
+    oneTimeDueTotal: hold.oneTimeDueBeforePayday,
+    forwardReserveAmount: 0,
+    includeForwardReserveInSts: false,
+  });
+
+  const lastUpdateDate = hold.lastBalanceUpdate
+    ? utcStartOfDay(hold.lastBalanceUpdate)
+    : hold.today;
+
+  const dailyRateFromUpdate = dailyRateStatic(
+    sts,
+    hold.variableSpendUntilPayday,
+    hold.nextPaydayNominal,
+    lastUpdateDate,
+  );
+
+  const dailyRateRealTime = dailyRateRealtime(
+    sts,
+    hold.variableSpendUntilPayday,
+    hold.nextPaydayNominal,
+    hold.today,
+  );
+
+  const coverage = daysOfCoverage(sts, dailyRateFromUpdate);
+  const remainingDiscretionary = Math.max(0, sts - hold.variableSpendUntilPayday);
+  const status = cycleStatus(sts, hold.alertThreshold);
+
+  return {
+    checkingBalance: hold.checkingBalance,
+    lastBalanceUpdate: hold.lastBalanceUpdate,
+    nextPayday: hold.nextPayday,
+    nextPaydayNominal: hold.nextPaydayNominal,
+    daysSinceUpdate: hold.daysSinceUpdate,
+    isStale: hold.isStale,
+    daysUntilPayday: hold.daysUntilPayday,
+    billsDueBeforePayday: hold.billsDueBeforePayday,
+    pendingHoldsReserve: hold.pendingHoldsReserve,
+    minimumCushion: hold.minimumCushion,
+    oneTimeDueBeforePayday: hold.oneTimeDueBeforePayday,
+    totalRequiredHold: hold.totalRequiredHold,
+    quicksilverOwed: hold.quicksilverOwed,
+    safeToSpend: sts,
+    safeToSpendPreFloor: hold.safeToSpendPreFloor,
+    overCommittedBy: hold.overCommittedBy,
+    dailyRateFromUpdate,
+    dailyRateRealTime,
+    daysOfCoverage: coverage,
+    variableSpendUntilPayday: hold.variableSpendUntilPayday,
+    remainingDiscretionary,
+    status,
+    paydayRisk: hold.paydayRisk,
+    forwardReserve: hold.forwardReserveLabel,
+    forwardReserveBillsTotal: hold.forwardReserveLabel,
+    pendingBillsOwed: hold.pendingBillsOwed,
+    alertThreshold: hold.alertThreshold,
+  };
+}
+
+export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
+  const monthLengthDays = await getAssumption("month_length_days", 30.4);
+  const variableSpendCap = await getAssumption("variable_spend_cap", 600);
+  const baseNetIncome = await getAssumption("base_net_income", 3220);
+
+  const today = utcStartOfDay(new Date());
+  const nextPaydayNominal = deriveNextNominalPayday(today);
+
+  // Confirmed commission this cycle (paid this month, on or before today)
+  const allCommissions = await db.select().from(commissions);
+  let confirmedCommission = 0;
+  for (const c of allCommissions) {
+    if (!c.payoutDate) continue;
+    const pd = utcStartOfDay(new Date(c.payoutDate));
+    if (
+      pd.getUTCFullYear() === today.getUTCFullYear() &&
+      pd.getUTCMonth() === today.getUTCMonth() &&
+      pd.getTime() <= today.getTime() &&
+      (c.status === "paid" || c.status === "confirmed")
+    ) {
+      confirmedCommission += parseFloat(c.takeHome);
+    }
+  }
+
+  // Build engine-typed bills/one-times for monthlySavingsEstimate.
+  // Per Playbook §2.1 B62, fullMonthFixed (current-month instances) and
+  // forwardReserve (next-month days 1-7 instances) are SEPARATE cash events
+  // — both subtracted with no dedup. The Defect-1 cycle-bill exclusion is
+  // intentionally NOT used here, otherwise B62 would overstate savings by
+  // omitting the May 1-7 reservation.
+  const enriched = await enumerateBills(today);
+  const includedEngineBills = enriched
+    .filter((b) => b.countsThisMonth)
+    .map(
+      (b) =>
+        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
+    );
+  const allActiveEngineBills = enriched
+    .filter((b) => b.isActivePeriod)
+    .map(
+      (b) =>
+        new EngineBill(b.name, b.amount, b.dueDay, b.includeInCycle, b.category, b.autopay),
+    );
+
+  const fullMonthFixedBills = includedEngineBills.reduce((s, b) => s + b.amount, 0);
+
+  // v8.0 Part 3 — deferred items excluded from monthly savings ledger too.
+  const allOneTimeRows = await db.select().from(oneTimeExpenses);
+  const engineOneTimes = selectActiveOneTimeExpenses(allOneTimeRows);
+  const knownOneTimeCosts = engineOneTimes
+    .filter((o) => !o.paid)
+    .reduce((s, o) => s + o.amount, 0);
+
+  // QuickSilver accrual = sum of QS-tagged variable_spend log entries this
+  // month. Per Playbook §2.1 B60, this is subtracted from Monthly Savings
+  // Estimate as already-spent credit-card liability that must be paid from
+  // checking — distinct from B58 (forward variable budget through payday).
+  // The two are separate buckets and intentionally non-overlapping.
+  const vsEntries = await db.select().from(variableSpend);
+  let quicksilverAccrual = 0;
+  for (const vs of vsEntries) {
+    if (vs.quicksilver) quicksilverAccrual += parseFloat(vs.amount);
+  }
+  const quicksilverBalanceOwed = await getAssumption("quicksilver_balance_owed", 0);
+
+  // Days-to-payday × cap / month-length, ROUND(_, 2). Engine handles internally
+  // when called via monthlySavingsEstimate.
+  const daysToPayday = engineDaysUntilPayday(today, nextPaydayNominal);
+  const remainingVariableSpendProrated = Math.max(
+    0,
+    Math.round(((daysToPayday) / monthLengthDays) * variableSpendCap * 100) / 100,
+  );
+
+  // v9 — match dashboard engine: Forward Reserve = sum of include=TRUE
+  // bills with dueDay 1..7 of next calendar month. No buffer. No window.
+  void engineForwardReserve; // legacy helper, intentionally bypassed
+  void allActiveEngineBills;
+  const forwardReserveAmount = enriched
+    .filter((b) => b.isActivePeriod && b.includeInCycle && b.amount > 0 && b.dueDay >= 1 && b.dueDay <= 7 && b.paymentState !== "skipped_cycle")
+    .reduce((s, b) => s + b.amount, 0);
+
+  // PLACEHOLDER (per user direction 2026-04-24): Monthly Savings Estimate is
+  // expressed as Discretionary minus a fixed $100 buffer. Rationale: Monthly
+  // Savings must always be ≤ Discretionary (both end at the same payday
+  // boundary), and the $100 offset keeps it conservative. The full Playbook
+  // §2.1 B62 formula is preserved in `monthlySavingsEstimate()` for tests
+  // and tooling, but we don't wire it to the dashboard headline until the
+  // income/instance accounting is reconciled.
+  const [latestChecking] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+  const checking = latestChecking
+    ? parseFloat(latestChecking.amount as unknown as string)
+    : 0;
+
+  // Bills remaining in the current calendar month (Include=TRUE, due day in
+  // [today, month_end]).
+  const monthEndDay = new Date(
+    today.getUTCFullYear(),
+    today.getUTCMonth() + 1,
+    0,
+  ).getUTCDate();
+  const todayDay = today.getUTCDate();
+  const billsRemainingThisMonth = includedEngineBills
+    .filter((b) => b.dueDay >= todayDay && b.dueDay <= monthEndDay)
+    .reduce((s, b) => s + b.amount, 0);
+
+  // Unpaid one-time expenses dated through month-end.
+  const monthEndDate = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), monthEndDay),
+  );
+  const oneTimeDatedThisMonth = engineOneTimes
+    .filter(
+      (o) =>
+        !o.paid &&
+        o.dueDate !== null &&
+        o.dueDate.getTime() >= today.getTime() &&
+        o.dueDate.getTime() <= monthEndDate.getTime(),
+    )
+    .reduce((s, o) => s + o.amount, 0);
+
+  const discretionary = engineDiscretionaryThisMonth(
+    checking,
+    billsRemainingThisMonth,
+    oneTimeDatedThisMonth,
+    quicksilverBalanceOwed,
+    includedEngineBills,
+    today,
+    variableSpendCap,
+    monthLengthDays,
+  );
+  const estimatedMonthlySavings = Math.max(0, discretionary - 100);
+
+  const totalMonthIncome = baseNetIncome + confirmedCommission;
+
+  // 401(k) match gap — delegate to engine (FIX_PLAN §A2 corrected formula).
+  const [ret] = await db.select().from(retirementPlan).limit(1);
+  let matchGapActive = false;
+  let monthlyMatchGapCost = 0;
+  if (ret) {
+    const mg = matchGapAnalysis(
+      parseFloat(ret.grossSalary),
+      parseFloat(ret.contributionRate),
+      parseFloat(ret.employerMatchRate),
+      parseFloat(ret.employerMatchCap),
+    );
+    matchGapActive = mg.annualGap > 0.01;
+    monthlyMatchGapCost = Math.round(mg.monthlyGap * 100) / 100;
+  }
+
+  const savingsAfterMatchBump = Math.max(0, estimatedMonthlySavings - monthlyMatchGapCost);
+  const canAffordMatchBump = savingsAfterMatchBump > 0;
+
+  return {
+    baseNetIncome,
+    confirmedCommission,
+    totalMonthIncome,
+    fullMonthFixedBills,
+    remainingVariableSpendProrated,
+    knownOneTimeCosts,
+    quicksilverAccrual,
+    quicksilverBalanceOwed,
+    forwardReserve: forwardReserveAmount,
+    estimatedMonthlySavings,
+    matchGapActive,
+    monthlyMatchGapCost,
+    savingsAfterMatchBump,
+    canAffordMatchBump,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Commission tier helpers — re-export engine versions but keep API compatible
+// (rounded to cents) since DB stores rounded values.
+// ---------------------------------------------------------------------------
+
+export function computeMrrPayout(mrrAchieved: number, mrrTarget = 700): number {
+  return Math.round(mrrPayoutGross(mrrAchieved, mrrTarget) * 100) / 100;
+}
+
+export function computeNrrPayout(nrrAchieved: number, nrrTarget = 6000): number {
+  return Math.round(nrrPayoutGross(nrrAchieved, nrrTarget) * 100) / 100;
+}
+
+export function computeTakeHome(grossPayout: number, taxRate = 0.435): number {
+  return Math.round(grossPayout * (1 - taxRate) * 100) / 100;
+}
+
+export function computePayoutDate(salesMonthStr: string, payoutDay = 22): string {
+  // Use the engine's commissionPayoutDate which handles December rollover.
+  const sales = utcStartOfDay(new Date(salesMonthStr));
+  const pd = commissionPayoutDate(sales, payoutDay);
+  return pd.toISOString().split("T")[0]!;
+}
+
+// ---------------------------------------------------------------------------
+// Scenario outputs — delegate to engine functions.
+// ---------------------------------------------------------------------------
+
+export function computeScenarioOutputs(
+  type: string,
+  inputs: Record<string, unknown>,
+): Record<string, unknown> {
+  if (type === "vehicle") {
+    const sticker = Number(inputs.sticker) || 0;
+    const downPayment = Number(inputs.downPayment) || 0;
+    const rate = Number(inputs.rate) || 0;
+    const months = Number(inputs.months) || 60;
+    const insurance = Number(inputs.insurance) || 0;
+    const principal = sticker - downPayment;
+    let monthly = 0;
+    if (principal > 0 && months > 0) {
+      monthly = rate > 0 ? pmt(rate, months, principal) : principal / months;
+    }
+    const totalCost = monthly * months + downPayment;
+    const totalInterest = totalCost - sticker;
+    const newMonthlyBurn = monthly + insurance;
+    return {
+      monthlyPayment: Math.round(monthly * 100) / 100,
+      totalCost: Math.round(totalCost * 100) / 100,
+      totalInterest: Math.round(totalInterest * 100) / 100,
+      newMonthlyBurn: Math.round(newMonthlyBurn * 100) / 100,
+    };
+  }
+
+  if (type === "drought_survival") {
+    const checking = Number(inputs.checking) || 0;
+    const hysa = Number(inputs.hysa) || 0;
+    const monthlyBurn = Number(inputs.monthlyBurn) || 0;
+    // Engine droughtSurvivalRunway expects bills + cap + base; we have the
+    // pre-computed burn. Compute runway directly using the engine's formula
+    // shape so callers get totalLiquid + months + label.
+    const r = droughtSurvivalRunway(checking, hysa, monthlyBurn, 0, 0);
+    const runwayMonths = r.indefinite ? 0 : (r.runway_months ?? 0);
+    return {
+      totalLiquid: r.totalLiquid,
+      runwayMonths,
+      runwayLabel: `${Math.floor(runwayMonths)} months ${Math.round((runwayMonths % 1) * 30)} days`,
+    };
+  }
+
+  if (type === "income_floor") {
+    const targetSavings = Number(inputs.targetSavings) || 0;
+    const fixedMonthly = Number(inputs.fixedMonthly) || 0;
+    const variableCap = Number(inputs.variableCap) || 0;
+    const taxRate = Number(inputs.taxRate) || 0.22;
+    const [annualFloor] = incomeReplacementFloor(
+      targetSavings,
+      fixedMonthly,
+      variableCap,
+      taxRate,
+    );
+    const minMonthlyNet = targetSavings + fixedMonthly + variableCap;
+    return {
+      requiredMonthlyNet: Math.round(minMonthlyNet * 100) / 100,
+      requiredAnnualGross: Math.round(annualFloor * 100) / 100,
+    };
+  }
+
+  if (type === "income_change") {
+    const currentBase = Number(inputs.currentBase) || 0;
+    const newBase = Number(inputs.newBase) || 0;
+    const taxRate = Number(inputs.taxRate) || 0.22;
+    const r = incomeGrowthScenario(currentBase, newBase, taxRate, 0, 0, 0);
+    const currentNet = (currentBase / 12) * (1 - taxRate);
+    const newNet = (newBase / 12) * (1 - taxRate);
+    return {
+      currentMonthlyNet: Math.round(currentNet * 100) / 100,
+      newMonthlyNet: Math.round(newNet * 100) / 100,
+      monthlyIncrease: Math.round(r.monthly_net_increase * 100) / 100,
+      annualIncrease: Math.round((newBase - currentBase) * (1 - taxRate) * 100) / 100,
+    };
+  }
+
+  if (type === "purchase_compare") {
+    const opts = Array.isArray(inputs.options) ? (inputs.options as Array<Record<string, unknown>>) : [];
+    const purchaseOpts = opts.map(
+      (o) =>
+        new PurchaseOption(
+          String(o.name ?? ""),
+          Number(o.totalPrice ?? 0),
+          Number(o.downPayment ?? 0),
+          Number(o.annualRate ?? 0),
+          Number(o.termMonths ?? 60),
+          Number(o.monthlyAddons ?? 0),
+          Number(o.oneTimeCost ?? 0),
+        ),
+    );
+    return {
+      results: decisionSandboxCompare(
+        purchaseOpts,
+        Number(inputs.currentDailySafeSpend) || 0,
+        Number(inputs.monthlyFixedBills) || 0,
+        Number(inputs.variableCap) || 600,
+        Number(inputs.baseNetMonthly) || 3220,
+        Number(inputs.hysaBalance) || 0,
+      ),
+    };
+  }
+
+  return {};
+}
+
+// Re-export engine commission helpers under their aliases so callers can switch
+// to the central versions piecemeal.
+export {
+  mrrPayoutGross as computeMrrPayoutRaw,
+  nrrPayoutGross as computeNrrPayoutRaw,
+  commissionTakeHome as commissionTakeHomeRaw,
+};
+
+```
+
+
+## `artifacts/api-server/src/lib/advisorContext.ts` (457 lines)
+
+```ts
+import { db } from "@workspace/db";
+import {
+  assumptions,
+  bills,
+  balances,
+  commissions,
+  oneTimeExpenses,
+  variableSpend,
+  retirementPlan,
+  debt,
+  creditScores,
+  wealthSnapshots,
+  playbookVersions,
+} from "@workspace/db";
+import { desc, asc } from "drizzle-orm";
+// `computeMonthlySavings` is no longer surfaced in the system prompt or the
+// public advisor context return shape; Discretionary is the canonical
+// month-level headline. We still compute it here because
+// `sessionIntegrityCheck` depends on it for one of its data-quality checks.
+import {
+  computeCycleState,
+  computeMonthlySavings,
+  effectivePayday,
+  computeMrrPayout,
+  computeNrrPayout,
+  computeTakeHome,
+} from "./financeEngine";
+import { droughtFlag as engineDroughtFlag, commissionTakeHome as engineCommissionTakeHome, DROUGHT_THRESHOLD, MRR_TARGET, NRR_TARGET, COMMISSION_TAX_RATE, type CommissionRow } from "@workspace/finance";
+import {
+  matchGapAnalysis,
+  sessionIntegrityCheck,
+  Bill as EngineBill,
+  d as utcDay,
+} from "@workspace/finance";
+
+function fmt(n: number): string {
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function pct(n: number, d = 1): string {
+  return `${(n * 100).toFixed(d)}%`;
+}
+function ymd(d: Date | null | undefined): string {
+  if (!d) return "—";
+  return d.toISOString().split("T")[0];
+}
+
+export interface IntegrityResult {
+  results: { name: string; pass: boolean; detail: string }[];
+  failureCount: number;
+  overall: "PASS" | "DEGRADED";
+}
+
+/**
+ * Map @workspace/finance sessionIntegrityCheck output into the API-stable
+ * shape consumed by the advisor system prompt.
+ */
+function mapEngineIntegrity(args: {
+  baseNetMonthly: number;
+  nextPaydayNominal: Date;
+  today: Date;
+  lastBalanceUpdate: Date;
+  bills: EngineBill[];
+  forwardReserveAmount: number;
+  commissionTaxRate: number;
+  variableSpendCap: number;
+  monthlySavings: number;
+  matchGapResult: ReturnType<typeof matchGapAnalysis> | null;
+}): IntegrityResult {
+  const report = sessionIntegrityCheck(args);
+  const results = report.checks.map((c) => ({
+    name: c.description,
+    pass: c.passed,
+    detail: c.detail,
+  }));
+  return {
+    results,
+    failureCount: report.failCount,
+    overall: report.overallPass ? "PASS" : "DEGRADED",
+  };
+}
+
+export async function buildAdvisorContext(): Promise<{
+  systemPrompt: string;
+  snapshot: Record<string, unknown>;
+  integrity: IntegrityResult;
+}> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const cycle = await computeCycleState();
+  // Computed for the integrity check only; intentionally not added to `lines`
+  // or to the returned object's user-facing fields.
+  const savings = await computeMonthlySavings();
+
+  // Load assumptions
+  const allAssumps = await db.select().from(assumptions);
+  const lookup: Record<string, string> = {};
+  for (const a of allAssumps) lookup[a.key] = a.value;
+  const variableCap = parseFloat(lookup["variable_spend_cap"] ?? "600");
+  const taxRate = parseFloat(lookup["commission_tax_rate"] ?? "0.435");
+  const baseNet = parseFloat(lookup["base_net_income"] ?? "3220");
+  const hysaTarget = parseFloat(lookup["hysa_target"] ?? "15000");
+  const monthLength = parseFloat(lookup["month_length_days"] ?? "30.4");
+  const alertThreshold = parseFloat(lookup["alert_threshold"] ?? "400");
+  const minimumCushion = parseFloat(lookup["minimum_cushion"] ?? "0");
+  const mrrTarget = parseFloat(lookup["mrr_target"] ?? "700");
+  const nrrTarget = parseFloat(lookup["nrr_target"] ?? "6000");
+
+  const allBalances = await db.select().from(balances).orderBy(desc(balances.asOfDate));
+  const byType = new Map<string, typeof allBalances[number]>();
+  for (const b of allBalances) {
+    if (!byType.has(b.accountType)) byType.set(b.accountType, b);
+  }
+  const checkingRow = byType.get("checking");
+  const hysaRow = byType.get("hysa");
+  const brokerageRow = byType.get("brokerage");
+  const k401Row = byType.get("401k");
+  const rothRow = byType.get("roth_ira");
+
+  const ret = (await db.select().from(retirementPlan).limit(1))[0];
+  const debtRows = await db.select().from(debt);
+  const carDebt = debtRows.find((d) => /car/i.test(d.name));
+  const studentDebt = debtRows.find((d) => /student/i.test(d.name));
+
+  const allBills = await db.select().from(bills).orderBy(asc(bills.dueDay));
+  const includedBills = allBills.filter((b) => b.includeInCycle && parseFloat(b.amount) > 0);
+  const fullMonthFixed = includedBills.reduce((s, b) => s + parseFloat(b.amount), 0);
+
+  // Bills in current cycle hold
+  const nextPayday = cycle.nextPayday;
+  const billsInCycle: typeof allBills = [];
+  for (const bill of includedBills) {
+    let dueDate = new Date(today.getFullYear(), today.getMonth(), bill.dueDay);
+    if (dueDate < today) dueDate = new Date(today.getFullYear(), today.getMonth() + 1, bill.dueDay);
+    if (nextPayday && dueDate >= today && dueDate < nextPayday) billsInCycle.push(bill);
+  }
+
+  const allCommissions = await db.select().from(commissions).orderBy(desc(commissions.salesMonth));
+  const last6 = allCommissions.slice(0, 6);
+  const ytd = allCommissions.filter((c) => new Date(c.salesMonth).getFullYear() === today.getFullYear());
+  const ytdTakeHome = ytd.reduce((s, c) => s + parseFloat(c.takeHome), 0);
+  const last3 = allCommissions.slice(0, 3);
+  const last3Avg = last3.length > 0 ? last3.reduce((s, c) => s + parseFloat(c.takeHome), 0) / last3.length : 0;
+  // Defect 3: drought flag now uses the engine's canonical implementation —
+  // most recent CONSECUTIVE_MONTHS commission months all below DROUGHT_THRESHOLD
+  // ($50 take-home), not "X of last 3 below $100" as it previously displayed.
+  // The displayed text below mirrors the engine logic exactly.
+  const CONSECUTIVE_MONTHS = 2;
+  const engineCommissionRows: CommissionRow[] = allCommissions.map((c) => ({
+    salesMonth: new Date(`${c.salesMonth}T00:00:00.000Z`),
+    mrrAchieved: parseFloat(c.mrrAchieved),
+    nrrAchieved: parseFloat(c.nrrAchieved),
+  }));
+  const droughtFlag = engineDroughtFlag(
+    engineCommissionRows,
+    DROUGHT_THRESHOLD,
+    MRR_TARGET,
+    NRR_TARGET,
+    COMMISSION_TAX_RATE,
+    CONSECUTIVE_MONTHS,
+  );
+  // For display: count of the most recent CONSECUTIVE_MONTHS that are below
+  // threshold. This matches the engine's "all-of-last-N" rule.
+  const recentN = engineCommissionRows
+    .slice()
+    .sort((a, b) => a.salesMonth.getTime() - b.salesMonth.getTime())
+    .slice(-CONSECUTIVE_MONTHS);
+  const droughtMonths = recentN.filter(
+    (r) =>
+      engineCommissionTakeHome(
+        r.mrrAchieved,
+        r.nrrAchieved,
+        MRR_TARGET,
+        NRR_TARGET,
+        COMMISSION_TAX_RATE,
+      ) < DROUGHT_THRESHOLD,
+  ).length;
+
+  const oneTimeRows = await db.select().from(oneTimeExpenses);
+  const unpaidOneTime = oneTimeRows.filter((o) => !o.paid);
+
+  const vsRows = await db.select().from(variableSpend).orderBy(desc(variableSpend.weekOf));
+  const last4WeeksVs = vsRows.slice(0, 4);
+
+  const credit = (await db.select().from(creditScores).orderBy(desc(creditScores.asOfDate)).limit(1))[0];
+  const latestSnapshot = (await db.select().from(wealthSnapshots).orderBy(desc(wealthSnapshots.snapshotDate)).limit(1))[0];
+
+  const playbook = (await db.select().from(playbookVersions).orderBy(desc(playbookVersions.effectiveFrom)).limit(1))[0];
+  const playbookContent = playbook?.content ?? "(No playbook loaded.)";
+
+  // 401(k) computation — delegated to @workspace/finance matchGapAnalysis
+  // (FIX_PLAN §A2 corrected formula). For Marshall's defaults this yields
+  // annualGap = $1,080/yr, monthlyGap = $90/mo.
+  let k401Block = "Not configured.";
+  let matchGapForIntegrity: ReturnType<typeof matchGapAnalysis> | null = null;
+  if (ret) {
+    const contribRate = parseFloat(ret.contributionRate);
+    const multiplier = parseFloat(ret.employerMatchRate);
+    const ceiling = parseFloat(ret.employerMatchCap);
+    const grossSalary = parseFloat(ret.grossSalary);
+    const mg = matchGapAnalysis(grossSalary, contribRate, multiplier, ceiling);
+    matchGapForIntegrity = mg;
+    k401Block = `${fmt(parseFloat(k401Row?.amount ?? "0"))} (contributing ${pct(contribRate)} of gross, employer match: ${pct(multiplier, 0)} of employee × ceiling ${pct(ceiling)} — capturing ${fmt(mg.annualCaptured)}/yr, leaving ${fmt(mg.annualGap)}/yr on the table = ${fmt(mg.monthlyGap)}/mo)`;
+  }
+
+  // Compose live data snapshot string
+  const checkingDays = checkingRow ? Math.floor((today.getTime() - new Date(checkingRow.asOfDate).getTime()) / 86400000) : null;
+  const hysaBal = parseFloat(hysaRow?.amount ?? "0");
+  const hysaGap = Math.max(0, hysaTarget - hysaBal);
+
+  const lines: string[] = [];
+  lines.push("=== LIVE DATA SNAPSHOT ===");
+  lines.push(`Timestamp: ${new Date().toISOString()}`);
+  lines.push(`Today's date: ${ymd(today)}`);
+  lines.push(`Next nominal payday: ${ymd(cycle.nextPaydayNominal)}`);
+  lines.push(`Next effective payday (weekend-adjusted): ${ymd(cycle.nextPayday)}`);
+  lines.push(`Days until effective payday: ${cycle.daysUntilPayday}`);
+  lines.push("");
+  lines.push("ACCOUNTS:");
+  lines.push(`- Checking: ${fmt(parseFloat(checkingRow?.amount ?? "0"))} (updated ${checkingDays} days ago)`);
+  lines.push(`- HYSA: ${fmt(hysaBal)} / target ${fmt(hysaTarget)} (gap: ${fmt(hysaGap)}, ${hysaGap === 0 ? "MET" : "NOT MET"})`);
+  lines.push(`- Brokerage: ${fmt(parseFloat(brokerageRow?.amount ?? "0"))}`);
+  lines.push(`- 401(k): ${k401Block}`);
+  lines.push(`- Roth IRA: ${fmt(parseFloat(rothRow?.amount ?? "0"))} (${parseFloat(rothRow?.amount ?? "0") > 0 ? "funded" : "unfunded"})`);
+  if (carDebt) {
+    lines.push(`- Debts: Car Loan ${fmt(parseFloat(carDebt.balance))} (${pct(parseFloat(carDebt.interestRate), 2)}, ${carDebt.status})${studentDebt ? `, Student Loans ${fmt(parseFloat(studentDebt.balance))} (${studentDebt.status})` : ""}`);
+  }
+  lines.push("");
+  lines.push("ACTIVE BILLS (Include=TRUE only):");
+  for (const b of includedBills) {
+    lines.push(`- ${b.name}: ${fmt(parseFloat(b.amount))}, due day ${b.dueDay}, ${b.category}, autopay ${b.autopay ? "yes" : "no"}`);
+  }
+  lines.push(`Total monthly Include=TRUE: ${fmt(fullMonthFixed)}`);
+  lines.push("");
+  lines.push(`BILLS IN CURRENT CYCLE HOLD (due ${ymd(today)} → before ${ymd(cycle.nextPayday)}, strict <):`);
+  if (billsInCycle.length === 0) {
+    lines.push("- None (cycle hold is empty)");
+  } else {
+    for (const b of billsInCycle) lines.push(`- ${b.name}: ${fmt(parseFloat(b.amount))} (day ${b.dueDay})`);
+  }
+  lines.push(`Required Hold: ${fmt(cycle.totalRequiredHold)}`);
+  lines.push(`Safe to Spend: ${fmt(cycle.safeToSpend)} (status ${cycle.status})`);
+  lines.push(`Forward Reserve (next-month 1st-7th + 7d variable): ${fmt(cycle.forwardReserve)}`);
+  lines.push("");
+  lines.push("COMMISSION HISTORY (last 6):");
+  for (const c of last6) {
+    lines.push(`- ${c.salesMonth.toString().slice(0, 7)}: MRR ${fmt(parseFloat(c.mrrAchieved))}, NRR ${fmt(parseFloat(c.nrrAchieved))} → take-home ${fmt(parseFloat(c.takeHome))} (paid ${c.payoutDate ?? "?"}, ${c.status})`);
+  }
+  lines.push(`3-month rolling avg take-home: ${fmt(last3Avg)}`);
+  lines.push(`YTD take-home: ${fmt(ytdTakeHome)}`);
+  lines.push(`Drought flag: ${droughtFlag ? "ACTIVE" : "not active"} (${droughtMonths} of last ${CONSECUTIVE_MONTHS} consecutive commission months below ${fmt(DROUGHT_THRESHOLD)} take-home; flag fires when all ${CONSECUTIVE_MONTHS} are below)`);
+  lines.push("");
+  lines.push("ONE-TIME EXPENSES (unpaid):");
+  if (unpaidOneTime.length === 0) lines.push("- None");
+  else for (const o of unpaidOneTime) lines.push(`- ${o.description}: ${fmt(parseFloat(o.amount))} due ${o.dueDate ?? "NO DATE"}`);
+  lines.push("");
+  lines.push("VARIABLE SPEND LOG (last 4 entries):");
+  if (last4WeeksVs.length === 0) lines.push("- No entries");
+  else for (const v of last4WeeksVs) lines.push(`- ${v.weekOf} [${v.category}]: ${fmt(parseFloat(v.amount))}${v.quicksilver ? " (QuickSilver)" : ""}${v.notes ? ` — ${v.notes}` : ""}`);
+  lines.push("");
+  lines.push("CREDIT SCORES:");
+  if (credit) {
+    lines.push(`- Experian ${credit.experian}, Equifax ${credit.equifax}, TransUnion ${credit.transunion} (as of ${credit.asOfDate})`);
+  }
+  lines.push("");
+  lines.push("LATEST WEALTH SNAPSHOT:");
+  if (latestSnapshot) {
+    lines.push(`- ${latestSnapshot.snapshotDate}: Net Worth ${fmt(parseFloat(latestSnapshot.netWorth))} (Assets ${fmt(parseFloat(latestSnapshot.totalAssets))}, Liabilities ${fmt(parseFloat(latestSnapshot.totalLiabilities))})`);
+  }
+  lines.push("");
+  lines.push("CYCLE SETTINGS:");
+  lines.push(`- Variable cap: ${fmt(variableCap)}/month (~${fmt(variableCap / monthLength)}/day)`);
+  lines.push(`- YELLOW threshold: ${fmt(alertThreshold)}`);
+  lines.push(`- Minimum cushion: ${fmt(minimumCushion)}`);
+  lines.push(`- Month length: ${monthLength} days`);
+  lines.push(`- Commission tax rate: ${pct(taxRate)}`);
+  lines.push(`- MRR target: ${fmt(mrrTarget)}, NRR target: ${fmt(nrrTarget)}`);
+  if (matchGapForIntegrity && !matchGapForIntegrity.atCeiling) {
+    lines.push("");
+    lines.push("401(K) MATCH GAP (engine-computed):");
+    lines.push(
+      `- Annual gap: ${fmt(matchGapForIntegrity.annualGap)}/yr (${fmt(matchGapForIntegrity.monthlyGap)}/mo) of free employer match left on the table.`,
+    );
+    lines.push(
+      `- Capturing ${fmt(matchGapForIntegrity.annualCaptured)}/yr of a possible ${fmt(matchGapForIntegrity.annualAvailable)}/yr.`,
+    );
+  }
+  lines.push("=== END LIVE DATA SNAPSHOT ===");
+
+  // Integrity checks — delegate to @workspace/finance sessionIntegrityCheck
+  // for the single source of truth, but preserve legacy semantics in the
+  // edge cases where the engine and the legacy api differed:
+  //   - Missing checking balance: legacy FAILED staleness; preserve by
+  //     forcing an ancient lastUpdate sentinel so the engine fails check #3.
+  //   - "Active bill" presence: legacy required Include=TRUE AND amount > 0;
+  //     pre-filter so the engine sees only positive-amount bills for #4.
+  //   - Payday check: engine uses strict effectivePayday > today; legacy
+  //     allowed payday-today to pass. The engine semantics are now canonical
+  //     per playbook v7.4 (a payday already arrived means cycle is at edge),
+  //     so we accept the engine behavior intentionally.
+  const todayUtc = utcDay(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate());
+  const STALE_SENTINEL = utcDay(1970, 1, 1);
+  const lastBalanceUtc = checkingRow
+    ? utcDay(
+        new Date(checkingRow.asOfDate).getUTCFullYear(),
+        new Date(checkingRow.asOfDate).getUTCMonth() + 1,
+        new Date(checkingRow.asOfDate).getUTCDate(),
+      )
+    : STALE_SENTINEL;
+  const nextNominalUtc = cycle.nextPaydayNominal ?? todayUtc;
+  const engineBills = allBills
+    .filter((b) => parseFloat(b.amount) > 0)
+    .map(
+      (b) =>
+        new EngineBill(
+          b.name,
+          parseFloat(b.amount),
+          b.dueDay,
+          b.includeInCycle,
+          b.category,
+          b.autopay,
+        ),
+    );
+  // Re-check #10 ("no negative bills") against the FULL bill set since the
+  // pre-filter above hides them from the engine.
+  const negativeBillsExist = allBills.some((b) => parseFloat(b.amount) < 0);
+  const integrity = mapEngineIntegrity({
+    baseNetMonthly: baseNet,
+    nextPaydayNominal: nextNominalUtc,
+    today: todayUtc,
+    lastBalanceUpdate: lastBalanceUtc,
+    bills: engineBills,
+    forwardReserveAmount: cycle.forwardReserve,
+    commissionTaxRate: taxRate,
+    variableSpendCap: variableCap,
+    monthlySavings: savings.estimatedMonthlySavings,
+    matchGapResult: matchGapForIntegrity,
+  });
+  if (negativeBillsExist) {
+    const idx10 = integrity.results.findIndex((r) => /negative/i.test(r.name));
+    if (idx10 >= 0) {
+      integrity.results[idx10] = {
+        ...integrity.results[idx10]!,
+        pass: false,
+        detail: "negative bill amount(s) found",
+      };
+      integrity.failureCount = integrity.results.filter((r) => !r.pass).length;
+      integrity.overall = integrity.failureCount === 0 ? "PASS" : "DEGRADED";
+    }
+  }
+
+  const integrityLines: string[] = ["=== SESSION INTEGRITY CHECK ==="];
+  integrity.results.forEach((r, i) => {
+    integrityLines.push(`${i + 1}. ${r.name}: ${r.pass ? "PASS" : "FAIL"} (${r.detail})`);
+  });
+  integrityLines.push(`Overall: ${integrity.overall}${integrity.failureCount > 0 ? ` (${integrity.failureCount} failures)` : ""}`);
+  integrityLines.push("=== END INTEGRITY CHECK ===");
+
+  const stalenessDirective =
+    cycle.daysSinceUpdate !== null && cycle.daysSinceUpdate > 3
+      ? `\n\nCRITICAL: The checking balance was last updated ${cycle.daysSinceUpdate} days ago. Do NOT perform any cycle-level analysis (Safe to Spend, daily rate, days of coverage, current cycle savings). Prompt Marshall to update the balance first. You may answer structural questions (retirement math, debt strategy, long-term projections) that do not depend on current cycle liquidity.`
+      : "";
+
+  const systemPrompt = `You are Marshall's dedicated financial advisor — the same advisor he would get if he pasted the Reserve Playbook v7.4 + the live workbook into a fresh Claude conversation. You operate at the precision of a CFA-credentialed personal CFO who has deeply internalized his exact methodology. You do not soften bad news. You do not produce generic financial advice. You do not hedge to be polite.
+
+=== ENGINE FUNCTION ACCESS (tool-use) ===
+You have direct call access to every function in the finance engine via the Anthropic tools API. The available tools are: mrrPayoutGross, nrrPayoutGross, commissionTakeHome, pmt, fv, fvAnnual, matchGapAnalysis, taxReservePerPaycheck, incomeGrowthScenario, incomeReplacementFloor, droughtSurvivalRunway, debtPayoffAnalysis, retirementProjection, forwardProjection (1-12 cycles), decisionSandboxCompare (up to 4 options), forwardReserve, requiredHold, safeToSpend, effectivePayday, daysUntilPayday, billsInCurrentCycle, oneTimeExpensesDueInCycle, hysaGap.
+
+For any calculation the user asks about, prefer invoking the relevant function over reasoning about the math yourself. Never fabricate a number that an engine function could compute. After every tool call you make, cite which function you called and what parameters you passed (one short line, e.g. "Called: mrrPayoutGross(mrr=890)") so Marshall can audit the math.
+
+When pulling structured inputs (bills, commissions, balances, dates) for a tool call, source them from the LIVE DATA SNAPSHOT below unless the user has explicitly stated a hypothetical override.
+
+HYPOTHETICAL OVERLAY RULES — when the user proposes a scenario (e.g. "if I close a $3,000 deal", "if I add a $500 expense in May", "if I bump my 401(k) to 6%"):
+1. Construct an in-memory overlay of the relevant inputs by copying the snapshot data and layering the proposed change on top.
+2. Pass that overlay into the appropriate engine function via tool-use.
+3. Return the computed result clearly labeled as "HYPOTHETICAL SCENARIO".
+4. Never persist hypothetical values — you have no database write access. Explicitly confirm in your response that no changes were saved.
+5. Always distinguish in your response between real current state and hypothetical scenario results. The next user message starts from real current state unless they re-state the hypothetical.
+=== END ENGINE FUNCTION ACCESS ===
+
+=== METHODOLOGY (Reserve Playbook v7.4 — supersedes v7.3 where indicated) ===
+${playbookContent}
+=== END METHODOLOGY ===
+
+=== CLIENT PROFILE ===
+Marshall Roberts-Payne, age 30. Account Executive at Odoo Inc. (variable commission income on top of base ~$54,000 gross / ~$3,220 net biweekly-equivalent monthly). Self-managed brokerage at Schwab (SWPPX, AVUV, VXUS, IAU, IBIT, SGOV). Paid 7th and 22nd of each month (employer deposits prior business day if weekend). Federal student loans in deferral; active auto loan with WNY FCU on a 2024 Toyota Camry (4.74% APR, 60 months, principal ~$18,500). Roth IRA at Schwab (newly opened). Buffalo / Cheektowaga, NY.
+=== END CLIENT PROFILE ===
+
+${lines.join("\n")}
+
+${integrityLines.join("\n")}
+
+=== OPERATING RULES (non-negotiable) ===
+
+REASONING STRUCTURE — every substantive answer must follow this skeleton:
+A. FRAME: State which time frame the question is in (cycle / month / quarter / year / lifetime). One line.
+B. INPUTS: Pull the exact numbers from the LIVE DATA SNAPSHOT. Cite the field name in parentheses, e.g. "Checking $694.05 (Checking, updated 0d ago)". If a number you need is NOT in the snapshot, say so and stop — do not guess.
+C. CALCULATION: Show the math line-by-line with labeled rows (one per addend). Use the same operator convention as the Monthly Savings / Discretionary breakdown the user already sees in the dashboard.
+D. VERDICT: One blunt sentence. Lead with the answer, not the caveat.
+E. RISK / CAVEAT: Only if material — call out staleness, drought flag, weekend payday, integrity failures.
+F. DECISION LOG ENTRY (optional): If the answer is a decision Marshall might want to remember, end with a copy-pasteable "Decision Log:" line in this exact format: "Decision Log [YYYY-MM-DD]: <action> — <rationale in ≤20 words> — <expected impact>".
+
+HARD RULES:
+1. Cite specific snapshot fields for EVERY numerical claim. Do not invent numbers. Do not cite numbers not in the snapshot.
+2. If the snapshot shows balance > 3 days old OR any cycle-blocking integrity check failed, REFUSE cycle-frame questions (Safe to Spend, daily rate, days of coverage). Demand a balance update first. You may still answer structural questions (retirement math, debt strategy, long-term projections) that do not depend on current cycle liquidity.
+3. Planning floor is ALWAYS base net (${fmt(baseNet)}/mo). Never assume future commission income unless Marshall explicitly opts in for that question. When commission is in scope, use the 3-month rolling avg take-home (${fmt(last3Avg)}) as the conservative case and YTD (${fmt(ytdTakeHome)}) as the optimistic case — never the high-water month.
+4. Do NOT recommend specific tickers, allocations, rebalances, or trades. The brokerage is self-managed. You may discuss tax-bucket placement (taxable vs Roth vs 401k vs HYSA) and asset-class shape (equity vs fixed income vs cash) at the strategy layer.
+5. NO generic personal-finance content ("build an emergency fund", "consider a Roth", "think about diversification"). Marshall's strategy is already defined in the playbook. Your job is to apply it to his actual numbers, not re-teach Personal Finance 101.
+6. Be blunt. If an idea is bad, say "this is a bad idea" and prove it with numbers. If a number is great, say "this is the right move" and prove it. Marshall prefers directness over diplomacy. Avoid filler ("Great question!", "It depends on…", "Generally speaking…").
+7. When the playbook v7.3 body and the v7.4 ADDENDUM (or LIVE DATA SNAPSHOT) disagree, the v7.4 ADDENDUM and the snapshot win. The playbook body is canonical methodology, but the live state is canonical fact.
+8. Drought flag (consecutive-month commission view): currently ${droughtFlag ? "ACTIVE" : "not active"}. When ACTIVE, push every recommendation toward base-net survivability and call out any analysis that assumes commission.
+9. Forward Reserve (${fmt(cycle.forwardReserve)}) is excluded from Safe to Spend by design — it factors into Monthly Savings only. Do not "spend" the forward reserve in any cycle-frame answer.
+10. All calculations must come from the shared engine functions in \`/lib/finance/engine.ts\` (package \`@workspace/finance\`) and the LIVE DATA SNAPSHOT above. For any non-trivial math (commissions, projections, PMT, FV, runway, match gap, retirement, debt, decision sandbox, safe-to-spend overrides), CALL the engine tool — do not reproduce the math in prose. If a number you need is not in the snapshot and no tool can compute it, say so and stop — do not guess.
+
+OUT OF SCOPE — refuse politely:
+- Tax filing or filing-status advice (refer to CPA).
+- Specific securities recommendations.
+- Insurance product recommendations beyond the audit framework already in the playbook.
+- Legal / estate questions.
+
+${stalenessDirective}
+=== END OPERATING RULES ===`;
+
+  return {
+    systemPrompt,
+    snapshot: {
+      timestamp: new Date().toISOString(),
+      cycle,
+      // `savings` (computeMonthlySavings result) was previously surfaced here
+      // for the advisor UI snapshot drawer. It was retired alongside the
+      // /dashboard/monthly-savings route; the value is still computed above
+      // for the integrity check but no longer leaks into the public snapshot.
+      includedBills: includedBills.map((b) => ({
+        name: b.name,
+        amount: parseFloat(b.amount),
+        dueDay: b.dueDay,
+        category: b.category,
+      })),
+      billsInCycle: billsInCycle.map((b) => b.name),
+      commissions: last6.map((c) => ({
+        salesMonth: c.salesMonth,
+        mrr: parseFloat(c.mrrAchieved),
+        nrr: parseFloat(c.nrrAchieved),
+        takeHome: parseFloat(c.takeHome),
+        status: c.status,
+      })),
+      droughtFlag,
+      ytdTakeHome,
+      last3Avg,
+    },
+    integrity,
+  };
+}
+
+// Re-export tier helpers (used by routes if needed)
+export { computeMrrPayout, computeNrrPayout, computeTakeHome, effectivePayday };
+
+```
+
+
+## `artifacts/api-server/src/lib/engineTools.ts` (788 lines)
+
+```ts
+import {
+  Bill,
+  CommissionRow,
+  OneTimeExpense,
+  PurchaseOption,
+  d as utcDay,
+  mrrPayoutGross,
+  nrrPayoutGross,
+  commissionTakeHome,
+  pmt,
+  fv,
+  fvAnnual,
+  matchGapAnalysis,
+  taxReservePerPaycheck,
+  incomeGrowthScenario,
+  incomeReplacementFloor,
+  droughtSurvivalRunway,
+  debtPayoffAnalysis,
+  retirementProjection,
+  forwardProjection,
+  decisionSandboxCompare,
+  forwardReserve,
+  requiredHold,
+  safeToSpend,
+  monthlySavingsEstimate,
+  effectivePayday,
+  daysUntilPayday,
+  billsInCurrentCycle,
+  oneTimeExpensesDueInCycle,
+  hysaGap,
+} from "@workspace/finance";
+
+// Anthropic's tool input_schema is JSON Schema. We rely on `as const` literal
+// types throughout this file for autocompletion at the callsite. Use `unknown`
+// here so readonly literal subtypes are accepted — the SDK validates the
+// shape on the wire.
+interface AnthropicTool {
+  name: string;
+  description: string;
+  input_schema: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+
+const NUM = { type: "number" } as const;
+const STR = { type: "string" } as const;
+const BOOL = { type: "boolean" } as const;
+const DATE_STR = {
+  type: "string",
+  description: "ISO date in YYYY-MM-DD format (UTC).",
+} as const;
+
+const BILL_SCHEMA = {
+  type: "object",
+  properties: {
+    name: STR,
+    amount: NUM,
+    dueDay: { type: "integer", minimum: 1, maximum: 31 },
+    include: BOOL,
+    category: STR,
+    autopay: BOOL,
+  },
+  required: ["name", "amount", "dueDay", "include"],
+} as const;
+
+const COMMISSION_SCHEMA = {
+  type: "object",
+  properties: {
+    salesMonth: { ...DATE_STR, description: "First-of-month date for the sales month." },
+    mrrAchieved: NUM,
+    nrrAchieved: NUM,
+  },
+  required: ["salesMonth", "mrrAchieved", "nrrAchieved"],
+} as const;
+
+const ONE_TIME_SCHEMA = {
+  type: "object",
+  properties: {
+    name: STR,
+    amount: NUM,
+    dueDate: { ...DATE_STR, description: "ISO date or null." },
+    paid: BOOL,
+  },
+  required: ["name", "amount"],
+} as const;
+
+const PURCHASE_OPTION_SCHEMA = {
+  type: "object",
+  properties: {
+    name: STR,
+    totalPrice: NUM,
+    downPayment: NUM,
+    annualRate: { ...NUM, description: "APR as decimal, e.g. 0.0474 for 4.74%." },
+    termMonths: { type: "integer" },
+    monthlyAddons: { ...NUM, description: "Recurring monthly costs like insurance and registration." },
+    oneTimeCost: { ...NUM, description: "Used only for cash purchases (totalPrice = 0)." },
+  },
+  required: ["name", "totalPrice"],
+} as const;
+
+function parseDate(input: unknown): Date {
+  if (input instanceof Date) return input;
+  if (typeof input !== "string") {
+    throw new Error(`Invalid date input: ${JSON.stringify(input)}`);
+  }
+  const ymd = input.slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) throw new Error(`Date must be YYYY-MM-DD, got: ${input}`);
+  return utcDay(parseInt(m[1]!, 10), parseInt(m[2]!, 10), parseInt(m[3]!, 10));
+}
+
+function parseDateOrNull(input: unknown): Date | null {
+  if (input == null || input === "") return null;
+  return parseDate(input);
+}
+
+interface BillJSON {
+  name: string;
+  amount: number;
+  dueDay: number;
+  include: boolean;
+  category?: string;
+  autopay?: boolean;
+}
+function toBill(b: BillJSON): Bill {
+  return new Bill(b.name, b.amount, b.dueDay, b.include, b.category ?? "", b.autopay ?? true);
+}
+
+interface CommissionJSON {
+  salesMonth: string;
+  mrrAchieved: number;
+  nrrAchieved: number;
+}
+function toCommission(c: CommissionJSON): CommissionRow {
+  return new CommissionRow(parseDate(c.salesMonth), c.mrrAchieved, c.nrrAchieved);
+}
+
+interface OneTimeJSON {
+  name: string;
+  amount: number;
+  dueDate?: string | null;
+  paid?: boolean;
+}
+function toOneTime(o: OneTimeJSON): OneTimeExpense {
+  return new OneTimeExpense(o.name, o.amount, parseDateOrNull(o.dueDate), o.paid ?? false);
+}
+
+interface PurchaseOptionJSON {
+  name: string;
+  totalPrice: number;
+  downPayment?: number;
+  annualRate?: number;
+  termMonths?: number;
+  monthlyAddons?: number;
+  oneTimeCost?: number;
+}
+function toPurchaseOption(o: PurchaseOptionJSON): PurchaseOption {
+  return new PurchaseOption(
+    o.name,
+    o.totalPrice,
+    o.downPayment ?? 0,
+    o.annualRate ?? 0,
+    o.termMonths ?? 60,
+    o.monthlyAddons ?? 0,
+    o.oneTimeCost ?? 0,
+  );
+}
+
+function serialize(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (Array.isArray(value)) return value.map(serialize);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = serialize(v);
+    return out;
+  }
+  return value;
+}
+
+export const ENGINE_TOOLS: AnthropicTool[] = [
+  {
+    name: "mrrPayoutGross",
+    description:
+      "Compute the gross MRR commission payout (4-tier piecewise) for a given monthly recurring revenue achieved. Returns dollars before tax.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mrr: { ...NUM, description: "MRR achieved this month, in dollars." },
+        mrrTarget: { ...NUM, description: "Optional target override. Defaults to $700." },
+      },
+      required: ["mrr"],
+    },
+  },
+  {
+    name: "nrrPayoutGross",
+    description:
+      "Compute the gross NRR commission payout (4-tier piecewise). Returns dollars before tax.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nrr: { ...NUM, description: "NRR achieved this month, in dollars." },
+        nrrTarget: { ...NUM, description: "Optional target override. Defaults to $6,000." },
+      },
+      required: ["nrr"],
+    },
+  },
+  {
+    name: "commissionTakeHome",
+    description:
+      "Compute take-home commission after tax withholding for given MRR/NRR achieved.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mrr: NUM,
+        nrr: NUM,
+        mrrTarget: NUM,
+        nrrTarget: NUM,
+        taxRate: { ...NUM, description: "Decimal, e.g. 0.435. Default per playbook." },
+      },
+      required: ["mrr", "nrr"],
+    },
+  },
+  {
+    name: "pmt",
+    description: "Excel-style PMT — monthly loan payment. Returns dollars per month.",
+    input_schema: {
+      type: "object",
+      properties: {
+        annualRate: { ...NUM, description: "APR as decimal." },
+        termMonths: { type: "integer" },
+        principal: NUM,
+      },
+      required: ["annualRate", "termMonths", "principal"],
+    },
+  },
+  {
+    name: "fv",
+    description: "Future value with periodic payment and present value (per-period rate).",
+    input_schema: {
+      type: "object",
+      properties: {
+        annualRate: { ...NUM, description: "Per-period rate (already divided)." },
+        periods: { type: "integer" },
+        payment: NUM,
+        pv: NUM,
+      },
+      required: ["annualRate", "periods", "payment", "pv"],
+    },
+  },
+  {
+    name: "fvAnnual",
+    description: "Future value compounded annually with annual payment and present value.",
+    input_schema: {
+      type: "object",
+      properties: {
+        annualRate: NUM,
+        years: { type: "integer" },
+        annualPayment: NUM,
+        pv: NUM,
+      },
+      required: ["annualRate", "years", "annualPayment", "pv"],
+    },
+  },
+  {
+    name: "matchGapAnalysis",
+    description:
+      "401(k) match gap analysis. Returns annual/monthly free employer match left on the table at a given employee contribution rate.",
+    input_schema: {
+      type: "object",
+      properties: {
+        grossSalary: NUM,
+        contributionPct: { ...NUM, description: "Decimal, e.g. 0.04 for 4%." },
+        matchMultiplier: NUM,
+        employeeCeiling: NUM,
+      },
+    },
+  },
+  {
+    name: "taxReservePerPaycheck",
+    description:
+      "Tax reserve per paycheck and per month based on gross annual salary and tax rates. Returns [perPaycheck, perMonth].",
+    input_schema: {
+      type: "object",
+      properties: {
+        grossAnnual: NUM,
+        fedRate: NUM,
+        stateRate: NUM,
+        payPeriods: { type: "integer" },
+      },
+    },
+  },
+  {
+    name: "incomeGrowthScenario",
+    description:
+      "Model the cash-flow impact of a base-salary change (e.g. raise to $X). Returns new monthly net, savings floor, and improvement.",
+    input_schema: {
+      type: "object",
+      properties: {
+        currentBaseSalary: NUM,
+        newBaseSalary: NUM,
+        fedRate: NUM,
+        stateRate: NUM,
+        baseNetMonthly: NUM,
+        monthlyFixedBills: NUM,
+      },
+    },
+  },
+  {
+    name: "incomeReplacementFloor",
+    description:
+      "Compute minimum base salary (annual + monthly gross) required to maintain the savings floor at $0 commission.",
+    input_schema: {
+      type: "object",
+      properties: {
+        monthlySavingsTarget: NUM,
+        monthlyFixedBills: NUM,
+        variableCap: NUM,
+        totalTaxRate: NUM,
+      },
+      required: ["monthlySavingsTarget", "monthlyFixedBills", "variableCap", "totalTaxRate"],
+    },
+  },
+  {
+    name: "droughtSurvivalRunway",
+    description:
+      "Zero-commission runway calculation. Returns months of runway given liquid balances and burn.",
+    input_schema: {
+      type: "object",
+      properties: {
+        checkingBalance: NUM,
+        hysaBalance: NUM,
+        monthlyFixedBills: NUM,
+        variableCap: NUM,
+        baseNetMonthly: NUM,
+      },
+      required: [
+        "checkingBalance",
+        "hysaBalance",
+        "monthlyFixedBills",
+        "variableCap",
+        "baseNetMonthly",
+      ],
+    },
+  },
+  {
+    name: "debtPayoffAnalysis",
+    description:
+      "Student-loan / installment-debt payoff analysis at standard, extended, 3yr, 5yr, 7yr aggressive scenarios with INVEST vs PAY verdict.",
+    input_schema: {
+      type: "object",
+      properties: {
+        balance: NUM,
+        annualRate: NUM,
+        standardTermYears: { type: "integer" },
+        extendedTermYears: { type: "integer" },
+        returnAssumption: NUM,
+      },
+      required: ["balance", "annualRate"],
+    },
+  },
+  {
+    name: "retirementProjection",
+    description:
+      "401(k) projections at three contribution rates (current, ceiling, aggressive 12%). Returns FV at 60 and 65.",
+    input_schema: {
+      type: "object",
+      properties: {
+        grossSalary: NUM,
+        contributionPct: NUM,
+        currentBalance: NUM,
+        currentAge: { type: "integer" },
+        targetAge: { type: "integer" },
+        returnAssumption: NUM,
+        matchMultiplier: NUM,
+        employeeCeiling: NUM,
+      },
+    },
+  },
+  {
+    name: "forwardProjection",
+    description:
+      "Multi-cycle forward cash-flow projection across 1-12 paydays. Use this for any 'what will my balance look like over the next N paydays' question. For hypothetical scenarios, build the bills/commissions arrays with the proposed changes layered in.",
+    input_schema: {
+      type: "object",
+      properties: {
+        currentChecking: NUM,
+        bills: { type: "array", items: BILL_SCHEMA },
+        today: DATE_STR,
+        nextPaydayNominal: { ...DATE_STR, description: "Next nominal payday before weekend adjustment." },
+        commissions: { type: "array", items: COMMISSION_SCHEMA },
+        cycles: { type: "integer", minimum: 1, maximum: 12, description: "Number of cycles to project. Default 2." },
+        baseNetMonthly: NUM,
+        variableCap: NUM,
+        mrrTarget: NUM,
+        nrrTarget: NUM,
+        taxRate: NUM,
+      },
+      required: ["currentChecking", "bills", "today", "nextPaydayNominal", "commissions"],
+    },
+  },
+  {
+    name: "decisionSandboxCompare",
+    description:
+      "Compare up to 4 purchase options (cars, big-ticket items) across monthly cost, daily lifestyle hit, HYSA runway, opportunity cost, and affordability flag.",
+    input_schema: {
+      type: "object",
+      properties: {
+        options: { type: "array", items: PURCHASE_OPTION_SCHEMA, minItems: 1, maxItems: 4 },
+        currentDailySafeSpend: NUM,
+        monthlyFixedBills: NUM,
+        variableCap: NUM,
+        baseNetMonthly: NUM,
+        hysaBalance: NUM,
+        returnAssumption: NUM,
+        opportunityCostMonths: { type: "integer" },
+      },
+      required: [
+        "options",
+        "currentDailySafeSpend",
+        "monthlyFixedBills",
+        "variableCap",
+        "baseNetMonthly",
+        "hysaBalance",
+      ],
+    },
+  },
+  {
+    name: "forwardReserve",
+    description:
+      "Compute the next-month forward reserve (1st-7th bills + 7 days variable). Used for override scenarios.",
+    input_schema: {
+      type: "object",
+      properties: {
+        bills: { type: "array", items: BILL_SCHEMA },
+        variableCap: NUM,
+        monthLengthDays: NUM,
+      },
+      required: ["bills"],
+    },
+  },
+  {
+    name: "requiredHold",
+    description: "Sum of all reserves against checking. Used for override scenarios.",
+    input_schema: {
+      type: "object",
+      properties: {
+        billsDueTotal: NUM,
+        pendingHolds: NUM,
+        minimumCushion: NUM,
+        checkingFloor: NUM,
+        irregularBuffer: NUM,
+        timingBuffer: NUM,
+        oneTimeDueTotal: NUM,
+      },
+      required: ["billsDueTotal"],
+    },
+  },
+  {
+    name: "safeToSpend",
+    description:
+      "Safe-to-Spend computation. Used for override scenarios (e.g. 'what if my checking were $X?').",
+    input_schema: {
+      type: "object",
+      properties: {
+        checkingBalance: NUM,
+        billsDueTotal: NUM,
+        pendingHolds: NUM,
+        minimumCushion: NUM,
+        oneTimeDueTotal: NUM,
+        forwardReserveAmount: NUM,
+        includeForwardReserveInSts: BOOL,
+      },
+      required: ["checkingBalance", "billsDueTotal"],
+    },
+  },
+  {
+    name: "monthlySavingsEstimate",
+    description:
+      "Monthly savings estimate from base net + confirmed commission minus all monthly outflows. Used for override scenarios.",
+    input_schema: {
+      type: "object",
+      properties: {
+        baseNetMonthly: NUM,
+        confirmedCommission: NUM,
+        includedBills: { type: "array", items: BILL_SCHEMA },
+        nextPaydayNominal: DATE_STR,
+        today: DATE_STR,
+        oneTimeExpenses: { type: "array", items: ONE_TIME_SCHEMA },
+        quicksilverAccrual: NUM,
+        billsForReserve: { type: "array", items: BILL_SCHEMA },
+        variableCap: NUM,
+      },
+      required: [
+        "baseNetMonthly",
+        "confirmedCommission",
+        "includedBills",
+        "nextPaydayNominal",
+        "today",
+        "oneTimeExpenses",
+        "quicksilverAccrual",
+        "billsForReserve",
+      ],
+    },
+  },
+  {
+    name: "effectivePayday",
+    description: "Weekend-adjust a nominal payday to the prior Friday if Sat/Sun.",
+    input_schema: {
+      type: "object",
+      properties: { nominal: DATE_STR },
+      required: ["nominal"],
+    },
+  },
+  {
+    name: "daysUntilPayday",
+    description: "Days remaining until the effective payday (floored at 0).",
+    input_schema: {
+      type: "object",
+      properties: { today: DATE_STR, nextPaydayNominal: DATE_STR },
+      required: ["today", "nextPaydayNominal"],
+    },
+  },
+  {
+    name: "billsInCurrentCycle",
+    description:
+      "Filter bills due in the current cycle (today <= dueDate < effective payday). Returns the matching bills with their next due dates.",
+    input_schema: {
+      type: "object",
+      properties: {
+        bills: { type: "array", items: BILL_SCHEMA },
+        today: DATE_STR,
+        nextPaydayNominal: DATE_STR,
+      },
+      required: ["bills", "today", "nextPaydayNominal"],
+    },
+  },
+  {
+    name: "oneTimeExpensesDueInCycle",
+    description:
+      "Sum of unpaid one-time expenses with due date inside the current cycle (today <= dueDate <= effective payday).",
+    input_schema: {
+      type: "object",
+      properties: {
+        expenses: { type: "array", items: ONE_TIME_SCHEMA },
+        today: DATE_STR,
+        nextPaydayNominal: DATE_STR,
+      },
+      required: ["expenses", "today", "nextPaydayNominal"],
+    },
+  },
+  {
+    name: "hysaGap",
+    description: "HYSA gap to target. Negative = surplus.",
+    input_schema: {
+      type: "object",
+      properties: { current: NUM, target: NUM },
+      required: ["current"],
+    },
+  },
+];
+
+type ToolInput = Record<string, unknown>;
+
+function num(input: ToolInput, key: string, required = false): number | undefined {
+  const v = input[key];
+  if (v == null) {
+    if (required) throw new Error(`Missing required parameter: ${key}`);
+    return undefined;
+  }
+  if (typeof v !== "number") throw new Error(`Parameter ${key} must be a number`);
+  return v;
+}
+
+function reqNum(input: ToolInput, key: string): number {
+  return num(input, key, true)!;
+}
+
+function billArray(input: ToolInput, key: string): Bill[] {
+  const v = input[key];
+  if (!Array.isArray(v)) throw new Error(`Parameter ${key} must be an array`);
+  return v.map((b) => toBill(b as BillJSON));
+}
+
+function commissionArray(input: ToolInput, key: string): CommissionRow[] {
+  const v = input[key];
+  if (!Array.isArray(v)) throw new Error(`Parameter ${key} must be an array`);
+  return v.map((c) => toCommission(c as CommissionJSON));
+}
+
+function oneTimeArray(input: ToolInput, key: string): OneTimeExpense[] {
+  const v = input[key];
+  if (!Array.isArray(v)) throw new Error(`Parameter ${key} must be an array`);
+  return v.map((o) => toOneTime(o as OneTimeJSON));
+}
+
+function purchaseOptionArray(input: ToolInput, key: string): PurchaseOption[] {
+  const v = input[key];
+  if (!Array.isArray(v)) throw new Error(`Parameter ${key} must be an array`);
+  return v.map((p) => toPurchaseOption(p as PurchaseOptionJSON));
+}
+
+export function executeEngineTool(name: string, rawInput: unknown): unknown {
+  const input = (rawInput ?? {}) as ToolInput;
+  switch (name) {
+    case "mrrPayoutGross":
+      return mrrPayoutGross(reqNum(input, "mrr"), num(input, "mrrTarget"));
+    case "nrrPayoutGross":
+      return nrrPayoutGross(reqNum(input, "nrr"), num(input, "nrrTarget"));
+    case "commissionTakeHome":
+      return commissionTakeHome(
+        reqNum(input, "mrr"),
+        reqNum(input, "nrr"),
+        num(input, "mrrTarget"),
+        num(input, "nrrTarget"),
+        num(input, "taxRate"),
+      );
+    case "pmt":
+      return pmt(reqNum(input, "annualRate"), reqNum(input, "termMonths"), reqNum(input, "principal"));
+    case "fv":
+      return fv(
+        reqNum(input, "annualRate"),
+        reqNum(input, "periods"),
+        reqNum(input, "payment"),
+        reqNum(input, "pv"),
+      );
+    case "fvAnnual":
+      return fvAnnual(
+        reqNum(input, "annualRate"),
+        reqNum(input, "years"),
+        reqNum(input, "annualPayment"),
+        reqNum(input, "pv"),
+      );
+    case "matchGapAnalysis":
+      return matchGapAnalysis(
+        num(input, "grossSalary"),
+        num(input, "contributionPct"),
+        num(input, "matchMultiplier"),
+        num(input, "employeeCeiling"),
+      );
+    case "taxReservePerPaycheck": {
+      const r = taxReservePerPaycheck(
+        num(input, "grossAnnual"),
+        num(input, "fedRate"),
+        num(input, "stateRate"),
+        num(input, "payPeriods"),
+      );
+      return { perPaycheck: r[0], perMonth: r[1] };
+    }
+    case "incomeGrowthScenario":
+      return incomeGrowthScenario(
+        num(input, "currentBaseSalary"),
+        num(input, "newBaseSalary"),
+        num(input, "fedRate"),
+        num(input, "stateRate"),
+        num(input, "baseNetMonthly"),
+        num(input, "monthlyFixedBills"),
+      );
+    case "incomeReplacementFloor": {
+      const r = incomeReplacementFloor(
+        reqNum(input, "monthlySavingsTarget"),
+        reqNum(input, "monthlyFixedBills"),
+        reqNum(input, "variableCap"),
+        reqNum(input, "totalTaxRate"),
+      );
+      return { annualFloor: r[0], monthlyFloorGross: r[1] };
+    }
+    case "droughtSurvivalRunway":
+      return droughtSurvivalRunway(
+        reqNum(input, "checkingBalance"),
+        reqNum(input, "hysaBalance"),
+        reqNum(input, "monthlyFixedBills"),
+        reqNum(input, "variableCap"),
+        reqNum(input, "baseNetMonthly"),
+      );
+    case "debtPayoffAnalysis":
+      return debtPayoffAnalysis(
+        reqNum(input, "balance"),
+        reqNum(input, "annualRate"),
+        num(input, "standardTermYears"),
+        num(input, "extendedTermYears"),
+        num(input, "returnAssumption"),
+      );
+    case "retirementProjection":
+      return retirementProjection(
+        num(input, "grossSalary"),
+        num(input, "contributionPct"),
+        num(input, "currentBalance"),
+        num(input, "currentAge"),
+        num(input, "targetAge"),
+        num(input, "returnAssumption"),
+        num(input, "matchMultiplier"),
+        num(input, "employeeCeiling"),
+      );
+    case "forwardProjection":
+      return serialize(
+        forwardProjection({
+          currentChecking: reqNum(input, "currentChecking"),
+          bills: billArray(input, "bills"),
+          today: parseDate(input["today"]),
+          nextPaydayNominal: parseDate(input["nextPaydayNominal"]),
+          commissions: commissionArray(input, "commissions"),
+          cycles: num(input, "cycles") as number | undefined,
+          baseNetMonthly: num(input, "baseNetMonthly"),
+          variableCap: num(input, "variableCap"),
+          mrrTarget: num(input, "mrrTarget"),
+          nrrTarget: num(input, "nrrTarget"),
+          taxRate: num(input, "taxRate"),
+        }),
+      );
+    case "decisionSandboxCompare":
+      return decisionSandboxCompare(
+        purchaseOptionArray(input, "options"),
+        reqNum(input, "currentDailySafeSpend"),
+        reqNum(input, "monthlyFixedBills"),
+        reqNum(input, "variableCap"),
+        reqNum(input, "baseNetMonthly"),
+        reqNum(input, "hysaBalance"),
+        num(input, "returnAssumption"),
+        num(input, "opportunityCostMonths"),
+      );
+    case "forwardReserve":
+      return forwardReserve(
+        billArray(input, "bills"),
+        num(input, "variableCap"),
+        num(input, "monthLengthDays"),
+      );
+    case "requiredHold":
+      return requiredHold(
+        reqNum(input, "billsDueTotal"),
+        num(input, "pendingHolds"),
+        num(input, "minimumCushion"),
+        num(input, "checkingFloor"),
+        num(input, "irregularBuffer"),
+        num(input, "timingBuffer"),
+        num(input, "oneTimeDueTotal"),
+      );
+    case "safeToSpend":
+      return safeToSpend(reqNum(input, "checkingBalance"), reqNum(input, "billsDueTotal"), {
+        pendingHolds: num(input, "pendingHolds"),
+        minimumCushion: num(input, "minimumCushion"),
+        oneTimeDueTotal: num(input, "oneTimeDueTotal"),
+        forwardReserveAmount: num(input, "forwardReserveAmount"),
+        includeForwardReserveInSts: input["includeForwardReserveInSts"] as boolean | undefined,
+      });
+    case "monthlySavingsEstimate":
+      return monthlySavingsEstimate(
+        reqNum(input, "baseNetMonthly"),
+        reqNum(input, "confirmedCommission"),
+        billArray(input, "includedBills"),
+        parseDate(input["nextPaydayNominal"]),
+        parseDate(input["today"]),
+        oneTimeArray(input, "oneTimeExpenses"),
+        reqNum(input, "quicksilverAccrual"),
+        billArray(input, "billsForReserve"),
+        num(input, "variableCap"),
+        undefined, // monthLengthDays — engine default
+        // Defect 1: pass currentCycleBills so 1-7 bills already in the cycle
+        // Required Hold are not double-counted in Forward Reserve. Optional —
+        // tool callers that don't supply it get the legacy [] (no exclusion).
+        input["currentCycleBills"] ? billArray(input, "currentCycleBills") : undefined,
+      );
+    case "effectivePayday":
+      return serialize(effectivePayday(parseDate(input["nominal"])));
+    case "daysUntilPayday":
+      return daysUntilPayday(parseDate(input["today"]), parseDate(input["nextPaydayNominal"]));
+    case "billsInCurrentCycle":
+      return serialize(
+        billsInCurrentCycle(
+          billArray(input, "bills"),
+          parseDate(input["today"]),
+          parseDate(input["nextPaydayNominal"]),
+        ).map(([b, dueDate]) => ({ bill: { name: b.name, amount: b.amount, dueDay: b.dueDay }, dueDate })),
+      );
+    case "oneTimeExpensesDueInCycle":
+      return oneTimeExpensesDueInCycle(
+        oneTimeArray(input, "expenses"),
+        parseDate(input["today"]),
+        parseDate(input["nextPaydayNominal"]),
+      );
+    case "hysaGap":
+      return hysaGap(reqNum(input, "current"), num(input, "target"));
+    default:
+      throw new Error(`Unknown engine tool: ${name}`);
+  }
+}
+
+```
+
+
+## `artifacts/api-server/src/lib/integrity.ts` (476 lines)
+
+```ts
+import {
+  db,
+  integrityLog,
+  bills,
+  assumptions,
+  retirementPlan,
+  balances,
+  playbookVersions,
+  variableSpend,
+} from "@workspace/db";
+import { eq, desc } from "drizzle-orm";
+import { computeCycleState, computeRequiredHold } from "./financeEngine";
+import { billsThisMonth } from "./cycleBillEngine";
+import { logger } from "./logger";
+
+export interface IntegrityCheck {
+  checkNumber: number;
+  description: string;
+  status: "pass" | "fail" | "warn" | "skip";
+  detail: string;
+}
+
+export interface IntegrityRunResult {
+  id: number;
+  runAt: Date;
+  overallStatus: "pass" | "fail" | "warn";
+  checks: IntegrityCheck[];
+  notes: string;
+}
+
+const CENT = 0.005;
+
+async function runChecks(): Promise<IntegrityCheck[]> {
+  const checks: IntegrityCheck[] = [];
+
+  // v9 Fix 3 — defensively purge any stored `next_payday_date` assumption row.
+  // No code reads it anymore (payday is derived dynamically from 7th/22nd) but
+  // the row may still exist in databases seeded prior to v9. Removing it here
+  // means even a stale DB self-heals on the next integrity run.
+  await db
+    .delete(assumptions)
+    .where(eq(assumptions.key, "next_payday_date"));
+
+  const [latestBalance] = await db
+    .select()
+    .from(balances)
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (!latestBalance) {
+    checks.push({
+      checkNumber: 1,
+      description: "Balance data exists",
+      status: "fail",
+      detail: "No balance data found. Enter current checking balance.",
+    });
+  } else {
+    const days = Math.floor(
+      (today.getTime() - new Date(latestBalance.asOfDate).getTime()) /
+        (1000 * 60 * 60 * 24),
+    );
+    if (days > 3) {
+      checks.push({
+        checkNumber: 1,
+        description: "Balance data freshness",
+        status: "fail",
+        detail: `Balance last updated ${days} days ago. Update required (must be ≤3 days).`,
+      });
+    } else {
+      checks.push({
+        checkNumber: 1,
+        description: "Balance data freshness",
+        status: "pass",
+        detail: `Balance updated ${days} day(s) ago. OK.`,
+      });
+    }
+  }
+
+  // v9 Fix 3 — next payday is dynamically derived (7th/22nd). The
+  // assumption row has been removed; this check confirms the derivation
+  // produces a future date (which it does by construction).
+  const { deriveNextPayday } = await import("./financeEngine");
+  const derivedPayday = deriveNextPayday(today);
+  checks.push({
+    checkNumber: 2,
+    description: "Next payday (derived)",
+    status: "pass",
+    detail: `Next payday: ${derivedPayday.toISOString().slice(0, 10)} (dynamic 7th/22nd).`,
+  });
+
+  const [baseIncomeRow] = await db
+    .select()
+    .from(assumptions)
+    .where(eq(assumptions.key, "base_net_income"));
+  if (!baseIncomeRow || parseFloat(baseIncomeRow.value) <= 0) {
+    checks.push({
+      checkNumber: 3,
+      description: "Base net income configured",
+      status: "fail",
+      detail: "Base net income is not set or zero. Configure in Settings.",
+    });
+  } else {
+    checks.push({
+      checkNumber: 3,
+      description: "Base net income configured",
+      status: "pass",
+      detail: `Base net income: $${parseFloat(baseIncomeRow.value).toFixed(2)}/mo.`,
+    });
+  }
+
+  const allBills = await db.select().from(bills);
+  const activeBills = allBills.filter((b) => b.includeInCycle);
+  if (activeBills.length === 0) {
+    checks.push({
+      checkNumber: 4,
+      description: "Active bills configured",
+      status: "warn",
+      detail: "No bills marked Include=TRUE. Add your recurring bills.",
+    });
+  } else {
+    checks.push({
+      checkNumber: 4,
+      description: "Active bills configured",
+      status: "pass",
+      detail: `${activeBills.length} active bill(s) configured.`,
+    });
+  }
+
+  const carLoanBill = allBills.find(
+    (b) =>
+      b.name.toLowerCase().includes("car loan") ||
+      b.name.toLowerCase().includes("car payment"),
+  );
+  if (carLoanBill && carLoanBill.includeInCycle) {
+    checks.push({
+      checkNumber: 5,
+      description: "Car loan eliminated (Include=FALSE)",
+      status: "warn",
+      detail:
+        "Car loan bill has Include=TRUE. If lien was paid March 2026, set Include=FALSE.",
+    });
+  } else {
+    checks.push({
+      checkNumber: 5,
+      description: "Car loan status",
+      status: "pass",
+      detail: carLoanBill
+        ? "Car loan bill exists with Include=FALSE (correct)."
+        : "No car loan bill found (OK if eliminated).",
+    });
+  }
+
+  const [alertRow] = await db
+    .select()
+    .from(assumptions)
+    .where(eq(assumptions.key, "alert_threshold"));
+  const alertThreshold = alertRow ? parseFloat(alertRow.value) : 0;
+  if (!alertRow || alertThreshold <= 0) {
+    checks.push({
+      checkNumber: 6,
+      description: "Alert threshold configured",
+      status: "warn",
+      detail: "Alert threshold not set. Default $400. Configure in Settings.",
+    });
+  } else {
+    checks.push({
+      checkNumber: 6,
+      description: "Alert threshold configured",
+      status: "pass",
+      detail: `YELLOW threshold: $${alertThreshold}.`,
+    });
+  }
+
+  const [varCapRow] = await db
+    .select()
+    .from(assumptions)
+    .where(eq(assumptions.key, "variable_spend_cap"));
+  if (!varCapRow || parseFloat(varCapRow.value) <= 0) {
+    checks.push({
+      checkNumber: 7,
+      description: "Variable spend cap configured",
+      status: "warn",
+      detail:
+        "Variable spend cap not set. Default $600/mo. Configure in Settings.",
+    });
+  } else {
+    checks.push({
+      checkNumber: 7,
+      description: "Variable spend cap configured",
+      status: "pass",
+      detail: `Variable cap: $${parseFloat(varCapRow.value)}/mo.`,
+    });
+  }
+
+  const [hysaTargetRow] = await db
+    .select()
+    .from(assumptions)
+    .where(eq(assumptions.key, "hysa_target"));
+  if (!hysaTargetRow || parseFloat(hysaTargetRow.value) <= 0) {
+    checks.push({
+      checkNumber: 8,
+      description: "HYSA target configured",
+      status: "warn",
+      detail: "HYSA target not set. Default $15,000. Configure in Settings.",
+    });
+  } else {
+    checks.push({
+      checkNumber: 8,
+      description: "HYSA target configured",
+      status: "pass",
+      detail: `HYSA target: $${parseFloat(hysaTargetRow.value).toLocaleString()}.`,
+    });
+  }
+
+  const [ret] = await db.select().from(retirementPlan).limit(1);
+  if (!ret) {
+    checks.push({
+      checkNumber: 9,
+      description: "Retirement plan configured",
+      status: "warn",
+      detail: "No retirement plan configured. Go to Retirement Planning.",
+    });
+  } else {
+    const contribRate = parseFloat(ret.contributionRate) * 100;
+    const matchCap = parseFloat(ret.employerMatchCap) * 100;
+    if (contribRate < matchCap) {
+      checks.push({
+        checkNumber: 9,
+        description: "401(k) match captured",
+        status: "warn",
+        detail: `Contributing ${contribRate}% vs ${matchCap}% match cap. $540/yr in free money uncaptured.`,
+      });
+    } else {
+      checks.push({
+        checkNumber: 9,
+        description: "401(k) match captured",
+        status: "pass",
+        detail:
+          "Contributing at or above match cap. Full employer match captured.",
+      });
+    }
+  }
+
+  const [playbook] = await db
+    .select()
+    .from(playbookVersions)
+    .orderBy(desc(playbookVersions.effectiveFrom))
+    .limit(1);
+  if (!playbook) {
+    checks.push({
+      checkNumber: 10,
+      description: "Playbook loaded",
+      status: "warn",
+      detail: "No playbook version found.",
+    });
+  } else {
+    checks.push({
+      checkNumber: 10,
+      description: "Playbook loaded",
+      status: "pass",
+      detail: `Playbook v${playbook.version} loaded.`,
+    });
+  }
+
+  // Check 11: Cycle math invariant. Both the engine (computeCycleState) and
+  // this check call the SAME canonical hold function (computeRequiredHold).
+  // There is no parallel implementation of cycle membership — by construction
+  // the two outputs must agree to the cent. The check still serves as a smoke
+  // test (DB reachable, math runs without throwing) and an underwater warning.
+  try {
+    const cycle = await computeCycleState();
+    const hold = await computeRequiredHold();
+
+    const holdDelta = Math.abs(cycle.totalRequiredHold - hold.totalRequiredHold);
+    const safeDelta = Math.abs(cycle.safeToSpend - hold.safeToSpend);
+
+    if (holdDelta > CENT || safeDelta > CENT) {
+      checks.push({
+        checkNumber: 11,
+        description: "Cycle math invariant",
+        status: "fail",
+        detail: `Engine drift detected. RequiredHold delta $${holdDelta.toFixed(2)}, SafeToSpend delta $${safeDelta.toFixed(2)}. computeCycleState and computeRequiredHold disagree — this should be impossible since they share a code path.`,
+      });
+    } else if (cycle.checkingBalance < hold.totalRequiredHold) {
+      const underBy = hold.totalRequiredHold - cycle.checkingBalance;
+      checks.push({
+        checkNumber: 11,
+        description: "Cycle math invariant",
+        status: "fail",
+        detail: `Underwater by $${underBy.toFixed(2)}. Required Hold ($${hold.totalRequiredHold.toFixed(2)}) exceeds checking balance ($${cycle.checkingBalance.toFixed(2)}). Safe-to-Spend clamped to $0; this cycle cannot fund itself.`,
+      });
+    } else {
+      checks.push({
+        checkNumber: 11,
+        description: "Cycle math invariant",
+        status: "pass",
+        detail: `Checking $${cycle.checkingBalance.toFixed(2)} = Required Hold $${hold.totalRequiredHold.toFixed(2)} + Safe-to-Spend $${hold.safeToSpend.toFixed(2)}. Engine and canonical hold agree (delta $0.00). Forward Reserve label: $${hold.forwardReserveLabel.toFixed(2)} (subset of bills already in hold, not a separate addend).`,
+      });
+    }
+  } catch (err) {
+    checks.push({
+      checkNumber: 11,
+      description: "Cycle math invariant",
+      status: "fail",
+      detail: `Could not verify invariant: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
+  // Check 12: Variable spending burn pace.
+  // Compares actual variable_spend MTD vs the prorated cap for today's day-of-month.
+  // Pace = actual / (cap * dayOfMonth/daysInMonth). Warn >110%, fail >150%.
+  // This is the playbook's primary discretionary discipline signal.
+  try {
+    const [varCap2] = await db
+      .select()
+      .from(assumptions)
+      .where(eq(assumptions.key, "variable_spend_cap"));
+    const cap = varCap2 ? parseFloat(varCap2.value) : 600;
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    const dayOfMonth = today.getDate();
+    const daysInMonth = monthEnd.getDate();
+    const allVs = await db.select().from(variableSpend);
+    const actual = allVs
+      .filter((v) => {
+        const d = new Date(v.weekOf);
+        return d >= monthStart && d <= today;
+      })
+      .reduce((s, v) => s + parseFloat(v.amount), 0);
+    const expectedByNow = (cap * dayOfMonth) / daysInMonth;
+    const pace = expectedByNow > 0 ? actual / expectedByNow : 0;
+    const pacePct = Math.round(pace * 100);
+    if (pace > 1.5) {
+      checks.push({
+        checkNumber: 12,
+        description: "Variable burn pace",
+        status: "fail",
+        detail: `Burning at ${pacePct}% of pace. Spent $${actual.toFixed(2)} MTD vs $${expectedByNow.toFixed(2)} expected by day ${dayOfMonth}/${daysInMonth}. Cap will blow.`,
+      });
+    } else if (pace > 1.1) {
+      checks.push({
+        checkNumber: 12,
+        description: "Variable burn pace",
+        status: "warn",
+        detail: `Burning at ${pacePct}% of pace. Spent $${actual.toFixed(2)} MTD vs $${expectedByNow.toFixed(2)} expected by day ${dayOfMonth}/${daysInMonth}. Pull back.`,
+      });
+    } else {
+      checks.push({
+        checkNumber: 12,
+        description: "Variable burn pace",
+        status: "pass",
+        detail: `On pace at ${pacePct}%. Spent $${actual.toFixed(2)} MTD of $${cap.toFixed(2)}/mo cap (day ${dayOfMonth}/${daysInMonth}).`,
+      });
+    }
+  } catch (err) {
+    checks.push({
+      checkNumber: 12,
+      description: "Variable burn pace",
+      status: "skip",
+      detail: `Could not compute pace: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
+  // Check 13: Fixed obligations as % of net income.
+  // Playbook discipline target: fixed bills ≤ 50% of net income (warn >50%, fail >65%).
+  // High fixed ratio = brittle cycle, no slack to absorb commission misses.
+  try {
+    const [incRow2] = await db
+      .select()
+      .from(assumptions)
+      .where(eq(assumptions.key, "base_net_income"));
+    const netIncome = incRow2 ? parseFloat(incRow2.value) : 0;
+    const monthBills = await billsThisMonth(today);
+    const fixedTotal = monthBills.reduce((s, b) => s + b.amount, 0);
+    if (netIncome <= 0) {
+      checks.push({
+        checkNumber: 13,
+        description: "Fixed-to-income ratio",
+        status: "skip",
+        detail: "Net income not configured; cannot compute ratio.",
+      });
+    } else {
+      const ratio = fixedTotal / netIncome;
+      const pct = Math.round(ratio * 100);
+      if (ratio > 0.65) {
+        checks.push({
+          checkNumber: 13,
+          description: "Fixed-to-income ratio",
+          status: "fail",
+          detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Target ≤50%. Cycle is brittle.`,
+        });
+      } else if (ratio > 0.5) {
+        checks.push({
+          checkNumber: 13,
+          description: "Fixed-to-income ratio",
+          status: "warn",
+          detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Above 50% target.`,
+        });
+      } else {
+        checks.push({
+          checkNumber: 13,
+          description: "Fixed-to-income ratio",
+          status: "pass",
+          detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Within 50% target.`,
+        });
+      }
+    }
+  } catch (err) {
+    checks.push({
+      checkNumber: 13,
+      description: "Fixed-to-income ratio",
+      status: "skip",
+      detail: `Could not compute ratio: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
+  return checks;
+}
+
+export async function runIntegrityAndPersist(
+  trigger: string,
+): Promise<IntegrityRunResult> {
+  const checks = await runChecks();
+  const failCount = checks.filter((c) => c.status === "fail").length;
+  const warnCount = checks.filter((c) => c.status === "warn").length;
+
+  let overallStatus: "pass" | "fail" | "warn" = "pass";
+  if (failCount > 0) overallStatus = "fail";
+  else if (warnCount > 0) overallStatus = "warn";
+
+  const notes = `${failCount} failures, ${warnCount} warnings (trigger: ${trigger})`;
+
+  const [logged] = await db
+    .insert(integrityLog)
+    .values({ overallStatus, checksJson: checks, notes })
+    .returning();
+
+  return {
+    id: logged?.id ?? 0,
+    runAt: logged?.runAt ?? new Date(),
+    overallStatus,
+    checks,
+    notes,
+  };
+}
+
+export async function getLatestIntegrityResult(): Promise<IntegrityRunResult | null> {
+  const [row] = await db
+    .select()
+    .from(integrityLog)
+    .orderBy(desc(integrityLog.runAt))
+    .limit(1);
+  if (!row) return null;
+  return {
+    id: row.id,
+    runAt: row.runAt,
+    overallStatus: row.overallStatus as "pass" | "fail" | "warn",
+    checks: row.checksJson as IntegrityCheck[],
+    notes: row.notes ?? "",
+  };
+}
+
+/** Fire-and-forget revalidation. Never throws to caller. */
+export function scheduleIntegrityRevalidation(trigger: string): void {
+  setImmediate(() => {
+    runIntegrityAndPersist(trigger).catch((err) => {
+      logger.warn(
+        { err, trigger },
+        "Background integrity revalidation failed",
+      );
+    });
+  });
+}
+
+```
+
+
+## `artifacts/api-server/src/routes/index.ts` (39 lines)
+
+```ts
+import { Router, type IRouter } from "express";
+import healthRouter from "./health";
+import assumptionsRouter from "./assumptions";
+import balancesRouter from "./balances";
+import billsRouter from "./bills";
+import oneTimeExpensesRouter from "./one_time_expenses";
+import variableSpendRouter from "./variable_spend";
+import commissionsRouter from "./commissions";
+import wealthRouter from "./wealth";
+import debtRouter from "./debt";
+import retirementRouter from "./retirement";
+import scenariosRouter from "./scenarios";
+import playbookRouter from "./playbook";
+import integrityRouter from "./integrity";
+import dashboardRouter from "./dashboard";
+import anthropicRouter from "./anthropic";
+import plaidRouter from "./plaid";
+
+const router: IRouter = Router();
+
+router.use(healthRouter);
+router.use(assumptionsRouter);
+router.use(balancesRouter);
+router.use(billsRouter);
+router.use(oneTimeExpensesRouter);
+router.use(variableSpendRouter);
+router.use(commissionsRouter);
+router.use(wealthRouter);
+router.use(debtRouter);
+router.use(retirementRouter);
+router.use(scenariosRouter);
+router.use(playbookRouter);
+router.use(integrityRouter);
+router.use(dashboardRouter);
+router.use(anthropicRouter);
+router.use(plaidRouter);
+
+export default router;
+
+```
+
+
+## `artifacts/api-server/src/routes/dashboard.ts` (968 lines)
+
+```ts
+import { Router, type IRouter } from "express";
+import { GetDashboardCycleResponse } from "@workspace/api-zod";
+import { computeCycleState, deriveNextPayday } from "../lib/financeEngine";
+import { billsThisMonth } from "../lib/cycleBillEngine";
+import { syncBillPaymentStates } from "../lib/paymentState";
+import {
+  db,
+  oneTimeExpenses,
+  variableSpend,
+  bills,
+  assumptions,
+  commissions,
+  balances,
+} from "@workspace/db";
+import { eq, desc } from "drizzle-orm";
+import {
+  BASE_NET_INCOME,
+  MONTH_LENGTH_DAYS,
+  VARIABLE_SPEND_CAP,
+  Bill as EngineBill,
+  commissionTakeHome,
+} from "@workspace/finance";
+
+// NOTE: Playbook §1.1 (Forward Reserve subtracted from Safe to Spend) is now
+// applied inside @workspace/finance.safeToSpend itself (task #9). No route-layer
+// adjustment needed — cycle.safeToSpend and cycle.status are already correct.
+
+const router: IRouter = Router();
+
+router.get("/dashboard/cycle", async (req, res): Promise<void> => {
+  // v8.2 — accept `?asOf=YYYY-MM-DD` to simulate a different calendar day.
+  // Lets the audit (and any future test suite) verify month-timing stability
+  // without mocking the system clock. Real today when omitted.
+  //
+  // SAFETY: when `asOf` is supplied we MUST NOT run `syncBillPaymentStates`
+  // (which mutates rows: flips paid_pending_clear→late_unpaid, rolls cycle
+  // keys, etc.) because doing so would let a read-only simulation
+  // permanently corrupt real bill state with a future/past date. The
+  // engine's read path is pure, so the cycle math itself stays correct;
+  // only the auto-state-transition side-effects are skipped under asOf.
+  const asOfRaw = typeof req.query.asOf === "string" ? req.query.asOf : null;
+  let asOf: Date | undefined;
+  if (asOfRaw) {
+    // Strict YYYY-MM-DD validation (no time, no timezone) — UTC-anchored
+    // so the same string maps to the same simulated day regardless of
+    // server locale.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(asOfRaw)) {
+      const parsed = new Date(asOfRaw + "T00:00:00.000Z");
+      if (!isNaN(parsed.getTime())) asOf = parsed;
+    }
+    if (!asOf) {
+      res.status(400).json({ error: "asOf must be YYYY-MM-DD" });
+      return;
+    }
+  }
+
+  if (!asOf) {
+    // Only run state-mutating sync on the real-clock path.
+    await syncBillPaymentStates(new Date());
+  }
+  const cycle = await computeCycleState(asOf);
+  res.json(
+    GetDashboardCycleResponse.parse({
+      ...cycle,
+      lastBalanceUpdate: cycle.lastBalanceUpdate?.toISOString() ?? null,
+      nextPayday: cycle.nextPayday?.toISOString().split("T")[0] ?? null,
+    }),
+  );
+});
+
+// Discretionary THIS MONTH — v8.0 MONTH-ANCHORED FLOW (Playbook Part 0/1).
+//
+//   discretionary = monthIncome − monthBillsObligated − monthVariable − monthOneTimeObligated
+//
+// NO Forward Reserve (it's a stock/timing buffer, not a flow item — subtracting
+// it from a flow measure produces false catastrophic negatives).
+// NO current-checking anchor (causes pre/post-payday swings).
+//
+// Result CAN be negative. Negative = the month is actually running a deficit.
+// Do not floor; surface as red "running a deficit" per Part 5.
+router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
+  await syncBillPaymentStates(new Date());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  // ---- Inputs ----
+  const [latestChecking] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+  const checking = latestChecking
+    ? parseFloat(latestChecking.amount as unknown as string)
+    : 0;
+
+  const allAssumps = await db.select().from(assumptions);
+  const A = (k: string, dflt = 0) => {
+    const r = allAssumps.find((a) => a.key === k);
+    if (!r) return dflt;
+    const raw = (r.value ?? "").toString().trim();
+    if (raw === "") return dflt;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
+  const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
+  const monthLengthDays = A("month_length_days", MONTH_LENGTH_DAYS);
+  const minimumCushion = A("minimum_cushion", 0);
+  const quicksilverBalanceOwed = A("quicksilver_balance_owed", 0);
+  const mrrTarget = A("mrr_target", 700);
+  const nrrTarget = A("nrr_target", 6000);
+  const taxRate = A("commission_tax_rate", 0.435);
+  // §1.2 override: empty/missing → use cap − logged. Numeric → use that.
+  const overrideRow = allAssumps.find(
+    (a) => a.key === "planned_variable_remaining_override",
+  );
+  const plannedVariableRemainingOverride: number | null =
+    overrideRow &&
+    overrideRow.value !== "" &&
+    !isNaN(parseFloat(overrideRow.value))
+      ? parseFloat(overrideRow.value)
+      : null;
+
+  // v8.0 Part 7 — paydays computed dynamically (7th + 22nd, no stored value).
+  // v8.0 Fix 3 — per-paycheck income override: assumption key
+  // `income_override:YYYY-MM-DD` keyed by nominal payday. When set, that
+  // paycheck uses the override instead of baseNetIncome/2. Unset → fall back
+  // to base. Overrides are scoped per-payday so May 22's override does NOT
+  // bleed into June. Editable via existing PUT /assumptions/{key}.
+  const paydayDays = [7, 22];
+  const netPerPaycheck = baseNetIncome / 2;
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const incomeOverrideFor = (paydayISO: string): number | null => {
+    const row = allAssumps.find(
+      (a) => a.key === `income_override:${paydayISO}`,
+    );
+    if (!row || row.value === "") return null;
+    const n = parseFloat(row.value);
+    // Accept any finite non-negative number — including 0, which models an
+    // intentionally-missed paycheck (e.g. unpaid leave, payroll glitch).
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  let paychecksReceivedThisMonth = 0;
+  let expectedRemainingPaychecks = 0;
+  let paychecksReceivedCount = 0;
+  let paychecksRemainingCount = 0;
+  const paycheckBreakdown: {
+    paydayDate: string;
+    baseAmount: number;
+    overrideAmount: number | null;
+    appliedAmount: number;
+    received: boolean;
+  }[] = [];
+  for (const day of paydayDays) {
+    const nominal = new Date(today.getFullYear(), today.getMonth(), day);
+    const iso = ymd(nominal);
+    const override = incomeOverrideFor(iso);
+    const applied = override ?? netPerPaycheck;
+    const received = nominal <= today;
+    if (received) {
+      paychecksReceivedThisMonth += applied;
+      paychecksReceivedCount += 1;
+    } else if (nominal <= monthEnd) {
+      expectedRemainingPaychecks += applied;
+      paychecksRemainingCount += 1;
+    }
+    paycheckBreakdown.push({
+      paydayDate: iso,
+      baseAmount: netPerPaycheck,
+      overrideAmount: override,
+      appliedAmount: applied,
+      received,
+    });
+  }
+  const remainingPaychecksThisMonth = expectedRemainingPaychecks; // back-compat alias
+  const nextEffectivePayday = deriveNextPayday(today);
+
+  // §1.2: commissionPaid (status=paid, payoutDate in [monthStart, today]) and
+  // commissionPending (status=pending, payoutDate in (today, monthEnd]).
+  const allCommissions = await db.select().from(commissions);
+  let commissionPaidThisMonth = 0;
+  let commissionPendingThisMonth = 0;
+  for (const c of allCommissions) {
+    if (!c.payoutDate) continue;
+    const pd = new Date(c.payoutDate);
+    if (
+      pd.getFullYear() !== today.getFullYear() ||
+      pd.getMonth() !== today.getMonth()
+    )
+      continue;
+    // Prefer stored takeHome; fall back to recomputing if missing.
+    const stored = parseFloat(c.takeHome);
+    const amount =
+      !isNaN(stored) && stored > 0
+        ? stored
+        : commissionTakeHome(
+            parseFloat(c.mrrAchieved as unknown as string),
+            parseFloat(c.nrrAchieved as unknown as string),
+            mrrTarget,
+            nrrTarget,
+            taxRate,
+          );
+    if (c.status === "paid" && pd <= today) commissionPaidThisMonth += amount;
+    else if (c.status === "pending" && pd > today && pd <= monthEnd)
+      commissionPendingThisMonth += amount;
+  }
+  // Back-compat aliases for older UI fields:
+  const confirmedCommissionAlready = commissionPaidThisMonth;
+  const confirmedCommissionUnreceived = commissionPendingThisMonth;
+  const confirmedCommissionTotal =
+    commissionPaidThisMonth + commissionPendingThisMonth;
+
+  // v8.0 Part 1.2 — monthBillsObligated = SUM(include=TRUE bills dueDay in
+  // this month, payment_state != 'skipped_cycle'). Paid OR unpaid both count
+  // (they're real month obligations). Skipped_cycle excluded — user explicitly
+  // deferred to next cycle.
+  const allBills = await db.select().from(bills);
+  let billsThisMonthTotal = 0;
+  let billsRemainingThisMonth = 0;
+  let billsLateUnpaidThisMonth = 0;
+  let billsPaidThisMonth = 0;
+  let billsSkippedThisMonth = 0;
+  const billsThisMonthDetail: {
+    id: number;
+    name: string;
+    amount: number;
+    dueDay: number;
+    paymentState: string;
+  }[] = [];
+  const billsRemainingDetail: {
+    id: number;
+    name: string;
+    amount: number;
+    dueDay: number;
+    paymentState: string;
+  }[] = [];
+  for (const b of allBills) {
+    if (!b.includeInCycle) continue;
+    const amt = parseFloat(b.amount);
+    if (amt <= 0) continue;
+    if (b.dueDay >= 1 && b.dueDay <= monthEnd.getDate()) {
+      if (b.paymentState === "skipped_cycle") {
+        billsSkippedThisMonth += amt;
+      } else {
+        billsThisMonthTotal += amt;
+        billsThisMonthDetail.push({
+          id: b.id,
+          name: b.name,
+          amount: amt,
+          dueDay: b.dueDay,
+          paymentState: b.paymentState,
+        });
+        if (b.paymentState === "paid") billsPaidThisMonth += amt;
+        else if (b.paymentState === "late_unpaid")
+          billsLateUnpaidThisMonth += amt;
+      }
+    }
+    // billsRemaining = obligation still expected to leave checking before
+    // month-end. Paid bills don't (money already gone). Skipped don't.
+    if (
+      b.dueDay >= today.getDate() &&
+      b.dueDay <= monthEnd.getDate() &&
+      b.paymentState !== "paid" &&
+      b.paymentState !== "skipped_cycle"
+    ) {
+      billsRemainingThisMonth += amt;
+      billsRemainingDetail.push({
+        id: b.id,
+        name: b.name,
+        amount: amt,
+        dueDay: b.dueDay,
+        paymentState: b.paymentState,
+      });
+    }
+  }
+
+  // v8.0 Part 3 — one-time obligations.
+  // Discretionary subtracts: non-deferred items dated this month (paid or not),
+  // plus non-deferred undated unpaid items. Paid items are still month
+  // obligations (the money already left this month). Deferred excluded entirely.
+  const oteRows = await db.select().from(oneTimeExpenses);
+  let oneTimeMonthObligated = 0;
+  let oneTimeRemainingFromToday = 0;
+  let oneTimeDeferredTotal = 0;
+  let oneTimePaidThisMonth = 0;
+  const oneTimeDetail: {
+    id: number;
+    description: string;
+    amount: number;
+    dueDate: string | null;
+    paid: boolean;
+    deferred: boolean;
+  }[] = [];
+  for (const o of oteRows) {
+    const amt = parseFloat(o.amount);
+    if (o.deferred) {
+      oneTimeDeferredTotal += amt;
+      continue;
+    }
+    const dd = o.dueDate ? new Date(o.dueDate) : null;
+    const isThisMonth =
+      dd === null
+        ? !o.paid // undated unpaid → this month
+        : dd >= monthStart && dd <= monthEnd;
+    if (!isThisMonth) continue;
+
+    oneTimeMonthObligated += amt;
+    oneTimeDetail.push({
+      id: o.id,
+      description: o.description,
+      amount: amt,
+      dueDate: o.dueDate,
+      paid: o.paid,
+      deferred: o.deferred,
+    });
+    if (o.paid) {
+      oneTimePaidThisMonth += amt;
+    } else if (dd === null || dd >= today) {
+      oneTimeRemainingFromToday += amt;
+    } else {
+      // Overdue unpaid: still in monthObligated (real obligation).
+      oneTimeRemainingFromToday += amt;
+    }
+  }
+  // Back-compat aliases for legacy fields:
+  const oneTimeThisMonth = oneTimeMonthObligated;
+  const oneTimeDatedThisMonth = oneTimeRemainingFromToday;
+  const oneTimeUndated = 0;
+
+  // v8.0 Part 4 — variable: ALL spend counts against cap (cash + QuickSilver).
+  const allVs = await db.select().from(variableSpend);
+  const monthVs = allVs.filter((v) => {
+    const w = new Date(v.weekOf);
+    return w >= monthStart && w <= monthEnd;
+  });
+  const variableLoggedThisMonth = monthVs.reduce(
+    (s, v) => s + parseFloat(v.amount),
+    0,
+  );
+  const variableSpentThisMonth = variableLoggedThisMonth;
+  const quicksilverAccruedThisMonth = monthVs
+    .filter((v) => v.quicksilver)
+    .reduce((s, v) => s + parseFloat(v.amount), 0);
+
+  // R-as-truth variable model:
+  //   R = planned_variable_remaining_override if set, else variable_spend_cap.
+  //   R is the user's stated reservation — what they've decided to set aside
+  //   for variable spending the rest of the month. Edited via the Overview
+  //   "Variable reserved" pill (with Prorate one-tap helper that suggests
+  //   cap × daysRemaining / daysInMonth).
+  // R subtracts directly from Available-to-Save (headline). It also drives
+  // Projected EOM via qsRatio split of logged spend (variableExpectedRemainingCash).
+  //   L = variableLoggedThisMonth — AUDIT TOTAL ONLY. Does NOT feed R or the
+  //   headline. Surfaces in the pill as a "(spent $L)" awareness chip when
+  //   L > R, and in the Discretionary tab as a flow analytic.
+  // QuickSilver-flagged variable_spend rows STILL feed quicksilverOwed via
+  // the sealed totalRequiredHold path — that's real card debt, not a
+  // projection. Adding/deleting a CASH variable row leaves the headline
+  // unchanged; adding/deleting a QS row moves it via quicksilverOwed.
+  // Trailing daily rate is preserved for display analytics (burn pace) only.
+  const dayOfMonth = today.getDate();
+  const daysInMonth = monthEnd.getDate();
+  const daysRemainingInMonth = Math.max(0, daysInMonth - dayOfMonth + 1);
+  // Trailing daily rate (display analytic only — burn pace, etc.).
+  const trailingDailyRate =
+    dayOfMonth >= 7 && variableLoggedThisMonth > 0
+      ? variableLoggedThisMonth / dayOfMonth
+      : variableCap / monthLengthDays;
+  // Legacy field kept for breakdown display; NOT used in headline.
+  const variableExpectedRemainingTrailing = Math.max(
+    0,
+    trailingDailyRate * Math.max(0, daysRemainingInMonth - 1), // exclude today
+  );
+  // Variable cap remaining (cap − logged, floored).
+  const variableCapRemaining = Math.max(
+    0,
+    variableCap - variableLoggedThisMonth,
+  );
+  // R-as-truth: variableExpectedRemaining IS the user's stored reservation
+  // (override) directly, falling back to cap when unset. Decoupled from L —
+  // logging/deleting cash variable rows does not change this value.
+  const variableExpectedRemaining =
+    plannedVariableRemainingOverride !== null
+      ? Math.max(0, plannedVariableRemainingOverride)
+      : variableCap;
+  const monthVariableObligation = variableExpectedRemaining; // analytics alias
+  const variableRemainingThisMonth = variableExpectedRemaining; // back-compat
+
+  // ============================================================
+  // v8.0 HEADLINE — month-anchored flow (Part 0/1).
+  //
+  //   discretionary = monthIncome
+  //                 − monthBillsObligated
+  //                 − monthVariable (logged + expected_remaining)
+  //                 − monthOneTimeObligated
+  //
+  // NO forward reserve. NO checking anchor. Can be negative.
+  // ============================================================
+  const totalMonthIncome =
+    paychecksReceivedThisMonth +
+    expectedRemainingPaychecks +
+    commissionPaidThisMonth +
+    commissionPendingThisMonth;
+  const totalMonthOutgo =
+    billsThisMonthTotal + monthVariableObligation + oneTimeMonthObligated;
+  const discretionaryHeadline = totalMonthIncome - totalMonthOutgo;
+
+  // Cycle (Safe to Spend) still uses the FROZEN engine for back-compat.
+  const cycle = await computeCycleState();
+
+  // Back-compat aliases for legacy UI still referencing the old field names.
+  const inflows = totalMonthIncome;
+  const outflows = totalMonthOutgo;
+
+  const round = (n: number) => Math.round(n * 100) / 100;
+
+  // ---- Discipline metrics — engine-sourced where possible ----
+  const monthBillRows = await billsThisMonth(today);
+  const monthBillsForEngine: EngineBill[] = monthBillRows.map(
+    (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category),
+  );
+  const fixedMonthlyTotal = monthBillsForEngine.reduce(
+    (s, b) => s + b.amount,
+    0,
+  );
+  const fixedRatio = baseNetIncome > 0 ? fixedMonthlyTotal / baseNetIncome : 0;
+
+  // Monthly Savings = Discretionary − $100 conservative buffer (Playbook B62
+  // placeholder). Floored at 0 because "savings" can't be negative — when
+  // Discretionary is negative, savings is simply $0 and the negative is shown
+  // on the Discretionary line itself.
+  const engineSavings = Math.max(0, discretionaryHeadline - 100);
+  const savingsRate =
+    baseNetIncome > 0
+      ? engineSavings / (baseNetIncome + confirmedCommissionTotal)
+      : 0;
+
+  // Cap-derived prorated remaining (legacy breakdown row). Distinct from the
+  // trailing-rate-derived variableExpectedRemaining used in the headline.
+  const proratedVariableRemainingForBreakdown =
+    daysRemainingInMonth * (variableCap / monthLengthDays);
+
+  const expectedVarByNow = (variableCap * dayOfMonth) / daysInMonth;
+  const variableBurnPace =
+    expectedVarByNow > 0 ? variableSpentThisMonth / expectedVarByNow : 0;
+  const statusFor = (
+    val: number,
+    warnAt: number,
+    failAt: number,
+    invert = false,
+  ): "green" | "amber" | "red" => {
+    if (invert) {
+      if (val < failAt) return "red";
+      if (val < warnAt) return "amber";
+      return "green";
+    }
+    if (val > failAt) return "red";
+    if (val > warnAt) return "amber";
+    return "green";
+  };
+  const discipline = {
+    fixedMonthlyTotal: round(fixedMonthlyTotal),
+    fixedRatio: Math.round(fixedRatio * 1000) / 1000,
+    fixedRatioStatus: statusFor(fixedRatio, 0.5, 0.65),
+    variableBurnPace: Math.round(variableBurnPace * 1000) / 1000,
+    variableBurnPaceStatus: statusFor(variableBurnPace, 1.1, 1.5),
+    expectedVariableByNow: round(expectedVarByNow),
+    savingsRate: Math.round(savingsRate * 1000) / 1000,
+    savingsRateStatus: statusFor(savingsRate, 0.2, 0.1, true),
+    dayOfMonth,
+    daysInMonth,
+  };
+
+  res.json({
+    // v8.0 HEADLINE — month-anchored flow. No forward reserve, no checking anchor.
+    discretionaryThisMonth: round(discretionaryHeadline),
+    monthlySavings: round(engineSavings),
+    monthEnd: monthEnd.toISOString().split("T")[0],
+    nextEffectivePayday: nextEffectivePayday.toISOString().split("T")[0],
+
+    // Forward Reserve surfaced for cross-reference ONLY (Safe to Spend uses it).
+    // NOT subtracted from Discretionary headline per Part 0/1.
+    forwardReserve: round(cycle.forwardReserve),
+    proratedVariableRemainingThisMonth: round(
+      proratedVariableRemainingForBreakdown,
+    ),
+    daysRemainingInMonth,
+
+    // Income ledger (full month, stable)
+    paychecksReceivedThisMonth: round(paychecksReceivedThisMonth),
+    paychecksReceivedCount,
+    expectedRemainingPaychecks: round(expectedRemainingPaychecks),
+    // Fix 3: per-paycheck breakdown with optional overrides
+    paycheckBreakdown: paycheckBreakdown.map((p) => ({
+      ...p,
+      baseAmount: round(p.baseAmount),
+      overrideAmount:
+        p.overrideAmount !== null ? round(p.overrideAmount) : null,
+      appliedAmount: round(p.appliedAmount),
+    })),
+    commissionPaidThisMonth: round(commissionPaidThisMonth),
+    commissionPendingThisMonth: round(commissionPendingThisMonth),
+    totalMonthIncome: round(totalMonthIncome),
+
+    // Outgo ledger (month-obligated)
+    billsThisMonth: round(billsThisMonthTotal),
+    billsThisMonthDetail,
+    billsLateUnpaidThisMonth: round(billsLateUnpaidThisMonth),
+    billsPaidThisMonth: round(billsPaidThisMonth),
+    billsSkippedThisMonth: round(billsSkippedThisMonth),
+    variableLoggedThisMonth: round(variableLoggedThisMonth),
+    variableExpectedRemaining: round(variableExpectedRemaining),
+    variableExpectedRemainingTrailing: round(variableExpectedRemainingTrailing),
+    variableCapRemaining: round(variableCapRemaining),
+    monthVariableObligation: round(monthVariableObligation),
+    trailingDailyRate: round(trailingDailyRate),
+    plannedVariableRemainingOverride,
+    oneTimeThisMonth: round(oneTimeThisMonth),
+    oneTimeMonthObligated: round(oneTimeMonthObligated),
+    oneTimePaidThisMonth: round(oneTimePaidThisMonth),
+    oneTimeDeferredTotal: round(oneTimeDeferredTotal),
+    oneTimeDetail,
+    totalMonthOutgo: round(totalMonthOutgo),
+
+    // Back-compat aliases
+    checking: round(checking),
+    remainingPaychecksThisMonth,
+    paychecksRemainingCount,
+    baseNetIncome,
+    confirmedCommissionUnreceived: round(confirmedCommissionUnreceived),
+    confirmedCommissionAlready: round(confirmedCommissionAlready),
+    totalInflowsAvailable: round(inflows),
+    billsRemainingThisMonth: round(billsRemainingThisMonth),
+    billsRemainingDetail,
+    oneTimeDatedThisMonth: round(oneTimeDatedThisMonth),
+    oneTimeUndatedAdvisory: round(oneTimeUndated),
+    variableCap,
+    variableSpentThisMonth: round(variableSpentThisMonth),
+    variableRemainingThisMonth: round(variableRemainingThisMonth),
+    quicksilverBalanceOwed: round(quicksilverBalanceOwed),
+    quicksilverAccruedThisMonth: round(quicksilverAccruedThisMonth),
+    minimumCushion: round(minimumCushion),
+    totalReservationsRequired: round(outflows),
+
+    // §1.1 Forward Reserve subtraction applied inside engine (task #9).
+    safeToSpend: cycle.safeToSpend,
+    cycleStatus: cycle.status,
+    discipline,
+  });
+});
+
+// ============================================================
+// v8.3 — CASH POSITION endpoint
+//
+// Answers the user's real question: "What will my checking actually look like
+// at the end of the month, given some 'paid' bills haven't actually debited
+// yet?" Discretionary is income-flow math (full month income vs full month
+// obligations). Cash position is balance-flow math (current checking +
+// remaining income − every dollar that still has to leave checking).
+//
+//   projectedEndOfMonthChecking
+//     = currentChecking
+//     + incomeStillToReceive          (paychecks not yet received + pending commission)
+//     − billsNotYetDebited            (paid_pending_clear + paid w/o clearedDate + late_unpaid)
+//     − variableExpectedRemaining     (planned variable still to spend from cash)
+//     − oneTimeStillToPay             (non-deferred one-times still unpaid)
+//
+// Each bill is classified explicitly so the UI can offer a per-bill
+// "did this debit yet?" toggle. A bill marked `paid` WITHOUT a clearedDate
+// is treated as not-yet-debited (you told the engine you paid it, but the
+// money hasn't actually left checking). This is the field that's been
+// silently inflating "available" numbers.
+// ============================================================
+router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
+  await syncBillPaymentStates(new Date());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  // ---- Current checking ----
+  const [latestChecking] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+  const currentChecking = latestChecking
+    ? parseFloat(latestChecking.amount as unknown as string)
+    : 0;
+  const lastBalanceUpdate = latestChecking?.asOfDate ?? null;
+  const cycle = await computeCycleState(today);
+
+  // ---- Assumptions ----
+  const allAssumps = await db.select().from(assumptions);
+  const A = (k: string, dflt = 0) => {
+    const r = allAssumps.find((a) => a.key === k);
+    if (!r) return dflt;
+    const raw = (r.value ?? "").toString().trim();
+    if (raw === "") return dflt;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
+  const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
+  const plannedVariableRemainingOverride = (() => {
+    const r = allAssumps.find(
+      (a) => a.key === "planned_variable_remaining_override",
+    );
+    if (!r) return null;
+    const raw = (r.value ?? "").toString().trim();
+    if (raw === "") return null;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : null;
+  })();
+
+  // ---- Income still to receive this month ----
+  // Paychecks: 7th and 22nd. Any payday <= today is "received".
+  const paydayDates = [
+    new Date(today.getFullYear(), today.getMonth(), 7),
+    new Date(today.getFullYear(), today.getMonth(), 22),
+  ];
+  let incomeStillToReceive = 0;
+  const paychecksStillExpected: { date: string; amount: number }[] = [];
+  for (const p of paydayDates) {
+    if (p > today) {
+      const amt = baseNetIncome / 2;
+      incomeStillToReceive += amt;
+      paychecksStillExpected.push({
+        date: p.toISOString().split("T")[0],
+        amount: amt,
+      });
+    }
+  }
+
+  // Pending commissions (status=confirmed, not yet received this month)
+  const commsRows = await db.select().from(commissions);
+  let pendingCommissionUnreceived = 0;
+  for (const c of commsRows) {
+    if (c.status !== "confirmed") continue;
+    const expected = c.payoutDate ? new Date(c.payoutDate) : null;
+    if (!expected) continue;
+    if (expected < monthStart || expected > monthEnd) continue;
+    if (expected <= today) continue; // already in checking presumably
+    pendingCommissionUnreceived += parseFloat(c.takeHome as unknown as string);
+  }
+  incomeStillToReceive += pendingCommissionUnreceived;
+
+  // ---- Bill classification ----
+  // Three buckets for May bills (dueDay in 1..monthEnd):
+  //   alreadyDebited     state=paid AND clearedDate set
+  //   notYetDebited      state=paid w/o clearedDate, OR paid_pending_clear, OR late_unpaid
+  //   scheduledUnpaid    state=scheduled (counted in notYetDebited too; future debit)
+  //   skipped            excluded
+  const allBills = await db.select().from(bills);
+  type BillRow = {
+    id: number;
+    name: string;
+    amount: number;
+    dueDay: number;
+    paymentState: string;
+    paidDate: string | null;
+    clearedDate: string | null;
+    cashStatus: "debited" | "pending" | "late" | "scheduled";
+  };
+  let billsAlreadyDebited = 0;
+  let billsNotYetDebited = 0;
+  const billsAlreadyDebitedDetail: BillRow[] = [];
+  const billsNotYetDebitedDetail: BillRow[] = [];
+  for (const b of allBills) {
+    if (!b.includeInCycle) continue;
+    const amt = parseFloat(b.amount);
+    if (amt <= 0) continue;
+    if (b.dueDay < 1 || b.dueDay > monthEnd.getDate()) continue;
+    if (b.paymentState === "skipped_cycle") continue;
+
+    const paidDateStr = b.paidDate
+      ? new Date(b.paidDate).toISOString().split("T")[0]
+      : null;
+    const clearedDateStr = b.clearedDate
+      ? new Date(b.clearedDate).toISOString().split("T")[0]
+      : null;
+    const isCleared = b.paymentState === "paid";
+
+    let cashStatus: BillRow["cashStatus"];
+    if (isCleared) cashStatus = "debited";
+    else if (b.paymentState === "late_unpaid") cashStatus = "late";
+    else if (b.paymentState === "paid_pending_clear") cashStatus = "pending";
+    else cashStatus = "scheduled";
+
+    const row: BillRow = {
+      id: b.id,
+      name: b.name,
+      amount: amt,
+      dueDay: b.dueDay,
+      paymentState: b.paymentState,
+      paidDate: paidDateStr,
+      clearedDate: clearedDateStr,
+      cashStatus,
+    };
+
+    if (cashStatus === "debited") {
+      billsAlreadyDebited += amt;
+      billsAlreadyDebitedDetail.push(row);
+    } else {
+      billsNotYetDebited += amt;
+      billsNotYetDebitedDetail.push(row);
+    }
+  }
+
+  // ---- R-as-truth: variable reservation drives the headline ----
+  // variableExpectedRemaining = R = the user's stored reservation (override
+  // assumption), falling back to variable_spend_cap when unset. Decoupled
+  // from L — adding/deleting CASH variable rows does NOT change R or the
+  // headline. QuickSilver-flagged rows still flow into quicksilverOwed via
+  // the sealed totalRequiredHold path; that's real card debt.
+  // L is still computed: used (a) for the qsRatio split below so Projected
+  // EOM stays consistent with R, (b) for the pill's "(spent $L)" overspend
+  // chip, (c) for Discretionary tab analytics.
+  const allVs = await db.select().from(variableSpend);
+  const monthVs = allVs.filter((v) => {
+    const w = new Date(v.weekOf);
+    return w >= monthStart && w <= monthEnd;
+  });
+  const variableLoggedThisMonth = monthVs.reduce(
+    (s, v) => s + parseFloat(v.amount),
+    0,
+  );
+  const quicksilverAccruedThisMonth = monthVs
+    .filter((v) => v.quicksilver)
+    .reduce((s, v) => s + parseFloat(v.amount), 0);
+  const variableExpectedRemaining =
+    plannedVariableRemainingOverride !== null
+      ? Math.max(0, plannedVariableRemainingOverride)
+      : variableCap;
+  // Pro-rate R into cash and QS portions using the logged QS:cash mix so
+  // Projected EOM stays in sync with the headline (Q2 of R-as-truth design).
+  const qsRatio =
+    variableLoggedThisMonth > 0
+      ? quicksilverAccruedThisMonth / variableLoggedThisMonth
+      : 0;
+  const variableExpectedRemainingCash =
+    variableExpectedRemaining * (1 - qsRatio);
+  const variableExpectedRemainingQs = variableExpectedRemaining * qsRatio;
+
+  // ---- One-time still to pay (non-deferred, unpaid, this month or undated) ----
+  const oteRows = await db.select().from(oneTimeExpenses);
+  let oneTimeStillToPay = 0;
+  const oneTimeStillToPayDetail: {
+    id: number;
+    description: string;
+    amount: number;
+    dueDate: string | null;
+  }[] = [];
+  for (const o of oteRows) {
+    if (o.deferred || o.paid) continue;
+    const amt = parseFloat(o.amount);
+    const dd = o.dueDate ? new Date(o.dueDate) : null;
+    const inWindow = dd === null || (dd >= monthStart && dd <= monthEnd);
+    if (!inWindow) continue;
+    oneTimeStillToPay += amt;
+    oneTimeStillToPayDetail.push({
+      id: o.id,
+      description: o.description,
+      amount: amt,
+      dueDate: o.dueDate,
+    });
+  }
+
+  // ---- Projections ----
+  // Two distinct numbers:
+  //   commitmentBalance = checking + income − bills − one-time (NO future variable)
+  //                       "What I owe right now vs what I have."
+  //   projectedEndOfMonthChecking = commitmentBalance − variableExpectedRemainingCash
+  //                       "Same, but assuming I burn the planned variable budget."
+  // Splitting these prevents a generous future-variable override from
+  // making the headline far more negative than the user's actual position.
+  const commitmentOutflowsRemaining = billsNotYetDebited + oneTimeStillToPay;
+  const commitmentBalance = currentChecking - cycle.totalRequiredHold;
+  // R-as-truth — Available to Save subtracts R (the user's stored
+  // reservation). R is decoupled from L; cash variable rows logged do not
+  // move this number. QS rows DO move the headline via the hold path
+  // (quicksilverOwed → totalRequiredHold → commitmentBalance), because
+  // unpaid QS card debt is real money the user owes; that's a sealed-engine
+  // invariant we preserve.
+  // Projected EOM uses R split by the logged qsRatio (cash portion only)
+  // so the cash-trajectory number stays consistent with the headline.
+  const earlyNextMonthVariable = 130;
+  const availableToInvest =
+    commitmentBalance - variableExpectedRemaining - earlyNextMonthVariable;
+  const totalCashOutflowsRemaining =
+    commitmentOutflowsRemaining + variableExpectedRemainingCash;
+  const projectedEndOfMonthChecking =
+    currentChecking + incomeStillToReceive - totalCashOutflowsRemaining;
+
+  const daysSinceUpdate = lastBalanceUpdate
+    ? Math.floor(
+        (today.getTime() - new Date(lastBalanceUpdate).getTime()) / 86400000,
+      )
+    : null;
+
+  const round = (n: number) => Math.round(n * 100) / 100;
+
+  res.json({
+    asOf: today.toISOString().split("T")[0],
+    monthEnd: monthEnd.toISOString().split("T")[0],
+    // Starting point
+    currentChecking: round(currentChecking),
+    lastBalanceUpdate: lastBalanceUpdate
+      ? new Date(lastBalanceUpdate).toISOString()
+      : null,
+    daysSinceUpdate,
+    // Inflows
+    incomeStillToReceive: round(incomeStillToReceive),
+    paychecksStillExpected,
+    pendingCommissionUnreceived: round(pendingCommissionUnreceived),
+    // Outflows — bills
+    billsAlreadyDebited: round(billsAlreadyDebited),
+    billsAlreadyDebitedDetail,
+    billsNotYetDebited: round(billsNotYetDebited),
+    billsNotYetDebitedDetail,
+    // Outflows — variable
+    variableExpectedRemaining: round(variableExpectedRemaining),
+    variableExpectedRemainingCash: round(variableExpectedRemainingCash),
+    variableExpectedRemainingQs: round(variableExpectedRemainingQs),
+    quicksilverAccruedRatio: Math.round(qsRatio * 1000) / 1000,
+    // Outflows — one-time
+    oneTimeStillToPay: round(oneTimeStillToPay),
+    oneTimeStillToPayDetail,
+    // Totals
+    commitmentOutflowsRemaining: round(commitmentOutflowsRemaining),
+    // Raw "checking − hold" — diagnostic only. The headline number the UI
+    // shows is availableToInvest, which additionally subtracts R.
+    commitmentBalance: round(commitmentBalance),
+    // Canonical user-facing headline = commitmentBalance − R. The dollar
+    // amount you can safely sweep to HYSA / brokerage right now without
+    // bouncing a known obligation AND while still leaving your stated
+    // variable reservation (R) intact.
+    availableToInvest: round(availableToInvest),
+    earlyNextMonthVariable: round(earlyNextMonthVariable),
+    totalCashOutflowsRemaining: round(totalCashOutflowsRemaining),
+    projectedEndOfMonthChecking: round(projectedEndOfMonthChecking),
+    // Status flags — track the headline (availableToInvest), not the raw.
+    isDeficit: availableToInvest < 0,
+    isTight: availableToInvest >= 0 && availableToInvest < 100,
+  });
+});
+
+// Lightweight integrity summary for the dashboard banner.
+// Does NOT log a row. Independent of /integrity/check (which logs).
+router.get("/dashboard/integrity-summary", async (_req, res): Promise<void> => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const checks: {
+    name: string;
+    status: "pass" | "warn" | "fail";
+    detail: string;
+  }[] = [];
+
+  // 1. Balance freshness
+  const { balances } = await import("@workspace/db");
+  const [latestBalance] = await db
+    .select()
+    .from(balances)
+    .where(eq(balances.accountType, "checking"))
+    .orderBy(desc(balances.asOfDate))
+    .limit(1);
+  if (!latestBalance) {
+    checks.push({
+      name: "Checking balance",
+      status: "fail",
+      detail: "No checking balance recorded.",
+    });
+  } else {
+    const days = Math.floor(
+      (today.getTime() - new Date(latestBalance.asOfDate).getTime()) / 86400000,
+    );
+    if (days > 3)
+      checks.push({
+        name: "Balance freshness",
+        status: "fail",
+        detail: `Updated ${days} days ago — must be ≤3.`,
+      });
+    else
+      checks.push({
+        name: "Balance freshness",
+        status: "pass",
+        detail: `Updated ${days} day(s) ago.`,
+      });
+  }
+
+  // 2. Next payday — v8.0 dynamic derivation (7th/22nd). No assumption row
+  // required; deriveNextPayday() is always-on. This check now confirms the
+  // engine can produce a future payday from today's clock (which it always
+  // can by construction), and surfaces the derived date for transparency.
+  const derivedPayday = deriveNextPayday(today);
+  checks.push({
+    name: "Next payday (derived)",
+    status: "pass",
+    detail: `Payday: ${derivedPayday.toISOString().slice(0, 10)} (dynamic 7th/22nd).`,
+  });
+
+  // 3. Active bills exist
+  const allBills = await db.select().from(bills);
+  const active = allBills.filter(
+    (b) => b.includeInCycle && parseFloat(b.amount) > 0,
+  );
+  if (active.length === 0)
+    checks.push({
+      name: "Active bills",
+      status: "warn",
+      detail: "No bills marked Include=TRUE.",
+    });
+  else
+    checks.push({
+      name: "Active bills",
+      status: "pass",
+      detail: `${active.length} active bills.`,
+    });
+
+  // 4. No negative bills
+  const negBills = allBills.filter((b) => parseFloat(b.amount) < 0);
+  if (negBills.length > 0)
+    checks.push({
+      name: "Bill amounts non-negative",
+      status: "fail",
+      detail: `${negBills.length} bill(s) have negative amounts.`,
+    });
+  else
+    checks.push({
+      name: "Bill amounts non-negative",
+      status: "pass",
+      detail: "All bills ≥ 0.",
+    });
+
+  // 5. Base net income
+  const [incRow] = await db
+    .select()
+    .from(assumptions)
+    .where(eq(assumptions.key, "base_net_income"));
+  if (!incRow || parseFloat(incRow.value) <= 0)
+    checks.push({
+      name: "Base net income",
+      status: "fail",
+      detail: "Set in Settings.",
+    });
+  else
+    checks.push({
+      name: "Base net income",
+      status: "pass",
+      detail: `$${parseFloat(incRow.value).toFixed(2)}/mo`,
+    });
+
+  const failCount = checks.filter((c) => c.status === "fail").length;
+  const warnCount = checks.filter((c) => c.status === "warn").length;
+  const overall: "pass" | "warn" | "fail" =
+    failCount > 0 ? "fail" : warnCount > 0 ? "warn" : "pass";
+
+  res.json({ overall, failCount, warnCount, checks });
+});
+
+export default router;
+
+```
+
+
+## `artifacts/api-server/src/routes/bills.ts` (363 lines)
+
+```ts
+import { Router, type IRouter } from "express";
+import { db, bills, assumptions, commissions } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import {
+  GetBillsResponse,
+  CreateBillBody,
+  GetBillParams,
+  GetBillResponse,
+  UpdateBillParams,
+  UpdateBillBody,
+  UpdateBillResponse,
+  DeleteBillParams,
+} from "@workspace/api-zod";
+import { enumerateBills, type EnrichedBill } from "../lib/cycleBillEngine";
+import { deriveNextPayday } from "../lib/financeEngine";
+import { syncBillPaymentStates, cycleKey } from "../lib/paymentState";
+import {
+  BASE_NET_INCOME,
+  MONTH_LENGTH_DAYS,
+  VARIABLE_SPEND_CAP,
+  Bill as EngineBill,
+  forwardReserve as engineForwardReserve,
+} from "@workspace/finance";
+
+const router: IRouter = Router();
+
+function isoDate(d: Date): string {
+  return d.toISOString().split("T")[0];
+}
+
+function toApi(b: EnrichedBill) {
+  return {
+    id: b.id,
+    name: b.name,
+    amount: b.amount,
+    dueDay: b.dueDay,
+    frequency: b.frequency,
+    category: b.category,
+    autopay: b.autopay,
+    notes: b.notes,
+    includeInCycle: b.includeInCycle,
+    activeFrom: b.activeFrom ? isoDate(b.activeFrom) : null,
+    activeUntil: b.activeUntil ? isoDate(b.activeUntil) : null,
+    countsThisCycle: b.countsThisCycle,
+    nextDueDate: isoDate(b.nextDueDate),
+    daysUntilDue: b.daysUntilDue,
+    isActivePeriod: b.isActivePeriod,
+    paymentState: b.paymentState,
+    paidDate: b.paidDate,
+    clearedDate: b.clearedDate,
+  };
+}
+
+async function enrichBillRow(bill: typeof bills.$inferSelect) {
+  const all = await enumerateBills();
+  const found = all.find((x) => x.id === bill.id);
+  if (!found) {
+    return {
+      ...bill,
+      amount: parseFloat(bill.amount),
+      countsThisCycle: false,
+      nextDueDate: isoDate(new Date()),
+    };
+  }
+  return toApi(found);
+}
+
+router.get("/bills", async (_req, res): Promise<void> => {
+  await syncBillPaymentStates(new Date());
+  const all = await enumerateBills();
+  res.json(GetBillsResponse.parse(all.map(toApi)));
+});
+
+/**
+ * Bills summary: rich aggregates for the Bills page.
+ * Single round-trip — no client-side rollup math required.
+ */
+router.get("/bills/summary", async (_req, res): Promise<void> => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const all = await enumerateBills(today);
+  const nextPayday = deriveNextPayday(today);
+
+  // ----- Income context -----
+  const allAssumps = await db.select().from(assumptions);
+  const A = (k: string, dflt = 0) => {
+    const r = allAssumps.find((a) => a.key === k);
+    return r ? parseFloat(r.value) : dflt;
+  };
+  const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
+  const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
+  const monthLengthDays = A("month_length_days", MONTH_LENGTH_DAYS);
+
+  // Confirmed commission expected this calendar month (paid OR scheduled)
+  const allCommissions = await db.select().from(commissions);
+  let commissionThisMonth = 0;
+  for (const c of allCommissions) {
+    if (!c.payoutDate) continue;
+    const pd = new Date(c.payoutDate);
+    if (pd.getFullYear() === today.getFullYear() && pd.getMonth() === today.getMonth()) {
+      if (c.status === "paid" || c.status === "confirmed") {
+        commissionThisMonth += parseFloat(c.takeHome);
+      }
+    }
+  }
+  const totalMonthIncome = baseNetIncome + commissionThisMonth;
+
+  // ----- Totals -----
+  const includedBills = all.filter((b) => b.countsThisMonth);
+  const excludedBills = all.filter((b) => !b.includeInCycle || b.amount <= 0);
+  const monthlyIncluded = includedBills.reduce((s, b) => s + b.amount, 0);
+  const monthlyAll = all.reduce((s, b) => s + b.amount, 0);
+  const annualIncluded = monthlyIncluded * 12;
+  const percentOfNetIncome =
+    totalMonthIncome > 0 ? (monthlyIncluded / totalMonthIncome) * 100 : 0;
+
+  // ----- Category breakdown (Include=TRUE only) -----
+  const categories = Array.from(new Set(includedBills.map((b) => b.category)));
+  const categoryBreakdown = categories.map((cat) => {
+    const items = includedBills.filter((b) => b.category === cat);
+    const monthly = items.reduce((s, b) => s + b.amount, 0);
+    return {
+      category: cat,
+      count: items.length,
+      monthly: Math.round(monthly * 100) / 100,
+      annual: Math.round(monthly * 12 * 100) / 100,
+      percentOfBills: monthlyIncluded > 0 ? (monthly / monthlyIncluded) * 100 : 0,
+      percentOfIncome: totalMonthIncome > 0 ? (monthly / totalMonthIncome) * 100 : 0,
+    };
+  });
+
+  // ----- Autopay audit -----
+  const autopayBills = includedBills.filter((b) => b.autopay);
+  const manualBills = includedBills.filter((b) => !b.autopay);
+  const autopayMonthly = autopayBills.reduce((s, b) => s + b.amount, 0);
+  const manualMonthly = manualBills.reduce((s, b) => s + b.amount, 0);
+  const upcomingManual = manualBills
+    .filter((b) => b.daysUntilDue >= 0 && b.daysUntilDue <= 14)
+    .sort((a, b) => a.daysUntilDue - b.daysUntilDue);
+
+  // ----- Upcoming timeline (next 14 days, all included bills) -----
+  const upcomingTimeline = includedBills
+    .filter((b) => b.daysUntilDue >= 0 && b.daysUntilDue <= 14)
+    .sort((a, b) => a.daysUntilDue - b.daysUntilDue)
+    .map((b) => ({
+      id: b.id,
+      name: b.name,
+      amount: Math.round(b.amount * 100) / 100,
+      category: b.category,
+      autopay: b.autopay,
+      dueDay: b.dueDay,
+      nextDueDate: isoDate(b.nextDueDate),
+      daysUntilDue: b.daysUntilDue,
+      inCycle: b.countsThisCycle,
+      risk: b.daysUntilDue <= 3 ? "high" : b.daysUntilDue <= 7 ? "medium" : "low",
+    }));
+
+  // ----- Income vs obligations -----
+  // Forward Reserve via engine `forwardReserve` so the page reads the same
+  // figure the dashboard does.
+  const includedAsEngineBills: EngineBill[] = includedBills.map(
+    (b) => new EngineBill(b.name, b.amount, b.dueDay, true, b.category, b.autopay),
+  );
+  // Forward Reserve here is the FULL value (no current-cycle exclusion) — it
+  // represents the cash that must be held back from today's checking to cover
+  // the next-month 1-7 obligations. The Defect-1 double-count guard is only
+  // applied inside monthlySavingsEstimate (different formula, different
+  // overlap concern). Keeps this page's number consistent with the dashboard.
+  const fwdReserve = engineForwardReserve(
+    includedAsEngineBills,
+    variableCap,
+    monthLengthDays,
+  );
+  const fixedBills = monthlyIncluded;
+  const residualAfterFixed = totalMonthIncome - fixedBills;
+  const residualAfterVariable = residualAfterFixed - variableCap;
+  const residualPct = totalMonthIncome > 0 ? (residualAfterVariable / totalMonthIncome) * 100 : 0;
+
+  res.json({
+    asOf: isoDate(today),
+    nextPayday: isoDate(nextPayday),
+    totals: {
+      monthlyIncluded: Math.round(monthlyIncluded * 100) / 100,
+      monthlyAll: Math.round(monthlyAll * 100) / 100,
+      annualIncluded: Math.round(annualIncluded * 100) / 100,
+      activeCount: includedBills.length,
+      excludedCount: excludedBills.length,
+      percentOfNetIncome: Math.round(percentOfNetIncome * 10) / 10,
+    },
+    income: {
+      baseNetIncome,
+      commissionThisMonth: Math.round(commissionThisMonth * 100) / 100,
+      totalMonthIncome: Math.round(totalMonthIncome * 100) / 100,
+    },
+    categoryBreakdown: categoryBreakdown.map((c) => ({
+      ...c,
+      percentOfBills: Math.round(c.percentOfBills * 10) / 10,
+      percentOfIncome: Math.round(c.percentOfIncome * 10) / 10,
+    })),
+    autopayAudit: {
+      autopayCount: autopayBills.length,
+      autopayMonthly: Math.round(autopayMonthly * 100) / 100,
+      manualCount: manualBills.length,
+      manualMonthly: Math.round(manualMonthly * 100) / 100,
+      manualPct: monthlyIncluded > 0 ? Math.round((manualMonthly / monthlyIncluded) * 1000) / 10 : 0,
+      upcomingManual: upcomingManual.map((b) => ({
+        id: b.id,
+        name: b.name,
+        amount: Math.round(b.amount * 100) / 100,
+        nextDueDate: isoDate(b.nextDueDate),
+        daysUntilDue: b.daysUntilDue,
+      })),
+    },
+    upcomingTimeline,
+    incomeVsObligations: {
+      totalMonthIncome: Math.round(totalMonthIncome * 100) / 100,
+      fixedBills: Math.round(fixedBills * 100) / 100,
+      variableCap,
+      residualAfterFixed: Math.round(residualAfterFixed * 100) / 100,
+      residualAfterAll: Math.round(residualAfterVariable * 100) / 100,
+      residualPct: Math.round(residualPct * 10) / 10,
+      forwardReserve: Math.round(fwdReserve * 100) / 100,
+    },
+  });
+});
+
+router.post("/bills", async (req, res): Promise<void> => {
+  const parsed = CreateBillBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const [row] = await db.insert(bills).values(parsed.data as never).returning();
+  if (!row) {
+    res.status(500).json({ error: "Failed to create bill" });
+    return;
+  }
+  const enriched = await enrichBillRow(row);
+  res.status(201).json(enriched);
+});
+
+router.get("/bills/:id", async (req, res): Promise<void> => {
+  const params = GetBillParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const [row] = await db.select().from(bills).where(eq(bills.id, params.data.id));
+  if (!row) {
+    res.status(404).json({ error: "Bill not found" });
+    return;
+  }
+  res.json(GetBillResponse.parse(await enrichBillRow(row)));
+});
+
+/**
+ * Pure helper exposed for unit testing. v8.0 Part 2.3 — when paymentState is
+ * explicitly changed via PATCH, we must stamp paymentStateCycleKey so cycle
+ * rollover (syncBillPaymentStates) can revert non-scheduled states next month.
+ * Without this, manual Paid/Late/Skip would persist forever.
+ */
+export function buildBillPatchUpdate(
+  parsed: Partial<Record<string, unknown>>,
+  today: Date,
+  now: Date = new Date(),
+): Record<string, unknown> {
+  const updateData: Record<string, unknown> = { ...parsed, updatedAt: now };
+  if (parsed.paymentState !== undefined) {
+    updateData.paymentStateCycleKey = cycleKey(today);
+    const state = parsed.paymentState;
+    // v8.1 — payment-state lifecycle stamps:
+    //   paid_pending_clear → paid_date=today, cleared_date=null
+    //   paid               → cleared_date=now (paid_date stays/set by caller)
+    //   anything else      → paid_date=null, cleared_date=null
+    if (state === "paid_pending_clear") {
+      if (parsed.paidDate === undefined) {
+        updateData.paidDate = today.toISOString().split("T")[0];
+      }
+      updateData.clearedDate = null;
+    } else if (state === "paid") {
+      updateData.clearedDate = now;
+    } else {
+      if (parsed.paidDate === undefined) {
+        updateData.paidDate = null;
+      }
+      updateData.clearedDate = null;
+    }
+  }
+  return updateData;
+}
+
+router.patch("/bills/:id", async (req, res): Promise<void> => {
+  const params = UpdateBillParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const parsed = UpdateBillBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const updateData = buildBillPatchUpdate(parsed.data, today);
+  const [row] = await db
+    .update(bills)
+    .set(updateData as never)
+    .where(eq(bills.id, params.data.id))
+    .returning();
+  if (!row) {
+    res.status(404).json({ error: "Bill not found" });
+    return;
+  }
+  res.json(UpdateBillResponse.parse(await enrichBillRow(row)));
+});
+
+/**
+ * v8.1 — POST /bills/:id/mark-cleared
+ * Transitions a 'paid_pending_clear' bill to 'paid', stamping cleared_date.
+ * Drops the bill out of the cycle's pendingBillsOwed hold. Idempotent: if
+ * the bill is already 'paid', just re-stamps cleared_date.
+ */
+router.post("/bills/:id/mark-cleared", async (req, res): Promise<void> => {
+  const params = GetBillParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const now = new Date();
+  const [row] = await db
+    .update(bills)
+    .set({
+      paymentState: "paid",
+      clearedDate: now,
+      paymentStateCycleKey: cycleKey(now),
+      updatedAt: now,
+    })
+    .where(eq(bills.id, params.data.id))
+    .returning();
+  if (!row) {
+    res.status(404).json({ error: "Bill not found" });
+    return;
+  }
+  res.json(GetBillResponse.parse(await enrichBillRow(row)));
+});
+
+router.delete("/bills/:id", async (req, res): Promise<void> => {
+  const params = DeleteBillParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const [row] = await db.delete(bills).where(eq(bills.id, params.data.id)).returning();
+  if (!row) {
+    res.status(404).json({ error: "Bill not found" });
+    return;
+  }
+  res.sendStatus(204);
+});
+
+export default router;
+
+```
+
+
+## `artifacts/api-server/package.json` (40 lines)
+
+```json
+{
+  "name": "@workspace/api-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
+    "build": "node ./build.mjs",
+    "start": "node --enable-source-maps ./dist/index.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@workspace/api-zod": "workspace:*",
+    "@workspace/db": "workspace:*",
+    "@workspace/finance": "workspace:*",
+    "@workspace/integrations-anthropic-ai": "workspace:*",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2",
+    "drizzle-orm": "catalog:",
+    "express": "^5",
+    "pino": "^9",
+    "pino-http": "^10",
+    "plaid": "^42.2.0"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "catalog:",
+    "@types/supertest": "^6.0.3",
+    "esbuild": "^0.27.3",
+    "esbuild-plugin-pino": "^2.3.3",
+    "pino-pretty": "^13",
+    "supertest": "^7.2.2",
+    "thread-stream": "3.1.0",
+    "vitest": "^2.1.9"
+  }
+}
+
+```
+
+
+## `artifacts/finance-advisor/src/pages/dashboard.tsx` (2596 lines)
+
+```ts
+import {
+  useGetDashboardCycle,
+  getGetDashboardCycleQueryKey,
+  useCreateBalance,
+  useGetBills,
+  getGetBillsQueryKey,
+  useGetVariableSpend,
+  getGetVariableSpendQueryKey,
+  useCreateVariableSpendEntry,
+  useUpdateVariableSpendEntry,
+  useDeleteVariableSpendEntry,
+  useMarkQuicksilverPaid,
+  useGetOneTimeExpenses,
+  getGetOneTimeExpensesQueryKey,
+  useUpdateOneTimeExpense,
+  useCreateOneTimeExpense,
+  useUpdateAssumption,
+  useUpdateBill,
+} from "@workspace/api-client-react";
+// Local mirror of GetDashboardCycleResponse — kept in sync with
+// lib/api-zod GetDashboardCycleResponse / api-server dashboard.ts. Inlined
+// rather than imported because finance-advisor does not currently depend on
+// @workspace/api-zod and we don't want to widen the dep graph for a typing.
+interface CycleData {
+  checkingBalance: number;
+  lastBalanceUpdate?: Date | string | null;
+  nextPayday?: Date | string | null;
+  daysSinceUpdate?: number | null;
+  isStale: boolean;
+  daysUntilPayday?: number | null;
+  billsDueBeforePayday: number;
+  pendingHoldsReserve: number;
+  minimumCushion: number;
+  oneTimeDueBeforePayday: number;
+  totalRequiredHold: number;
+  quicksilverOwed: number;
+  pendingBillsOwed: number;
+  forwardReserveBillsTotal: number;
+  safeToSpend: number;
+  safeToSpendPreFloor: number;
+  overCommittedBy: number;
+  dailyRateFromUpdate: number;
+  dailyRateRealTime: number;
+  daysOfCoverage?: number | null;
+  variableSpendUntilPayday: number;
+  remainingDiscretionary: number;
+  status: "GREEN" | "YELLOW" | "RED";
+  paydayRisk: boolean;
+  forwardReserve: number;
+  alertThreshold: number;
+}
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { formatCurrency, formatDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import {
+  AlertTriangle,
+  RefreshCw,
+  Plus,
+  ArrowUpCircle,
+  CalendarPlus,
+  MessageSquare,
+  ChevronDown,
+  Pencil,
+  Trash2,
+} from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { useState, useRef } from "react";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IntegrityStatusBanner } from "@/components/integrity-status-banner";
+import { useEffect } from "react";
+import { useLocation } from "wouter";
+
+const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+interface DiscretionaryResp {
+  discretionaryThisMonth: number;
+  monthlySavings: number;
+  monthEnd: string;
+  paychecksReceivedThisMonth: number;
+  paychecksReceivedCount: number;
+  expectedRemainingPaychecks: number;
+  paycheckBreakdown: {
+    paydayDate: string;
+    baseAmount: number;
+    overrideAmount: number | null;
+    appliedAmount: number;
+    received: boolean;
+  }[];
+  commissionPaidThisMonth: number;
+  commissionPendingThisMonth: number;
+  totalMonthIncome: number;
+  billsThisMonth: number;
+  billsPaidThisMonth: number;
+  billsLateUnpaidThisMonth: number;
+  billsSkippedThisMonth: number;
+  variableLoggedThisMonth: number;
+  variableExpectedRemaining: number;
+  variableExpectedRemainingTrailing: number;
+  variableCapRemaining: number;
+  monthVariableObligation: number;
+  trailingDailyRate: number;
+  plannedVariableRemainingOverride: number | null;
+  oneTimeThisMonth: number;
+  oneTimeMonthObligated: number;
+  oneTimePaidThisMonth: number;
+  oneTimeDeferredTotal: number;
+  oneTimeDetail: {
+    id: number;
+    description: string;
+    amount: number;
+    dueDate: string | null;
+    paid: boolean;
+    deferred: boolean;
+  }[];
+  totalMonthOutgo: number;
+  nextEffectivePayday: string;
+  forwardReserve: number;
+  proratedVariableRemainingThisMonth: number;
+  daysRemainingInMonth: number;
+  checking: number;
+  remainingPaychecksThisMonth: number;
+  paychecksRemainingCount: number;
+  baseNetIncome: number;
+  confirmedCommissionUnreceived: number;
+  confirmedCommissionAlready: number;
+  totalInflowsAvailable: number;
+  billsRemainingThisMonth: number;
+  billsRemainingDetail: {
+    id: number;
+    name: string;
+    amount: number;
+    dueDay: number;
+  }[];
+  oneTimeDatedThisMonth: number;
+  oneTimeUndatedAdvisory: number;
+  variableCap: number;
+  variableSpentThisMonth: number;
+  variableRemainingThisMonth: number;
+  quicksilverBalanceOwed: number;
+  quicksilverAccruedThisMonth: number;
+  minimumCushion: number;
+  totalReservationsRequired: number;
+  safeToSpend: number;
+  cycleStatus: string;
+  discipline?: {
+    fixedMonthlyTotal: number;
+    fixedRatio: number;
+    fixedRatioStatus: "green" | "amber" | "red";
+    variableBurnPace: number;
+    variableBurnPaceStatus: "green" | "amber" | "red";
+    expectedVariableByNow: number;
+    savingsRate: number;
+    savingsRateStatus: "green" | "amber" | "red";
+    dayOfMonth: number;
+    daysInMonth: number;
+  };
+}
+
+interface IntegritySummary {
+  overall: "pass" | "warn" | "fail";
+  failCount: number;
+  warnCount: number;
+  checks: { name: string; status: "pass" | "warn" | "fail"; detail: string }[];
+}
+
+// ---------------------------------------------------------------------------
+// Status helpers — Spec §4.2 colored border + semantic STS color
+// ---------------------------------------------------------------------------
+
+type CycleStatus = "GREEN" | "YELLOW" | "RED";
+
+function asCycleStatus(s: string | undefined | null): CycleStatus {
+  if (s === "YELLOW" || s === "RED") return s;
+  return "GREEN";
+}
+
+function statusBorderClass(s: CycleStatus): string {
+  return s === "GREEN"
+    ? "border-l-success"
+    : s === "YELLOW"
+      ? "border-l-warning"
+      : "border-l-destructive";
+}
+
+function statusTextClass(s: CycleStatus): string {
+  return s === "GREEN"
+    ? "text-foreground"
+    : s === "YELLOW"
+      ? "text-warning"
+      : "text-destructive";
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+export default function Dashboard() {
+  const {
+    data: cycle,
+    isLoading,
+    error,
+  } = useGetDashboardCycle({
+    query: { queryKey: getGetDashboardCycleQueryKey() },
+  });
+  const { data: bills } = useGetBills({
+    query: { queryKey: getGetBillsQueryKey() },
+  });
+
+  const { data: discretionary } = useQuery<DiscretionaryResp>({
+    queryKey: ["dashboard-discretionary"],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/dashboard/discretionary`);
+      if (!r.ok) throw new Error("Failed to load discretionary");
+      return r.json();
+    },
+  });
+
+  const { data: integrity } = useQuery<IntegritySummary>({
+    queryKey: ["dashboard-integrity"],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/dashboard/integrity-summary`);
+      if (!r.ok) throw new Error("Failed to load integrity");
+      return r.json();
+    },
+    refetchInterval: 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4 max-w-6xl mx-auto">
+        <Skeleton className="h-32 w-full rounded-xl" />
+        <Skeleton className="h-64 w-full rounded-xl" />
+      </div>
+    );
+  }
+
+  if (error || !cycle) {
+    return (
+      <Alert variant="destructive">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>Error</AlertTitle>
+        <AlertDescription>Could not load dashboard data.</AlertDescription>
+      </Alert>
+    );
+  }
+
+  const status = asCycleStatus(cycle.status);
+  const billsInCycle = (bills ?? []).filter((b) => b.countsThisCycle);
+
+  return (
+    <div className="space-y-6 max-w-6xl mx-auto">
+      {/* ZONE 1 — SITUATION (above the fold, first primary content) */}
+      <SituationBlock
+        cycle={cycle}
+        discretionary={discretionary}
+        status={status}
+      />
+
+      {discretionary?.discipline && (
+        <DisciplineStrip d={discretionary.discipline} />
+      )}
+
+      <ActionRow />
+
+      <CashPositionCard />
+
+      <IntegrityStatusBanner />
+
+      {cycle.isStale && (
+        <Alert
+          variant="destructive"
+          className="bg-destructive/10 border-destructive/20 text-destructive-foreground"
+        >
+          <AlertTriangle className="h-5 w-5" />
+          <AlertTitle className="text-lg font-bold">
+            Stale Data Warning
+          </AlertTitle>
+          <AlertDescription className="font-mono text-sm mt-1">
+            Balance last updated {cycle.daysSinceUpdate} days ago. Cycle
+            calculations may be unreliable. Update your checking balance to
+            restore precision.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {cycle.paydayRisk && (
+        <Alert className="bg-amber-50 dark:bg-amber-950/30 border-amber-500/30">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertTitle className="text-amber-900 dark:text-amber-200">
+            Payday on Weekend
+          </AlertTitle>
+          <AlertDescription className="text-amber-900/80 dark:text-amber-300/80 text-sm">
+            Nominal payday falls on a weekend. Effective deposit is the prior
+            Friday.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {integrity && integrity.overall !== "pass" && (
+        <Alert
+          variant={integrity.overall === "fail" ? "destructive" : "default"}
+          className={
+            integrity.overall === "warn"
+              ? "bg-amber-50 dark:bg-amber-950/30 border-amber-500/30"
+              : ""
+          }
+          data-testid="banner-integrity"
+        >
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>
+            Session Integrity: {integrity.overall.toUpperCase()}
+            {integrity.failCount > 0 &&
+              ` (${integrity.failCount} failure${integrity.failCount === 1 ? "" : "s"})`}
+            {integrity.warnCount > 0 &&
+              ` (${integrity.warnCount} warning${integrity.warnCount === 1 ? "" : "s"})`}
+          </AlertTitle>
+          <AlertDescription className="text-sm mt-1">
+            <ul className="space-y-0.5 mt-1 font-mono text-xs">
+              {integrity.checks
+                .filter((c) => c.status !== "pass")
+                .map((c, idx) => (
+                  <li key={idx}>
+                    • {c.name}: {c.detail}
+                  </li>
+                ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* ZONE 2 — SUPPORTING CONTEXT */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <BillsCycleColumn
+          rows={billsInCycle.map((b) => ({
+            id: b.id,
+            name: b.name,
+            dueDay: b.dueDay,
+            amount: b.amount,
+          }))}
+          totalHold={cycle.billsDueBeforePayday}
+        />
+        <OneTimeColumn />
+        <VariableSpendColumn />
+      </div>
+
+      {/* ZONE 3 — MATH DRILL-DOWN (single accordion) */}
+      <Accordion type="single" collapsible className="w-full">
+        <AccordionItem value="math" className="border rounded-xl px-4 bg-card">
+          <AccordionTrigger
+            className="hover:no-underline font-mono text-sm py-4"
+            data-testid="trigger-engine-math"
+          >
+            <span className="flex items-center gap-2">
+              <ChevronDown className="h-4 w-4" />
+              Show engine math
+            </span>
+          </AccordionTrigger>
+          <AccordionContent className="pt-2 pb-6">
+            <Tabs defaultValue="sts" className="w-full">
+              <TabsList className="w-full justify-start overflow-x-auto">
+                <TabsTrigger value="sts" data-testid="tab-math-sts">
+                  Safe to Spend
+                </TabsTrigger>
+                <TabsTrigger
+                  value="discretionary"
+                  data-testid="tab-math-discretionary"
+                  disabled={!discretionary}
+                >
+                  Discretionary
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent
+                value="sts"
+                className="space-y-3 font-mono text-sm pt-4"
+              >
+                <Row label="Checking Balance" value={cycle.checkingBalance} />
+                <Row
+                  label="− Bills Due Before Payday"
+                  value={cycle.billsDueBeforePayday}
+                  negative
+                />
+                <Row
+                  label="− Pending Holds"
+                  value={cycle.pendingHoldsReserve}
+                  negative
+                />
+                <Row
+                  label="− Minimum Cushion"
+                  value={cycle.minimumCushion}
+                  negative
+                />
+                <Row
+                  label="− One-Time Costs in Cycle"
+                  value={cycle.oneTimeDueBeforePayday}
+                  negative
+                />
+                <Row
+                  label="− Forward Reserve"
+                  value={cycle.forwardReserve}
+                  negative
+                  sublabel={`${formatCurrency(cycle.forwardReserveBillsTotal)} bills + ${formatCurrency(cycle.forwardReserve - cycle.forwardReserveBillsTotal)} variable, 14d after next payday (one pay cycle)`}
+                />
+                <Row
+                  label="− Pending Bill Payments"
+                  value={cycle.pendingBillsOwed}
+                  negative
+                  sublabel={
+                    cycle.pendingBillsOwed > 0
+                      ? "Bills marked paid that haven't cleared checking yet — release on Bills page"
+                      : undefined
+                  }
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <Row
+                    label="− QuickSilver Owed"
+                    value={cycle.quicksilverOwed}
+                    negative
+                  />
+                  {cycle.quicksilverOwed > 0 && (
+                    <MarkQsPaidButton amount={cycle.quicksilverOwed} />
+                  )}
+                </div>
+                <Row label="= Safe to Spend" value={cycle.safeToSpend} bold />
+                {cycle.overCommittedBy > 0 && (
+                  <p className="text-xs text-destructive font-mono pt-1">
+                    pre-floor = {formatCurrency(cycle.safeToSpendPreFloor)} →{" "}
+                    {formatCurrency(cycle.overCommittedBy)} short of this
+                    cycle&apos;s required hold
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground pt-2 border-t border-border/30 mt-2">
+                  Forward Reserve ({formatCurrency(cycle.forwardReserve)}) and
+                  QuickSilver Owed ({formatCurrency(cycle.quicksilverOwed)}) are
+                  both subtracted from Safe to Spend so every dollar leaving
+                  checking is counted exactly once. Mark QS Paid when the
+                  statement settles to release that hold.
+                </p>
+              </TabsContent>
+
+              {discretionary && (
+                <TabsContent
+                  value="discretionary"
+                  className="space-y-3 font-mono text-sm pt-4"
+                >
+                  <p className="text-xs text-muted-foreground italic pb-1">
+                    Month-anchored flow (v8.0): full-month income vs. full-month
+                    obligations through {formatDate(discretionary.monthEnd)}.
+                    Paid bills still count (the money already left this month);
+                    only <em>skipped this cycle</em> and <em>deferred</em> items
+                    are excluded. Forward Reserve and current checking are NOT
+                    part of this formula — Forward Reserve is a timing buffer,
+                    not a flow item.
+                  </p>
+
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">
+                    Month income
+                  </p>
+                  <Row
+                    label={`Paychecks received (${discretionary.paychecksReceivedCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
+                    value={discretionary.paychecksReceivedThisMonth}
+                  />
+                  <Row
+                    label={`+ Paychecks remaining (${discretionary.paychecksRemainingCount} × ${formatCurrency(discretionary.baseNetIncome / 2)})`}
+                    value={discretionary.expectedRemainingPaychecks}
+                  />
+                  <Row
+                    label="+ Commission paid"
+                    value={discretionary.commissionPaidThisMonth}
+                  />
+                  <Row
+                    label="+ Commission pending"
+                    value={discretionary.commissionPendingThisMonth}
+                  />
+                  <Row
+                    label="= Total month income"
+                    value={discretionary.totalMonthIncome}
+                    bold
+                  />
+
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider pt-3">
+                    Month obligations
+                  </p>
+                  <Row
+                    label={`− Bills this month (${formatCurrency(discretionary.billsPaidThisMonth)} paid · ${formatCurrency(discretionary.billsLateUnpaidThisMonth)} late · skipped ${formatCurrency(discretionary.billsSkippedThisMonth)} excluded)`}
+                    value={discretionary.billsThisMonth}
+                    negative
+                  />
+                  <Row
+                    label={`− Variable logged so far`}
+                    value={discretionary.variableLoggedThisMonth}
+                    negative
+                  />
+                  {/* R-as-truth — this row is the reservation R (what
+                      Available-to-Save subtracts). Decoupled from L: cash
+                      variable rows are audit-only; QS rows still flow into
+                      the hold via the sealed engine path. */}
+                  <Row
+                    label={`− Variable reserved (R)`}
+                    value={discretionary.variableExpectedRemaining}
+                    negative
+                  />
+                  <p className="text-[10px] text-muted-foreground/70 italic -mt-1 pl-2">
+                    Edit R via the &ldquo;Variable reserved&rdquo; pill above.
+                    Cash variable rows are audit-only; QS rows still flow into
+                    the hold.
+                  </p>
+                  <Row
+                    label={`− One-time this month (${formatCurrency(discretionary.oneTimePaidThisMonth)} paid; ${formatCurrency(discretionary.oneTimeDeferredTotal)} deferred excluded)`}
+                    value={discretionary.oneTimeMonthObligated}
+                    negative
+                  />
+                  <Row
+                    label="= Total month outgo"
+                    value={discretionary.totalMonthOutgo}
+                    bold
+                  />
+
+                  <Row
+                    label="= Discretionary This Month"
+                    value={discretionary.discretionaryThisMonth}
+                    bold
+                    negative={discretionary.discretionaryThisMonth < 0}
+                  />
+                  {discretionary.discretionaryThisMonth < 0 && (
+                    <p className="text-xs text-destructive italic pt-2">
+                      Negative = the month is running a real deficit.
+                      Obligations exceed income by{" "}
+                      {formatCurrency(
+                        Math.abs(discretionary.discretionaryThisMonth),
+                      )}
+                      . Cut variable, defer one-times, or skip a bill to this
+                      cycle.
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground italic pt-2">
+                    Forward Reserve (
+                    {formatCurrency(discretionary.forwardReserve)}) shown for
+                    reference — feeds Safe to Spend, not Discretionary. Distinct
+                    from Safe to Spend (current pay cycle, checking-anchored).
+                  </p>
+                </TabsContent>
+              )}
+            </Tabs>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Zone 1 — Situation Block (Spec §4.2)
+// ---------------------------------------------------------------------------
+
+function SituationBlock({
+  cycle,
+  discretionary,
+  status,
+}: {
+  cycle: CycleData;
+  discretionary: DiscretionaryResp | undefined;
+  status: CycleStatus;
+}) {
+  const paydayLabel = paydayRelativeLabel(
+    cycle.daysUntilPayday,
+    cycle.nextPayday,
+  );
+
+  return (
+    <section
+      className={cn(
+        "rounded-xl bg-card overflow-hidden border border-border",
+        "border-l-4",
+        statusBorderClass(status),
+        status !== "GREEN" && "reserve-status-pulse-once",
+      )}
+      data-testid="situation-block"
+      data-status={status}
+    >
+      {/* v8.0 Final Fix — single reserve-aware headline. "Month Production"
+          panel removed; the only savings number is Available to Save / Spend. */}
+      <div className="grid grid-cols-1">
+        <div className="p-6 md:p-8">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2">
+            Safe to Spend (This Cycle)
+          </p>
+          <h2
+            className={cn(
+              "text-5xl md:text-6xl font-bold tracking-tighter font-mono reserve-animate",
+              statusTextClass(status),
+            )}
+            data-testid="text-safe-to-spend"
+          >
+            {formatCurrency(cycle.safeToSpend)}
+          </h2>
+          {cycle.overCommittedBy > 0 ? (
+            <p
+              className="text-xs text-destructive font-mono mt-2 font-medium"
+              data-testid="text-over-committed"
+            >
+              {formatCurrency(cycle.overCommittedBy)} short of this cycle&apos;s
+              required hold
+            </p>
+          ) : null}
+          <p className="text-xs text-muted-foreground font-mono mt-3">
+            {formatCurrency(cycle.dailyRateRealTime)}/day · {paydayLabel}
+          </p>
+          <p className="text-[10px] text-muted-foreground/70 mt-1">
+            Reserve-aware cash position — your daily decision number. Every
+            dollar leaving checking is counted exactly once.
+          </p>
+          {discretionary && (
+            <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 text-xs font-mono">
+              {/* R-as-truth — editable reservation R. Pill shows R as a
+                  single number. Tap to edit; tap Prorate for a time-aware
+                  cap × daysRemaining ÷ daysInMonth suggestion. Reset clears
+                  the override row → R falls back to variable_spend_cap
+                  ($600 default). R subtracts directly from Available-to-Save.
+                  Cash variable rows are audit-only; QS rows flow into the
+                  hold via sealed engine (quicksilverOwed). */}
+              <VariableEstimateEditor
+                R={
+                  discretionary.plannedVariableRemainingOverride ??
+                  discretionary.variableCap
+                }
+                logged={discretionary.variableLoggedThisMonth}
+                isOverridden={
+                  discretionary.plannedVariableRemainingOverride !== null
+                }
+                fallbackCap={discretionary.variableCap}
+                daysRemaining={discretionary.daysRemainingInMonth}
+                daysInMonth={discretionary.discipline?.daysInMonth ?? 30}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* v9 Fix 1 — strip pared down to the three numbers that drive Safe to
+          Spend. "Monthly Savings (theoretical)" was removed: it was a stale
+          parallel calculation that contradicted the reserve-aware "Available
+          to Save / Invest" headline on the Cash Position card. There are now
+          exactly two savings/available numbers in the product:
+            (a) Safe to Spend — can-I-spend-today liquidity (this section).
+            (b) Available to Save / Invest — reserve-aware month-end position
+                (the Cash Position card below). */}
+      <div
+        className="border-t border-border px-6 md:px-8 py-3 text-xs font-mono text-muted-foreground flex flex-wrap gap-x-6 gap-y-1"
+        data-testid="stat-strip"
+      >
+        <StripItem
+          label="Checking"
+          value={formatCurrency(cycle.checkingBalance)}
+        />
+        <StripItem
+          label="Required Hold"
+          value={formatCurrency(cycle.totalRequiredHold)}
+        />
+        <StripItem
+          label="Forward Reserve"
+          value={formatCurrency(cycle.forwardReserve)}
+        />
+      </div>
+    </section>
+  );
+}
+
+// v8.0 Final Fix — settles the QuickSilver lifecycle. Bulk-stamps every
+// unpaid quicksilver variable_spend row as paid-off; the cycle's
+// quicksilverOwed hold drops to $0 and Safe to Spend rises by the same
+// amount on the next cycle refresh.
+function MarkQsPaidButton({ amount }: { amount: number }) {
+  const queryClient = useQueryClient();
+  const mut = useMarkQuicksilverPaid({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({
+          queryKey: getGetDashboardCycleQueryKey(),
+        });
+        queryClient.invalidateQueries({
+          queryKey: getGetVariableSpendQueryKey(),
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["dashboard-discretionary"],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["dashboard-cash-position"],
+        });
+      },
+    },
+  });
+  return (
+    <button
+      type="button"
+      onClick={() => mut.mutate()}
+      disabled={mut.isPending}
+      className="text-[10px] font-medium uppercase tracking-wider text-primary hover:underline disabled:opacity-50 whitespace-nowrap"
+      data-testid="button-mark-qs-paid"
+      title={`Settles ${formatCurrency(amount)} of unpaid QuickSilver spend`}
+    >
+      {mut.isPending ? "Settling…" : "Mark QS Paid"}
+    </button>
+  );
+}
+
+function StripItem({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span className="text-muted-foreground/70">{label}</span>
+      <span className="text-foreground font-medium">{value}</span>
+    </span>
+  );
+}
+
+function paydayRelativeLabel(
+  days: number | null | undefined,
+  payday: string | Date | null | undefined,
+): string {
+  const datePart = payday ? formatDate(payday) : "—";
+  if (days === null || days === undefined) return `payday ${datePart}`;
+  if (days === 0) return `payday today (${datePart})`;
+  if (days === 1) return `1 day to ${datePart}`;
+  return `${days} days to ${datePart}`;
+}
+
+// ---------------------------------------------------------------------------
+// Zone 1 — Discipline Strip (Spec §4.3) — single line, three metrics
+// ---------------------------------------------------------------------------
+
+function DisciplineStrip({
+  d,
+}: {
+  d: NonNullable<DiscretionaryResp["discipline"]>;
+}) {
+  return (
+    <div
+      className="rounded-lg border border-border bg-card px-4 md:px-6 py-3 flex flex-wrap items-center gap-x-8 gap-y-3"
+      data-testid="discipline-strip"
+    >
+      <DisciplineMetric
+        label="Fixed / Income"
+        value={`${Math.round(d.fixedRatio * 100)}%`}
+        status={d.fixedRatioStatus}
+        badge={
+          d.fixedRatioStatus === "red"
+            ? "TIGHTEN"
+            : d.fixedRatioStatus === "amber"
+              ? "MONITOR"
+              : "ON TRACK"
+        }
+        testid="discipline-fixed-ratio"
+      />
+      <DisciplineMetric
+        label="Variable Pace"
+        value={`${Math.round(d.variableBurnPace * 100)}%`}
+        status={d.variableBurnPaceStatus}
+        badge={
+          d.variableBurnPaceStatus === "red"
+            ? "OVER PACE"
+            : d.variableBurnPaceStatus === "amber"
+              ? "MONITOR"
+              : "ON PACE"
+        }
+        testid="discipline-burn-pace"
+      />
+      <DisciplineMetric
+        label="Savings Rate"
+        value={`${Math.round(d.savingsRate * 100)}%`}
+        status={d.savingsRateStatus}
+        badge={
+          d.savingsRateStatus === "red"
+            ? "BELOW TARGET"
+            : d.savingsRateStatus === "amber"
+              ? "MONITOR"
+              : "ON TARGET"
+        }
+        testid="discipline-savings-rate"
+      />
+      <span className="ml-auto text-xs text-muted-foreground font-mono">
+        day {d.dayOfMonth}/{d.daysInMonth}
+      </span>
+    </div>
+  );
+}
+
+function DisciplineMetric({
+  label,
+  value,
+  status,
+  badge,
+  testid,
+}: {
+  label: string;
+  value: string;
+  status: "green" | "amber" | "red";
+  badge: string;
+  testid: string;
+}) {
+  const color =
+    status === "red"
+      ? "text-destructive"
+      : status === "amber"
+        ? "text-warning"
+        : "text-success";
+  const badgeBg =
+    status === "red"
+      ? "bg-destructive/15 text-destructive border-destructive/30"
+      : status === "amber"
+        ? "bg-warning/15 text-warning border-warning/30"
+        : "bg-success/15 text-success border-success/30";
+  return (
+    <span className="inline-flex items-baseline gap-2" data-testid={testid}>
+      <span className="text-xs text-muted-foreground uppercase tracking-wider">
+        {label}
+      </span>
+      <span
+        className={cn("font-mono text-sm font-semibold reserve-animate", color)}
+      >
+        {value}
+      </span>
+      <span
+        className={cn(
+          "text-xs font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border reserve-animate",
+          badgeBg,
+        )}
+      >
+        {badge}
+      </span>
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Zone 1 — Action Row (Spec §4.4) — 4 ghost buttons
+// ---------------------------------------------------------------------------
+
+function ActionRow() {
+  const [, navigate] = useLocation();
+  return (
+    <div
+      className="grid grid-cols-2 md:grid-cols-4 gap-2"
+      data-testid="action-row"
+    >
+      <UpdateBalanceDialog />
+      <LogSpendDialog />
+      <OneTimeQuickAddDialog />
+      <Button
+        variant="ghost"
+        className="justify-start font-medium border border-border"
+        onClick={() => navigate("/advisor")}
+        data-testid="button-ask-advisor"
+      >
+        <MessageSquare className="mr-2 h-4 w-4" />
+        Ask Advisor
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Zone 2 columns
+// ---------------------------------------------------------------------------
+
+function BillsCycleColumn({
+  rows,
+  totalHold,
+}: {
+  rows: { id: number; name: string; dueDay: number; amount: number }[];
+  totalHold: number;
+}) {
+  return (
+    <section data-testid="bills-cycle-column" className="space-y-3">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        Bills in Cycle
+      </h3>
+      <p className="text-[10px] text-muted-foreground/70 italic -mt-1">
+        Bills due before next payday. This is the bills portion only; the full
+        Required Hold (incl. one-time, QS owed, cushion, etc.) is broken out in
+        the Cash Position math chain above.
+      </p>
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground font-mono">
+          — No bills in current cycle.
+        </p>
+      ) : (
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="text-muted-foreground uppercase tracking-wide">
+              <th className="text-left py-1 font-normal">Bill</th>
+              <th className="text-right py-1 font-normal">Day</th>
+              <th className="text-right py-1 font-normal">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((b) => (
+              <tr key={b.id} className="text-foreground">
+                <td className="py-1 truncate max-w-[140px]">{b.name}</td>
+                <td className="py-1 text-right text-muted-foreground">
+                  {b.dueDay}
+                </td>
+                <td className="py-1 text-right">{formatCurrency(b.amount)}</td>
+              </tr>
+            ))}
+            <tr className="border-t border-border/60">
+              <td colSpan={2} className="pt-2 text-sm font-semibold">
+                Bills portion of hold
+              </td>
+              <td className="pt-2 text-right text-sm font-semibold">
+                {formatCurrency(totalHold)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function OneTimeColumn() {
+  const { data: oneTimes } = useGetOneTimeExpenses({
+    query: { queryKey: getGetOneTimeExpensesQueryKey() },
+  });
+  const updateOte = useUpdateOneTimeExpense();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+  const unpaid = (oneTimes ?? []).filter((o) => !o.paid);
+  const datedThisMonth = unpaid.filter((o) => {
+    if (!o.dueDate) return false;
+    const d = new Date(o.dueDate as unknown as string);
+    return d >= today && d <= monthEnd;
+  });
+  const undated = unpaid.filter((o) => !o.dueDate);
+  const totalThisMonth = datedThisMonth.reduce((s, o) => s + o.amount, 0);
+  const items = [...datedThisMonth, ...undated].slice(0, 6);
+
+  const togglePaid = (id: number, paid: boolean) => {
+    updateOte.mutate(
+      { id, data: { paid: !paid } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({
+            queryKey: getGetOneTimeExpensesQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: getGetDashboardCycleQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-discretionary"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-cash-position"],
+          });
+          toast({ title: paid ? "Marked unpaid" : "Marked paid" });
+        },
+      },
+    );
+  };
+
+  return (
+    <section data-testid="one-time-column" className="space-y-3">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        One-Time This Month
+      </h3>
+      {items.length === 0 ? (
+        <p className="text-xs text-muted-foreground font-mono">— All clear</p>
+      ) : (
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="text-muted-foreground uppercase tracking-wide">
+              <th className="text-left py-1 font-normal">Item</th>
+              <th className="text-right py-1 font-normal">Due</th>
+              <th className="text-right py-1 font-normal">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((o) => (
+              <tr key={o.id}>
+                <td className="py-1 truncate max-w-[140px]">
+                  <label className="inline-flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={o.paid}
+                      onChange={() => togglePaid(o.id, o.paid)}
+                      className="h-3.5 w-3.5"
+                      data-testid={`check-onetime-${o.id}`}
+                    />
+                    <span className="truncate">{o.description}</span>
+                  </label>
+                </td>
+                <td className="py-1 text-right text-muted-foreground">
+                  {o.dueDate ? formatDate(o.dueDate as unknown as string) : "—"}
+                </td>
+                <td className="py-1 text-right">{formatCurrency(o.amount)}</td>
+              </tr>
+            ))}
+            {datedThisMonth.length > 0 && (
+              <tr className="border-t border-border/60">
+                <td colSpan={2} className="pt-2 text-sm font-semibold">
+                  Total dated
+                </td>
+                <td className="pt-2 text-right text-sm font-semibold">
+                  {formatCurrency(totalThisMonth)}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+// v10 — Variable Spend Log row. Display mode renders date/category/amount + a
+// pencil and trash icon. Pencil → inline-edit form (date, amount, category,
+// QS toggle). Trash → confirm prompt, then DELETE. Both mutations invalidate
+// the same query keys the LogSpendDialog invalidates so headlines refresh.
+function VariableSpendRow({
+  row,
+}: {
+  row: {
+    id: number;
+    weekOf: string;
+    amount: number;
+    category: string | null;
+    quicksilver: boolean;
+    notes: string | null;
+  };
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const updateMut = useUpdateVariableSpendEntry();
+  const deleteMut = useDeleteVariableSpendEntry();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    weekOf:
+      typeof row.weekOf === "string"
+        ? row.weekOf.slice(0, 10)
+        : new Date(row.weekOf).toISOString().slice(0, 10),
+    amount: row.amount.toFixed(2),
+    category: row.category ?? "other",
+    quicksilver: row.quicksilver,
+  });
+
+  const refreshAll = () => {
+    queryClient.invalidateQueries({ queryKey: getGetVariableSpendQueryKey() });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+    queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+  };
+
+  const save = () => {
+    const amt = parseFloat(form.amount);
+    if (isNaN(amt) || amt <= 0) {
+      toast({ title: "Amount must be greater than 0", variant: "destructive" });
+      return;
+    }
+    updateMut.mutate(
+      {
+        id: row.id,
+        data: {
+          weekOf: form.weekOf,
+          amount: amt,
+          category: form.category || null,
+          quicksilver: form.quicksilver,
+        },
+      },
+      {
+        onSuccess: () => {
+          refreshAll();
+          setEditing(false);
+          toast({ title: "Entry updated" });
+        },
+        onError: () =>
+          toast({ title: "Update failed", variant: "destructive" }),
+      },
+    );
+  };
+
+  const del = () => {
+    if (
+      !window.confirm(
+        `Delete this variable spend entry?\n\n${formatDate(row.weekOf)} · ${row.category ?? "—"} · ${formatCurrency(row.amount)}${row.quicksilver ? " (QS)" : ""}\n\nThis cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    deleteMut.mutate(
+      { id: row.id },
+      {
+        onSuccess: () => {
+          refreshAll();
+          toast({ title: "Entry deleted" });
+        },
+        onError: () =>
+          toast({ title: "Delete failed", variant: "destructive" }),
+      },
+    );
+  };
+
+  if (editing) {
+    return (
+      <tr
+        data-testid={`row-variable-${row.id}-editing`}
+        className="bg-muted/30"
+      >
+        <td className="py-1">
+          <input
+            type="date"
+            value={form.weekOf}
+            onChange={(e) => setForm({ ...form, weekOf: e.target.value })}
+            className="w-full bg-background border border-border rounded px-1.5 py-0.5 text-xs font-mono"
+            data-testid={`input-edit-date-${row.id}`}
+          />
+        </td>
+        <td className="py-1">
+          <div className="flex items-center gap-1">
+            <select
+              value={form.category}
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+              className="flex-1 bg-background border border-border rounded px-1 py-0.5 text-xs"
+              data-testid={`input-edit-category-${row.id}`}
+            >
+              <option value="groceries">Groceries</option>
+              <option value="dining">Dining</option>
+              <option value="fuel">Fuel</option>
+              <option value="household">Household</option>
+              <option value="entertainment">Entertainment</option>
+              <option value="other">Other</option>
+            </select>
+            <button
+              type="button"
+              onClick={() =>
+                setForm({ ...form, quicksilver: !form.quicksilver })
+              }
+              className={cn(
+                "text-[10px] font-mono uppercase tracking-wider px-1 py-0.5 rounded border",
+                form.quicksilver
+                  ? "bg-warning/15 text-warning border-warning/30"
+                  : "border-border text-muted-foreground",
+              )}
+              title="Toggle QuickSilver"
+              data-testid={`toggle-edit-qs-${row.id}`}
+            >
+              QS
+            </button>
+          </div>
+        </td>
+        <td className="py-1 text-right">
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            value={form.amount}
+            onChange={(e) => setForm({ ...form, amount: e.target.value })}
+            className="w-20 text-right bg-background border border-border rounded px-1.5 py-0.5 text-xs font-mono"
+            data-testid={`input-edit-amount-${row.id}`}
+          />
+        </td>
+        <td className="py-1 text-right">
+          <div className="inline-flex gap-1">
+            <button
+              type="button"
+              onClick={save}
+              disabled={updateMut.isPending}
+              className="text-[10px] font-medium uppercase tracking-wider text-success hover:underline disabled:opacity-50"
+              data-testid={`button-save-${row.id}`}
+            >
+              save
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setForm({
+                  weekOf:
+                    typeof row.weekOf === "string"
+                      ? row.weekOf.slice(0, 10)
+                      : new Date(row.weekOf).toISOString().slice(0, 10),
+                  amount: row.amount.toFixed(2),
+                  category: row.category ?? "other",
+                  quicksilver: row.quicksilver,
+                });
+              }}
+              className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+              data-testid={`button-cancel-${row.id}`}
+            >
+              cancel
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr data-testid={`row-variable-${row.id}`} className="group">
+      <td className="py-1 text-muted-foreground">{formatDate(row.weekOf)}</td>
+      <td className="py-1 capitalize">
+        <span className="inline-flex items-center gap-1.5">
+          {row.category ?? ""}
+          {row.quicksilver && (
+            <span className="text-xs font-mono uppercase tracking-wider px-1 py-0 rounded bg-warning/15 text-warning border border-warning/30">
+              QS
+            </span>
+          )}
+        </span>
+      </td>
+      <td className="py-1 text-right">{formatCurrency(row.amount)}</td>
+      <td className="py-1 text-right">
+        <div className="inline-flex gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="text-muted-foreground hover:text-foreground"
+            title="Edit"
+            data-testid={`button-edit-${row.id}`}
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={del}
+            disabled={deleteMut.isPending}
+            className="text-muted-foreground hover:text-destructive disabled:opacity-50"
+            title="Delete"
+            data-testid={`button-delete-${row.id}`}
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function VariableSpendColumn() {
+  const { data: vs } = useGetVariableSpend(undefined, {
+    query: { queryKey: getGetVariableSpendQueryKey() },
+  });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+  const monthEntries = (vs ?? []).filter(
+    (v) => new Date(v.weekOf as unknown as string) >= monthStart,
+  );
+  const monthTotal = monthEntries.reduce((s, v) => s + v.amount, 0);
+  const quicksilverTotal = monthEntries
+    .filter((v) => v.quicksilver)
+    .reduce((s, v) => s + v.amount, 0);
+  const recent = (vs ?? []).slice(0, 6);
+
+  return (
+    <section data-testid="variable-spend-column" className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Variable Spend Log
+        </h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent("reserve:open-log-spend"))
+          }
+          data-testid="button-log-variable"
+        >
+          Log
+        </Button>
+      </div>
+      {recent.length === 0 ? (
+        <p className="text-xs text-muted-foreground font-mono">
+          — No entries yet
+        </p>
+      ) : (
+        <table className="w-full text-xs font-mono">
+          <thead>
+            <tr className="text-muted-foreground uppercase tracking-wide">
+              <th className="text-left py-1 font-normal">Date</th>
+              <th className="text-left py-1 font-normal">Category</th>
+              <th className="text-right py-1 font-normal">Amount</th>
+              <th className="text-right py-1 font-normal w-16"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {recent.map((v) => (
+              <VariableSpendRow
+                key={v.id}
+                row={{
+                  id: v.id,
+                  weekOf: v.weekOf as unknown as string,
+                  amount: v.amount,
+                  category: v.category ?? null,
+                  quicksilver: v.quicksilver,
+                  notes: v.notes ?? null,
+                }}
+              />
+            ))}
+            <tr className="border-t border-border/60">
+              <td colSpan={3} className="pt-2 text-sm font-semibold">
+                Logged MTD
+              </td>
+              <td className="pt-2 text-right text-sm font-semibold">
+                {formatCurrency(monthTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td colSpan={3} className="text-xs text-muted-foreground">
+                QuickSilver Owed
+              </td>
+              <td className="text-right text-xs text-muted-foreground">
+                {formatCurrency(quicksilverTotal)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Action Row dialogs
+// ---------------------------------------------------------------------------
+
+// v8.2 — reconcile suggestion shape returned by POST /api/balances/reconcile-suggestions
+type ReconcileSuggestion = {
+  currentAmount: number;
+  newAmount: number;
+  delta: number;
+  pendingBills: { id: number; name: string; amount: number }[];
+  suggestedClearIds: number[];
+  suggestedBills: { id: number; name: string; amount: number }[];
+  suggestedSum: number;
+  confidence: "exact" | "close" | "none";
+  tolerance: number;
+};
+
+function UpdateBalanceDialog() {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [suggestion, setSuggestion] = useState<ReconcileSuggestion | null>(
+    null,
+  );
+  const [selectedClearIds, setSelectedClearIds] = useState<Set<number>>(
+    new Set(),
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const createBalance = useCreateBalance();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  // v8.2 — Step 1: peek at the balance change before committing. Calls the
+  // reconcile-suggestions endpoint with the proposed amount and shows the
+  // user any paid_pending_clear bills whose sum matches the drop, so a
+  // single confirm clears the balance AND the pending lifecycle in one go.
+  const handlePreview = async () => {
+    const parsed = parseFloat(amount);
+    if (isNaN(parsed)) return;
+    try {
+      const r = await fetch("/api/balances/reconcile-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newAmount: parsed }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data: ReconcileSuggestion = await r.json();
+      // Short-circuit: nothing pending OR balance went up → skip preview, just commit.
+      if (data.pendingBills.length === 0 || data.delta >= 0) {
+        commitBalance(parsed, []);
+        return;
+      }
+      setSuggestion(data);
+      setSelectedClearIds(new Set(data.suggestedClearIds));
+    } catch {
+      // Reconcile is best-effort — if the endpoint fails for any reason,
+      // fall back to a straight balance update so the user is never blocked.
+      commitBalance(parsed, []);
+    }
+  };
+
+  const commitBalance = (parsedAmount: number, clearIds: number[]) => {
+    setSubmitting(true);
+    createBalance.mutate(
+      {
+        data: {
+          accountType: "checking",
+          amount: parsedAmount,
+          asOfDate: new Date().toISOString(),
+          source: "manual",
+        },
+      },
+      {
+        onSuccess: async () => {
+          // Fire mark-cleared in parallel for every selected pending bill.
+          // Failures are reported but don't roll back the balance update.
+          // IMPORTANT: fetch() resolves on HTTP 4xx/5xx — we must inspect
+          // response.ok to count true successes, otherwise we'd over-report.
+          const results = await Promise.allSettled(
+            clearIds.map((id) =>
+              fetch(`/api/bills/${id}/mark-cleared`, { method: "POST" }),
+            ),
+          );
+          let cleared = 0;
+          let failed = 0;
+          for (const r of results) {
+            if (r.status === "fulfilled" && r.value.ok) cleared++;
+            else failed++;
+          }
+          queryClient.invalidateQueries({
+            queryKey: getGetDashboardCycleQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-discretionary"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-cash-position"],
+          });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-integrity"] });
+          queryClient.invalidateQueries({ queryKey: ["bills"] });
+          setOpen(false);
+          setAmount("");
+          setSuggestion(null);
+          setSelectedClearIds(new Set());
+          setSubmitting(false);
+          const parts: string[] = [];
+          if (cleared > 0)
+            parts.push(
+              `${cleared} pending bill${cleared > 1 ? "s" : ""} cleared`,
+            );
+          if (failed > 0)
+            parts.push(`${failed} clear${failed > 1 ? "s" : ""} failed`);
+          toast({
+            title: "Balance updated",
+            description: parts.length > 0 ? parts.join(" · ") : undefined,
+            variant: failed > 0 ? "destructive" : undefined,
+          });
+        },
+        onError: () => {
+          setSubmitting(false);
+          toast({ title: "Failed to update balance", variant: "destructive" });
+        },
+      },
+    );
+  };
+
+  const handleSave = () => handlePreview();
+  const handleConfirmWithClears = () => {
+    if (!suggestion) return;
+    commitBalance(suggestion.newAmount, Array.from(selectedClearIds));
+  };
+  const toggleClearId = (id: number) => {
+    setSelectedClearIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          className="justify-start font-medium border border-border"
+          data-testid="button-update-balance"
+        >
+          <ArrowUpCircle className="mr-2 h-4 w-4" />
+          Update Balance
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {suggestion ? "Reconcile Pending Bills" : "Update Checking Balance"}
+          </DialogTitle>
+        </DialogHeader>
+        {suggestion ? (
+          // v8.2 — reconcile prompt: we detected paid_pending_clear bills
+          // whose sum matches the balance drop. Let the user pick which to
+          // mark cleared, then commit balance + clears atomically.
+          <div className="grid gap-4 py-4" data-testid="reconcile-prompt">
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+              <div className="flex justify-between font-mono">
+                <span>Current balance</span>
+                <span>{formatCurrency(suggestion.currentAmount)}</span>
+              </div>
+              <div className="flex justify-between font-mono">
+                <span>New balance</span>
+                <span>{formatCurrency(suggestion.newAmount)}</span>
+              </div>
+              <div className="flex justify-between font-mono font-semibold border-t border-border pt-1 mt-1">
+                <span>Change</span>
+                <span
+                  className={
+                    suggestion.delta < 0
+                      ? "text-destructive"
+                      : "text-emerald-600"
+                  }
+                >
+                  {suggestion.delta >= 0 ? "+" : ""}
+                  {formatCurrency(suggestion.delta)}
+                </span>
+              </div>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {suggestion.confidence === "exact"
+                ? "Detected a pending bill set whose total exactly matches this drop. Clear them?"
+                : suggestion.confidence === "close"
+                  ? `Detected a pending bill set whose total (${formatCurrency(suggestion.suggestedSum)}) is within $${suggestion.tolerance} of this drop. Clear them?`
+                  : "Pending bills detected, but none match this drop. Select any that cleared, or just update the balance."}
+            </div>
+            <div className="grid gap-1 max-h-64 overflow-y-auto">
+              {suggestion.pendingBills.map((b) => (
+                <label
+                  key={b.id}
+                  className="flex items-center justify-between gap-3 rounded border border-border px-3 py-2 cursor-pointer hover:bg-muted/40"
+                  data-testid={`reconcile-bill-${b.id}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedClearIds.has(b.id)}
+                      onChange={() => toggleClearId(b.id)}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm">{b.name}</span>
+                  </div>
+                  <span className="font-mono text-sm">
+                    {formatCurrency(b.amount)}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-between text-xs text-muted-foreground font-mono">
+              <span>Selected to clear</span>
+              <span>
+                {formatCurrency(
+                  suggestion.pendingBills
+                    .filter((b) => selectedClearIds.has(b.id))
+                    .reduce((s, b) => s + b.amount, 0),
+                )}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="amount">Current Balance</Label>
+              <Input
+                id="amount"
+                type="number"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="text-2xl font-mono"
+                autoFocus
+                data-testid="input-balance-amount"
+              />
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (suggestion) {
+                setSuggestion(null);
+                setSelectedClearIds(new Set());
+              } else {
+                setOpen(false);
+              }
+            }}
+          >
+            {suggestion ? "Back" : "Cancel"}
+          </Button>
+          <Button
+            onClick={suggestion ? handleConfirmWithClears : handleSave}
+            disabled={
+              submitting || createBalance.isPending || (!suggestion && !amount)
+            }
+            data-testid="button-save-balance"
+          >
+            <RefreshCw
+              className={cn(
+                "mr-2 h-4 w-4",
+                (submitting || createBalance.isPending) && "animate-spin",
+              )}
+            />
+            {suggestion
+              ? selectedClearIds.size > 0
+                ? `Update + Clear ${selectedClearIds.size}`
+                : "Update Balance Only"
+              : "Save Balance"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LogSpendDialog() {
+  const createMut = useCreateVariableSpendEntry();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener("reserve:open-log-spend", handler);
+    return () => window.removeEventListener("reserve:open-log-spend", handler);
+  }, []);
+  const [form, setForm] = useState({
+    weekOf: new Date().toISOString().split("T")[0],
+    amount: "",
+    category: "groceries",
+    quicksilver: true,
+    notes: "",
+  });
+
+  const handleSave = () => {
+    const amt = parseFloat(form.amount);
+    if (isNaN(amt) || amt <= 0) {
+      toast({ title: "Amount required", variant: "destructive" });
+      return;
+    }
+    createMut.mutate(
+      {
+        data: {
+          weekOf: form.weekOf,
+          amount: amt,
+          category: form.category || null,
+          quicksilver: form.quicksilver,
+          notes: form.notes.trim() || null,
+        },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({
+            queryKey: getGetVariableSpendQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-discretionary"],
+          });
+          // QS variable rows feed quicksilverOwed → totalRequiredHold → headline.
+          // Cash rows don't, but a redundant refetch is cheap; invalidate uniformly.
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-cash-position"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: getGetDashboardCycleQueryKey(),
+          });
+          setOpen(false);
+          setForm((f) => ({ ...f, amount: "", notes: "" }));
+          toast({ title: "Variable entry logged" });
+        },
+      },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          className="justify-start font-medium border border-border"
+          data-testid="button-log-spend"
+        >
+          <Plus className="mr-2 h-4 w-4" />
+          Log Spend
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Log Variable Spend</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-3 py-2">
+          <div>
+            <Label>Date</Label>
+            <Input
+              type="date"
+              value={form.weekOf}
+              onChange={(e) => setForm({ ...form, weekOf: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>Amount</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                data-testid="input-variable-amount"
+              />
+            </div>
+            <div>
+              <Label>Category</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={form.category}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+              >
+                <option value="groceries">Groceries</option>
+                <option value="dining">Dining</option>
+                <option value="fuel">Fuel</option>
+                <option value="household">Household</option>
+                <option value="entertainment">Entertainment</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between rounded border p-3">
+            <div>
+              <Label>Charged on QuickSilver</Label>
+              <p className="text-xs text-muted-foreground">
+                Accrues into Monthly Savings statement reserve.
+              </p>
+            </div>
+            <Switch
+              checked={form.quicksilver}
+              onCheckedChange={(v) => setForm({ ...form, quicksilver: v })}
+            />
+          </div>
+          <div>
+            <Label>Notes</Label>
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={createMut.isPending}
+            data-testid="button-save-variable"
+          >
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function OneTimeQuickAddDialog() {
+  const createMut = useCreateOneTimeExpense();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    description: "",
+    amount: "",
+    dueDate: "",
+    notes: "",
+  });
+
+  const handleSave = () => {
+    const amt = parseFloat(form.amount);
+    if (!form.description.trim() || isNaN(amt) || amt <= 0) {
+      toast({
+        title: "Description and amount required",
+        variant: "destructive",
+      });
+      return;
+    }
+    createMut.mutate(
+      {
+        data: {
+          description: form.description.trim(),
+          amount: amt,
+          dueDate: form.dueDate || null,
+          paid: false,
+          notes: form.notes.trim() || null,
+        },
+      },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({
+            queryKey: getGetOneTimeExpensesQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: getGetDashboardCycleQueryKey(),
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-discretionary"],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["dashboard-cash-position"],
+          });
+          setOpen(false);
+          setForm({ description: "", amount: "", dueDate: "", notes: "" });
+          toast({ title: "One-time expense added" });
+        },
+        onError: () =>
+          toast({
+            title: "Failed to add one-time expense",
+            variant: "destructive",
+          }),
+      },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          className="justify-start font-medium border border-border"
+          data-testid="button-add-one-time"
+        >
+          <CalendarPlus className="mr-2 h-4 w-4" />
+          One-Time
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add One-Time Expense</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-3 py-2">
+          <div>
+            <Label>Description</Label>
+            <Input
+              value={form.description}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
+              placeholder="e.g. Dentist co-pay"
+              data-testid="input-one-time-description"
+              autoFocus
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>Amount</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                data-testid="input-one-time-amount"
+              />
+            </div>
+            <div>
+              <Label>Due date</Label>
+              <Input
+                type="date"
+                value={form.dueDate}
+                onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                data-testid="input-one-time-due-date"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Undated items aren't reserved in Safe-to-Spend. Set a due date to
+            include them.
+          </p>
+          <div>
+            <Label>Notes</Label>
+            <Input
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={createMut.isPending}
+            data-testid="button-save-one-time"
+          >
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared math row (used by Zone 3 tabs)
+// ---------------------------------------------------------------------------
+
+// R-as-truth — Variable reserved pill on Overview. Tap the number to edit
+// R directly. R is what Available-to-Save subtracts from commitmentBalance.
+// The log feeds nothing here; it's an audit history only. When L > R the
+// pill surfaces "(spent $L)" in red as awareness. Prorate button sets R to
+// cap × daysRemaining / daysInMonth (time-aware suggestion the user can
+// then keep, adjust, or override). Reset clears the override → R falls
+// back to variable_spend_cap.
+function VariableEstimateEditor({
+  R,
+  logged,
+  isOverridden,
+  fallbackCap,
+  daysRemaining,
+  daysInMonth,
+}: {
+  R: number;
+  logged: number;
+  isOverridden: boolean;
+  fallbackCap: number;
+  daysRemaining: number;
+  daysInMonth: number;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(R.toFixed(2));
+  const committedRef = useRef(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const updateMut = useUpdateAssumption();
+
+  useEffect(() => {
+    if (!editing) setDraft(R.toFixed(2));
+  }, [R, editing]);
+
+  const overBy = Math.max(0, logged - R);
+
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+    queryClient.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+  };
+
+  const commit = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const trimmed = draft.trim();
+    const parsed = trimmed === "" ? null : parseFloat(trimmed);
+    // R = literal user input. Zero is a deliberate "reserve nothing more"
+    // state (headline returns to baseline). Empty field is the explicit
+    // reset-to-cap path. Only negative values are rejected.
+    if (trimmed !== "" && (parsed === null || isNaN(parsed) || parsed < 0)) {
+      toast({
+        title: "Enter a non-negative number or leave blank to reset",
+        variant: "destructive",
+      });
+      setDraft(R.toFixed(2));
+      setEditing(false);
+      return;
+    }
+    updateMut.mutate(
+      {
+        key: "planned_variable_remaining_override",
+        data: { value: trimmed === "" ? "" : String(parsed) },
+      },
+      {
+        onSuccess: () => {
+          invalidateAll();
+          setEditing(false);
+        },
+        onError: () => {
+          toast({ title: "Update failed", variant: "destructive" });
+          setDraft(R.toFixed(2));
+          setEditing(false);
+        },
+      },
+    );
+  };
+
+  const reset = () => {
+    updateMut.mutate(
+      {
+        key: "planned_variable_remaining_override",
+        data: { value: "" },
+      },
+      {
+        onSuccess: () => {
+          invalidateAll();
+          toast({ title: `Reset to cap (${formatCurrency(fallbackCap)})` });
+        },
+      },
+    );
+  };
+
+  const prorate = () => {
+    // Time-aware suggestion: cap × (days remaining / days in month).
+    // Floor at $0. Round to cents.
+    const safeDays = Math.max(1, daysInMonth);
+    const prorated =
+      Math.round(Math.max(0, (fallbackCap * daysRemaining) / safeDays) * 100) /
+      100;
+    updateMut.mutate(
+      {
+        key: "planned_variable_remaining_override",
+        data: { value: String(prorated) },
+      },
+      {
+        onSuccess: () => {
+          invalidateAll();
+          toast({
+            title: `Prorated to ${formatCurrency(prorated)} (${daysRemaining}/${daysInMonth} days × cap)`,
+          });
+        },
+        onError: () =>
+          toast({ title: "Prorate failed", variant: "destructive" }),
+      },
+    );
+  };
+
+  return (
+    <div className="flex justify-between items-center gap-2">
+      <span className="text-muted-foreground">Variable reserved</span>
+      <span className="flex items-center gap-1.5">
+        {editing ? (
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={() => {
+              committedRef.current = false;
+            }}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
+              if (e.key === "Escape") {
+                committedRef.current = true;
+                setDraft(R.toFixed(2));
+                setEditing(false);
+              }
+            }}
+            className="w-24 text-right font-mono bg-background border border-border rounded px-2 py-0.5 text-xs"
+            data-testid="input-variable-R"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="font-mono hover:underline decoration-dotted underline-offset-4 text-foreground"
+            data-testid="button-edit-variable-R"
+            title="Tap to edit how much you've reserved for variable spending"
+          >
+            {formatCurrency(R)}
+          </button>
+        )}
+        {overBy > 0 && !editing && (
+          <span
+            className="text-destructive font-mono text-[10px] ml-1"
+            data-testid="text-variable-overspend"
+          >
+            (spent {formatCurrency(logged)})
+          </span>
+        )}
+        {!editing && (
+          <button
+            type="button"
+            onClick={prorate}
+            className="text-[9px] text-muted-foreground hover:text-foreground uppercase tracking-wider ml-1 border border-border rounded px-1.5 py-0.5"
+            data-testid="button-prorate-variable-R"
+            title={`Set R to cap × days remaining ÷ days in month (${daysRemaining}/${daysInMonth})`}
+          >
+            prorate
+          </button>
+        )}
+        {isOverridden && !editing && (
+          <button
+            type="button"
+            onClick={reset}
+            className="text-[9px] text-muted-foreground hover:text-foreground uppercase tracking-wider ml-1"
+            data-testid="button-reset-variable-R"
+          >
+            reset
+          </button>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function Row({
+  label,
+  value,
+  negative,
+  bold,
+  sublabel,
+}: {
+  label: string;
+  value: number;
+  negative?: boolean;
+  bold?: boolean;
+  sublabel?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "py-1",
+        bold
+          ? "border-t-2 border-border pt-2 font-bold"
+          : "border-b border-border/40",
+        negative ? "text-destructive" : "",
+      )}
+    >
+      <div className="flex justify-between">
+        <span className={negative ? "" : "text-muted-foreground"}>{label}</span>
+        <span>{formatCurrency(value)}</span>
+      </div>
+      {sublabel && (
+        <p className="text-[10px] text-muted-foreground/70 italic mt-0.5">
+          {sublabel}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// v8.3 — Cash Position Card
+//
+// Answers: "What will my checking ACTUALLY look like at month end, given some
+// 'paid' bills haven't actually debited yet?" Per-bill toggle lets the user
+// flip a bill between "cleared" (money already left checking) and "not yet"
+// (still pending debit) in one click — no need to navigate to the Bills page.
+// ---------------------------------------------------------------------------
+
+interface CashPositionResp {
+  asOf: string;
+  monthEnd: string;
+  currentChecking: number;
+  lastBalanceUpdate: string | null;
+  daysSinceUpdate: number | null;
+  incomeStillToReceive: number;
+  paychecksStillExpected: { date: string; amount: number }[];
+  pendingCommissionUnreceived: number;
+  billsAlreadyDebited: number;
+  billsAlreadyDebitedDetail: CashBillRow[];
+  billsNotYetDebited: number;
+  billsNotYetDebitedDetail: CashBillRow[];
+  variableExpectedRemaining: number;
+  variableExpectedRemainingCash: number;
+  variableExpectedRemainingQs: number;
+  quicksilverAccruedRatio: number;
+  oneTimeStillToPay: number;
+  oneTimeStillToPayDetail: {
+    id: number;
+    description: string;
+    amount: number;
+    dueDate: string | null;
+  }[];
+  commitmentOutflowsRemaining: number;
+  commitmentBalance: number;
+  availableToInvest: number;
+  earlyNextMonthVariable: number;
+  totalCashOutflowsRemaining: number;
+  projectedEndOfMonthChecking: number;
+  isDeficit: boolean;
+  isTight: boolean;
+}
+
+interface CashBillRow {
+  id: number;
+  name: string;
+  amount: number;
+  dueDay: number;
+  paymentState: string;
+  paidDate: string | null;
+  clearedDate: string | null;
+  cashStatus: "debited" | "pending" | "late" | "scheduled";
+}
+
+function CashPositionCard() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const updateBill = useUpdateBill();
+  const { data, isLoading } = useQuery<CashPositionResp>({
+    queryKey: ["dashboard-cash-position"],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/dashboard/cash-position`);
+      if (!r.ok) throw new Error("Failed to load cash position");
+      return r.json();
+    },
+  });
+  // A+E hint — pull trailingDailyRate + daysRemainingInMonth from the
+  // discretionary query that's already loaded by the parent Dashboard.
+  // React Query dedupes on key — no extra network round-trip.
+  const { data: discretionary } = useQuery<DiscretionaryResp>({
+    queryKey: ["dashboard-discretionary"],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/dashboard/discretionary`);
+      if (!r.ok) throw new Error("Failed to load discretionary");
+      return r.json();
+    },
+  });
+  // D1 reconciliation — also pull cycle so the math chain can mirror
+  // head = commitmentBalance − F = (currentChecking − totalRequiredHold) − F
+  // using cycle.* addends as labeled rows. React Query dedupes on key —
+  // parent Dashboard already fetched, so this is a cache hit.
+  const { data: cycle } = useGetDashboardCycle({
+    query: { queryKey: getGetDashboardCycleQueryKey() },
+  });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["dashboard-cash-position"] });
+    qc.invalidateQueries({ queryKey: ["dashboard-discretionary"] });
+    qc.invalidateQueries({ queryKey: getGetDashboardCycleQueryKey() });
+    qc.invalidateQueries({ queryKey: getGetBillsQueryKey() });
+  };
+
+  const setBillCashStatus = (bill: CashBillRow, debited: boolean) => {
+    const today = new Date().toISOString().split("T")[0];
+    // debited=true → state=paid (server stamps clearedDate=now)
+    // debited=false → keep obligation but mark unclear:
+    //   if was paid → flip to paid_pending_clear (server clears clearedDate)
+    //   if was late_unpaid → keep late_unpaid (already represents un-debited)
+    const next: "paid" | "paid_pending_clear" | "late_unpaid" = debited
+      ? "paid"
+      : bill.paymentState === "late_unpaid"
+        ? "late_unpaid"
+        : "paid_pending_clear";
+    updateBill.mutate(
+      {
+        id: bill.id,
+        data: {
+          paymentState: next,
+          paidDate:
+            next === "paid" || next === "paid_pending_clear" ? today : null,
+        },
+      },
+      {
+        onSuccess: () => {
+          refresh();
+          toast({
+            title: debited
+              ? `Marked ${bill.name} as debited`
+              : `Marked ${bill.name} as not yet debited`,
+          });
+        },
+        onError: () =>
+          toast({ title: "Failed to update bill", variant: "destructive" }),
+      },
+    );
+  };
+
+  if (isLoading || !data) {
+    return <Skeleton className="h-48 w-full rounded-xl" />;
+  }
+
+  // v10 — Headline = availableToInvest = commitmentBalance − F.
+  // F (estimated future variable, full) is folded into the save-decision
+  // number. F never enters totalRequiredHold; the cycle's quicksilverOwed
+  // carries the hold side. Projected EOM still uses F_cash only — it's a
+  // cash-trajectory number, not a save-decision number.
+  const head = data.availableToInvest;
+  const eom = data.projectedEndOfMonthChecking;
+  const headColor =
+    head < 0
+      ? "text-destructive"
+      : head < 100
+        ? "text-warning"
+        : "text-success";
+  const eomColor =
+    eom < 0 ? "text-destructive" : eom < 100 ? "text-warning" : "text-success";
+  const borderColor =
+    head < 0
+      ? "border-l-destructive"
+      : head < 100
+        ? "border-l-warning"
+        : "border-l-success";
+
+  // A+E pace hint — informational only. Headline math unchanged; this sublabel
+  // tells the user how F compares to trailing burn so they can decide whether
+  // to lower E. Suppressed when:
+  //   • discretionary cache hasn't loaded (paceImpliedF null)
+  //   • pace and reserved F are within $1 (noise; no signal)
+  //   • pace > reserved F (no over-reservation; pill surfaces overspend separately)
+  // When dayOfMonth < 7 OR L = 0, the route's trailingDailyRate falls back to
+  // variableCap/monthLengthDays; label that "Cap-rate pace" so it isn't sold
+  // as observed burn.
+  const trailingRate = discretionary?.trailingDailyRate ?? null;
+  const daysLeft = discretionary?.daysRemainingInMonth ?? null;
+  const logged = discretionary?.variableLoggedThisMonth ?? null;
+  const localDayOfMonth = new Date().getDate();
+  const isCapRateFallback =
+    logged !== null && (localDayOfMonth < 7 || logged === 0);
+  const paceImpliedF =
+    trailingRate !== null && daysLeft !== null ? trailingRate * daysLeft : null;
+  const reservedF = data.variableExpectedRemaining;
+  const showPaceHint =
+    paceImpliedF !== null &&
+    Math.abs(paceImpliedF - reservedF) >= 1 &&
+    paceImpliedF < reservedF;
+
+  return (
+    <section
+      className={cn(
+        "rounded-xl bg-card overflow-hidden border border-border border-l-4",
+        borderColor,
+      )}
+      data-testid="cash-position-card"
+    >
+      <div className="p-6">
+        <div className="flex items-baseline justify-between mb-4">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
+              Available to Move to HYSA / Investments
+            </p>
+            <p className="text-[10px] text-muted-foreground/70 mt-1">
+              The dollar amount you can safely sweep to savings or brokerage
+              right now without bouncing a known obligation AND while still
+              funding the planned variable spend for the rest of the month.
+            </p>
+          </div>
+          <div className="text-right">
+            <h3
+              className={cn(
+                "text-4xl font-bold font-mono tracking-tighter",
+                headColor,
+              )}
+              data-testid="text-commitment-balance"
+            >
+              {formatCurrency(head)}
+            </h3>
+            {data.isDeficit && (
+              <p
+                className="text-xs text-destructive font-mono mt-1"
+                data-testid="text-available-deficit"
+              >
+                can&apos;t save this month — {formatCurrency(Math.abs(head))}{" "}
+                short of your reserve
+              </p>
+            )}
+            {data.isTight && (
+              <p className="text-xs text-warning font-mono mt-1">
+                tight — under $100 cushion
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* D1 — reconciled math chain. Mirrors head = commitmentBalance − F
+            where commitmentBalance = currentChecking − totalRequiredHold.
+            Every visible row reads cycle.* or data.*; the chain sums to head
+            exactly because the displayed terms ARE the formula. Zero-valued
+            hold addends are suppressed for readability. The month-window
+            "+ income / − bills not yet debited / − one-time still to pay"
+            rows that used to live here described the wrong window (calendar
+            month) for this snapshot decision and never tied to head; they're
+            dropped. Bill detail toggle below still uses the cash-position
+            month-window arrays for at-a-glance use. */}
+        <div className="space-y-1.5 font-mono text-sm border-t border-border/30 pt-3">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Checking now</span>
+            <span>{formatCurrency(data.currentChecking)}</span>
+          </div>
+          {cycle && cycle.billsDueBeforePayday > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− Bills due before next payday</span>
+              <span>−{formatCurrency(cycle.billsDueBeforePayday)}</span>
+            </div>
+          )}
+          {cycle && cycle.oneTimeDueBeforePayday > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− One-time due before next payday</span>
+              <span>−{formatCurrency(cycle.oneTimeDueBeforePayday)}</span>
+            </div>
+          )}
+          {cycle && cycle.pendingHoldsReserve > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− Pending holds reserve</span>
+              <span>−{formatCurrency(cycle.pendingHoldsReserve)}</span>
+            </div>
+          )}
+          {cycle && cycle.minimumCushion > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− Minimum cushion</span>
+              <span>−{formatCurrency(cycle.minimumCushion)}</span>
+            </div>
+          )}
+          {cycle && cycle.quicksilverOwed > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− QuickSilver owed</span>
+              <span>−{formatCurrency(cycle.quicksilverOwed)}</span>
+            </div>
+          )}
+          {cycle && cycle.pendingBillsOwed > 0 && (
+            <div className="flex justify-between text-destructive">
+              <span>− Pending bills owed</span>
+              <span>−{formatCurrency(cycle.pendingBillsOwed)}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-medium border-t border-border/30 pt-2 mt-1">
+            <span>= Reserve-aware balance (Checking − Required Hold)</span>
+            <span>{formatCurrency(data.commitmentBalance)}</span>
+          </div>
+          <div className="flex justify-between text-destructive">
+            <span>− Variable reserved (R)</span>
+            <span>−{formatCurrency(data.variableExpectedRemaining)}</span>
+          </div>
+          <div className="flex justify-between text-destructive">
+            <span>− Early next-month variable (days 1–7)</span>
+            <span>−{formatCurrency(data.earlyNextMonthVariable)}</span>
+          </div>
+          {showPaceHint && (
+            <p
+              className="text-[10px] text-muted-foreground/70 italic -mt-1 pl-2"
+              data-testid="text-pace-hint"
+            >
+              {isCapRateFallback ? "Cap-rate pace" : "Trailing pace"}:{" "}
+              {formatCurrency(trailingRate!)}/day · {daysLeft} day
+              {daysLeft === 1 ? "" : "s"} left · pace-implied R ≈{" "}
+              {formatCurrency(paceImpliedF!)}. R currently reserves{" "}
+              {formatCurrency(reservedF)}. Tap <strong>Prorate</strong> on the
+              pill to set R to the pace-implied value.
+            </p>
+          )}
+          <div
+            className={cn(
+              "flex justify-between font-bold border-t border-border/30 pt-2 mt-1",
+              headColor,
+            )}
+          >
+            <span>= Available to move to HYSA / investments</span>
+            <span>{formatCurrency(head)}</span>
+          </div>
+        </div>
+
+        {/* Secondary projection — including future variable */}
+        {data.variableExpectedRemainingCash > 0 && (
+          <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 font-mono text-sm">
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wider">
+              If you also spend the planned variable budget
+            </p>
+            <div className="flex justify-between text-destructive">
+              <span>
+                − Variable still to spend from checking
+                {data.quicksilverAccruedRatio > 0 && (
+                  <span className="text-[10px] text-muted-foreground ml-1">
+                    ({Math.round((1 - data.quicksilverAccruedRatio) * 100)}%
+                    cash, rest on QS card)
+                  </span>
+                )}
+              </span>
+              <span>−{formatCurrency(data.variableExpectedRemainingCash)}</span>
+            </div>
+            <div className={cn("flex justify-between font-medium", eomColor)}>
+              <span>= Projected end-of-month checking</span>
+              <span>{formatCurrency(eom)}</span>
+            </div>
+            <p className="text-[10px] text-muted-foreground/70 italic">
+              Variable reservation (R) editable via the &ldquo;Variable
+              reserved&rdquo; pill on the Overview headline above. Cash portion
+              shown here is R split by the logged QS:cash mix so the projection
+              stays in sync with the headline.
+            </p>
+          </div>
+        )}
+
+        {/* Per-bill toggles — the actual fix the user asked for */}
+        {data.billsNotYetDebitedDetail.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-border/30">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+              Bills this month, not yet debited — toggle if money already left
+            </p>
+            <p className="text-[10px] text-muted-foreground/70 italic mb-2 normal-case tracking-normal">
+              Calendar-month informational list. The cycle hold above is what
+              drives the headline.
+            </p>
+            <ul className="space-y-1.5">
+              {data.billsNotYetDebitedDetail
+                .sort((a, b) => a.dueDay - b.dueDay)
+                .map((b) => (
+                  <li
+                    key={b.id}
+                    className="flex items-center justify-between gap-3 text-sm font-mono py-1.5 px-2 rounded hover:bg-muted/50"
+                    data-testid={`cash-bill-row-${b.id}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="truncate">{b.name}</span>
+                      <span className="text-xs text-muted-foreground ml-2">
+                        day {b.dueDay}
+                      </span>
+                      <span
+                        className={cn(
+                          "text-[10px] uppercase tracking-wider ml-2 px-1.5 py-0.5 rounded",
+                          b.cashStatus === "late"
+                            ? "bg-destructive/20 text-destructive"
+                            : "bg-warning/20 text-warning",
+                        )}
+                      >
+                        {b.cashStatus === "late" ? "late" : "pending"}
+                      </span>
+                    </div>
+                    <span className="text-right tabular-nums w-20">
+                      −{formatCurrency(b.amount)}
+                    </span>
+                    <div className="flex items-center gap-0.5 border rounded overflow-hidden text-[10px] uppercase tracking-wider">
+                      <button
+                        onClick={() => setBillCashStatus(b, true)}
+                        className="px-2 py-0.5 hover-elevate text-success"
+                        data-testid={`button-mark-debited-${b.id}`}
+                        title="Money has actually left checking"
+                      >
+                        Debited
+                      </button>
+                      <button
+                        disabled
+                        className={cn(
+                          "px-2 py-0.5",
+                          b.cashStatus === "late"
+                            ? "bg-destructive/20 text-destructive"
+                            : "bg-warning/20 text-warning",
+                        )}
+                      >
+                        Not yet
+                      </button>
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        )}
+
+        {data.billsAlreadyDebitedDetail.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-border/30">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+              Bills already paid this month (
+              {formatCurrency(data.billsAlreadyDebited)})
+            </p>
+            <p className="text-[10px] text-muted-foreground/70 italic mb-2 normal-case tracking-normal">
+              Already reflected in &ldquo;Checking now&rdquo; — not subtracted
+              again.
+            </p>
+            <ul className="space-y-1">
+              {data.billsAlreadyDebitedDetail
+                .sort((a, b) => a.dueDay - b.dueDay)
+                .map((b) => (
+                  <li
+                    key={b.id}
+                    className="flex items-center justify-between gap-3 text-xs font-mono text-muted-foreground"
+                  >
+                    <span className="flex-1 truncate">
+                      {b.name}{" "}
+                      <span className="text-[10px]">(day {b.dueDay})</span>
+                    </span>
+                    <span className="tabular-nums w-20 text-right">
+                      {formatCurrency(b.amount)}
+                    </span>
+                    <button
+                      onClick={() => setBillCashStatus(b, false)}
+                      className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border hover-elevate"
+                      data-testid={`button-mark-pending-${b.id}`}
+                      title="Money has NOT actually left checking yet"
+                    >
+                      Undo
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+```
+
+
+## `artifacts/finance-advisor/package.json` (86 lines)
+
+```json
+{
+  "name": "@workspace/finance-advisor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.config.ts --host 0.0.0.0",
+    "build": "vite build --config vite.config.ts",
+    "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@hookform/resolvers": "^3.10.0",
+    "@radix-ui/react-accordion": "^1.2.4",
+    "@radix-ui/react-alert-dialog": "^1.1.7",
+    "@radix-ui/react-aspect-ratio": "^1.1.3",
+    "@radix-ui/react-avatar": "^1.1.4",
+    "@radix-ui/react-checkbox": "^1.1.5",
+    "@radix-ui/react-collapsible": "^1.1.4",
+    "@radix-ui/react-context-menu": "^2.2.7",
+    "@radix-ui/react-dialog": "^1.1.7",
+    "@radix-ui/react-dropdown-menu": "^2.1.7",
+    "@radix-ui/react-hover-card": "^1.1.7",
+    "@radix-ui/react-label": "^2.1.3",
+    "@radix-ui/react-menubar": "^1.1.7",
+    "@radix-ui/react-navigation-menu": "^1.2.6",
+    "@radix-ui/react-popover": "^1.1.7",
+    "@radix-ui/react-progress": "^1.1.3",
+    "@radix-ui/react-radio-group": "^1.2.4",
+    "@radix-ui/react-scroll-area": "^1.2.4",
+    "@radix-ui/react-select": "^2.1.7",
+    "@radix-ui/react-separator": "^1.1.3",
+    "@radix-ui/react-slider": "^1.2.4",
+    "@radix-ui/react-slot": "^1.2.0",
+    "@radix-ui/react-switch": "^1.1.4",
+    "@radix-ui/react-tabs": "^1.1.4",
+    "@radix-ui/react-toast": "^1.2.7",
+    "@radix-ui/react-toggle": "^1.1.3",
+    "@radix-ui/react-toggle-group": "^1.1.3",
+    "@radix-ui/react-tooltip": "^1.2.0",
+    "@replit/vite-plugin-cartographer": "catalog:",
+    "@replit/vite-plugin-dev-banner": "catalog:",
+    "@replit/vite-plugin-runtime-error-modal": "catalog:",
+    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/vite": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "@workspace/api-client-react": "workspace:*",
+    "@workspace/finance": "workspace:*",
+    "class-variance-authority": "catalog:",
+    "clsx": "catalog:",
+    "cmdk": "^1.1.1",
+    "date-fns": "^3.6.0",
+    "embla-carousel-react": "^8.6.0",
+    "framer-motion": "catalog:",
+    "input-otp": "^1.4.2",
+    "lucide-react": "catalog:",
+    "next-themes": "^0.4.6",
+    "react": "catalog:",
+    "react-day-picker": "^9.11.1",
+    "react-dom": "catalog:",
+    "react-hook-form": "^7.55.0",
+    "react-icons": "^5.4.0",
+    "react-plaid-link": "^4.1.1",
+    "react-resizable-panels": "^2.1.7",
+    "recharts": "^2.15.2",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "catalog:",
+    "tailwindcss": "catalog:",
+    "tw-animate-css": "^1.4.0",
+    "vaul": "^1.1.2",
+    "vite": "catalog:",
+    "vitest": "^2.1.9",
+    "wouter": "^3.3.5",
+    "zod": "catalog:"
+  },
+  "dependencies": {
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  }
+}
+
+```

@@ -5,4 +5,22 @@ generated = []
 id = "4OBlzjqKssrvk8nHojc-3"
 uri = "file://exports/reserve-source-bundle.docx"
 type = "word_document"
-title = "Reserve Source Bundle (Word)"
+title = "Source Bundle (Word — may not open in older Word)"
+
+[[outputs]]
+id = "ICt3XKK9o7b5O4N1rvQX_"
+uri = "file://exports/reserve-source-bundle.txt"
+type = "text"
+title = "Source Bundle (plain text — opens anywhere)"
+
+[[outputs]]
+id = "Nx5CD2jqcF-WdiR5z8vW4"
+uri = "file://exports/reserve-source-bundle.md"
+type = "text"
+title = "Source Bundle (Markdown — best for ChatGPT/Claude upload)"
+
+[[outputs]]
+id = "NvIiac-rJD75uoPTSzkGI"
+uri = "file://exports/reserve-source-bundle.tar.gz"
+type = "unspecified"
+title = "Source files archive (.tar.gz — original structure)"
