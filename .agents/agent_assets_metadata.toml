@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "4OBlzjqKssrvk8nHojc-3"
+uri = "file://exports/reserve-source-bundle.docx"
+type = "word_document"
+title = "Reserve Source Bundle (Word)"
