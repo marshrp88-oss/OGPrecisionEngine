@@ -1,3 +1,4 @@
+run = "pnpm run dev"
 modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 
 [deployment]
@@ -9,7 +10,7 @@ args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
-runButton = "Project"
+runButton = "Project"a
 
 [agent]
 stack = "PNPM_WORKSPACE"
