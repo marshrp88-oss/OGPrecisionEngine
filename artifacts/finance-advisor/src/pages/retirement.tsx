@@ -14,15 +14,26 @@ import { AlertTriangle, Save, Info } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency, formatPercent } from "@/lib/utils";
-import { fv, matchGapAnalysis, retirementProjection } from "@/lib/finance-adapter";
+import {
+  fv,
+  matchGapAnalysis,
+  retirementProjection,
+} from "@/lib/finance-adapter";
 
 /** Future value with monthly compounding via the shared engine `fv`. */
-function fvMonthly(pv: number, monthlyPayment: number, annualRate: number, years: number): number {
+function fvMonthly(
+  pv: number,
+  monthlyPayment: number,
+  annualRate: number,
+  years: number,
+): number {
   return fv(annualRate / 12, years * 12, monthlyPayment, pv);
 }
 
 export default function Retirement() {
-  const { data: plan, isLoading } = useGetRetirement({ query: { queryKey: getGetRetirementQueryKey() } });
+  const { data: plan, isLoading } = useGetRetirement({
+    query: { queryKey: getGetRetirementQueryKey() },
+  });
   const upsert = useUpsertRetirement();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -84,7 +95,12 @@ export default function Retirement() {
   const yearsToRetirement = Math.max(0, targetAge - currentAge);
 
   // 401(k) match math via shared engine — single source of truth.
-  const matchGap = matchGapAnalysis(grossSalary, contribRate, matchMultiplier, ceiling);
+  const matchGap = matchGapAnalysis(
+    grossSalary,
+    contribRate,
+    matchMultiplier,
+    ceiling,
+  );
   const matchPctOfGross = matchGap.employerMatchPct;
   const maxMatchPctOfGross = matchGap.maxPossibleMatchPct;
   const annualCaptured = matchGap.annualCaptured;
@@ -96,12 +112,27 @@ export default function Retirement() {
   // FV columns: Current / At Match Cap (=ceiling) / Aggressive (12%)
   const monthlyContribAt = (employeePct: number) => {
     const matched = Math.min(employeePct, ceiling) * matchMultiplier;
-    return ((grossSalary * employeePct) + (grossSalary * matched)) / 12;
+    return (grossSalary * employeePct + grossSalary * matched) / 12;
   };
 
-  const fvCurrent = fvMonthly(currentBalance, monthlyContribAt(contribRate), returnRate, yearsToRetirement);
-  const fvAtMatchCap = fvMonthly(currentBalance, monthlyContribAt(ceiling), returnRate, yearsToRetirement);
-  const fvAggressive = fvMonthly(currentBalance, monthlyContribAt(0.12), returnRate, yearsToRetirement);
+  const fvCurrent = fvMonthly(
+    currentBalance,
+    monthlyContribAt(contribRate),
+    returnRate,
+    yearsToRetirement,
+  );
+  const fvAtMatchCap = fvMonthly(
+    currentBalance,
+    monthlyContribAt(ceiling),
+    returnRate,
+    yearsToRetirement,
+  );
+  const fvAggressive = fvMonthly(
+    currentBalance,
+    monthlyContribAt(0.12),
+    returnRate,
+    yearsToRetirement,
+  );
 
   // $1M Target — use the engine's `retirementProjection.million_monthly_needed`
   // so the same canonical PMT formula (and rounding) is used everywhere.
@@ -116,7 +147,8 @@ export default function Retirement() {
     ceiling,
   );
   const pmt_needed = projection.million_monthly_needed;
-  const requiredSalaryPct = grossSalary > 0 ? (pmt_needed * 12) / grossSalary : 0;
+  const requiredSalaryPct =
+    grossSalary > 0 ? (pmt_needed * 12) / grossSalary : 0;
 
   // Estimated take-home reduction from bumping contribution to ceiling
   const additionalContribPct = Math.max(0, ceiling - contribRate);
@@ -141,11 +173,13 @@ export default function Retirement() {
       },
       {
         onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: getGetRetirementQueryKey() });
+          queryClient.invalidateQueries({
+            queryKey: getGetRetirementQueryKey(),
+          });
           setForm(null);
           toast({ title: "Retirement plan saved" });
         },
-      }
+      },
     );
   };
 
@@ -159,17 +193,26 @@ export default function Retirement() {
           <AlertTitle className="font-bold">401(k) Match Gap Active</AlertTitle>
           <AlertDescription className="font-mono text-sm space-y-1 mt-1">
             <div>
-              Contributing {formatPercent(contribRate)} vs {formatPercent(ceiling)} employee contribution ceiling.
+              Contributing {formatPercent(contribRate)} vs{" "}
+              {formatPercent(ceiling)} employee contribution ceiling.
             </div>
             <div>
-              <span className="font-bold">{formatCurrency(annualGap)}/year</span> ({formatCurrency(monthlyGap)}/mo) in
-              free employer match uncaptured.
+              <span className="font-bold">
+                {formatCurrency(annualGap)}/year
+              </span>{" "}
+              ({formatCurrency(monthlyGap)}/mo) in free employer match
+              uncaptured.
             </div>
-            <div>To capture the full match, increase your contribution to {formatPercent(ceiling)} of gross.</div>
+            <div>
+              To capture the full match, increase your contribution to{" "}
+              {formatPercent(ceiling)} of gross.
+            </div>
             <div className="text-xs text-amber-800/70 dark:text-amber-300/70 pt-1">
-              Bumping from {formatPercent(contribRate)} to {formatPercent(ceiling)} adds{" "}
-              {formatCurrency(additionalMonthlyPretax)}/mo pre-tax. Estimated take-home reduction:{" "}
-              {formatCurrency(takeHomeReduction)}/mo (at 28.5% marginal rate).
+              Bumping from {formatPercent(contribRate)} to{" "}
+              {formatPercent(ceiling)} adds{" "}
+              {formatCurrency(additionalMonthlyPretax)}/mo pre-tax. Estimated
+              take-home reduction: {formatCurrency(takeHomeReduction)}/mo (at
+              28.5% marginal rate).
             </div>
           </AlertDescription>
         </Alert>
@@ -187,13 +230,17 @@ export default function Retirement() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-muted/50 p-4 rounded text-center">
               <div className="text-xs text-muted-foreground uppercase mb-2 font-mono">
-                Current ({formatPercent(contribRate)} + {formatPercent(matchPctOfGross)} match)
+                Current ({formatPercent(contribRate)} +{" "}
+                {formatPercent(matchPctOfGross)} match)
               </div>
-              <div className="text-2xl font-bold font-mono">{formatCurrency(fvCurrent)}</div>
+              <div className="text-2xl font-bold font-mono">
+                {formatCurrency(fvCurrent)}
+              </div>
             </div>
             <div className="bg-emerald-50 dark:bg-emerald-950/30 p-4 rounded text-center border-2 border-emerald-500/30">
               <div className="text-xs text-muted-foreground uppercase mb-2 font-mono">
-                At Match Cap ({formatPercent(ceiling)} + {formatPercent(maxMatchPctOfGross)} match)
+                At Match Cap ({formatPercent(ceiling)} +{" "}
+                {formatPercent(maxMatchPctOfGross)} match)
               </div>
               <div className="text-2xl font-bold font-mono text-emerald-700 dark:text-emerald-400">
                 {formatCurrency(fvAtMatchCap)}
@@ -201,7 +248,8 @@ export default function Retirement() {
             </div>
             <div className="bg-blue-50 dark:bg-blue-950/30 p-4 rounded text-center">
               <div className="text-xs text-muted-foreground uppercase mb-2 font-mono">
-                Aggressive (12% + {formatPercent(maxMatchPctOfGross)} capped match)
+                Aggressive (12% + {formatPercent(maxMatchPctOfGross)} capped
+                match)
               </div>
               <div className="text-2xl font-bold font-mono text-blue-700 dark:text-blue-400">
                 {formatCurrency(fvAggressive)}
@@ -218,22 +266,36 @@ export default function Retirement() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4 font-mono text-sm">
             <div className="p-3 bg-muted/50 rounded">
-              <div className="text-xs text-muted-foreground uppercase mb-1">Years to Retirement</div>
+              <div className="text-xs text-muted-foreground uppercase mb-1">
+                Years to Retirement
+              </div>
               <div className="text-xl font-bold">
                 {yearsToRetirement} year{yearsToRetirement === 1 ? "" : "s"}
               </div>
             </div>
             <div className="p-3 bg-muted/50 rounded">
-              <div className="text-xs text-muted-foreground uppercase mb-1">Required Monthly Contribution</div>
-              <div className="text-xl font-bold">{formatCurrency(pmt_needed)}</div>
+              <div className="text-xs text-muted-foreground uppercase mb-1">
+                Required Monthly Contribution
+              </div>
+              <div className="text-xl font-bold">
+                {formatCurrency(pmt_needed)}
+              </div>
             </div>
             <div className="p-3 bg-muted/50 rounded">
-              <div className="text-xs text-muted-foreground uppercase mb-1">Required Salary %</div>
-              <div className="text-xl font-bold">{formatPercent(requiredSalaryPct)}</div>
+              <div className="text-xs text-muted-foreground uppercase mb-1">
+                Required Salary %
+              </div>
+              <div className="text-xl font-bold">
+                {formatPercent(requiredSalaryPct)}
+              </div>
             </div>
             <div className="p-3 bg-muted/50 rounded">
-              <div className="text-xs text-muted-foreground uppercase mb-1">Current Balance</div>
-              <div className="text-xl font-bold">{formatCurrency(currentBalance)}</div>
+              <div className="text-xs text-muted-foreground uppercase mb-1">
+                Current Balance
+              </div>
+              <div className="text-xl font-bold">
+                {formatCurrency(currentBalance)}
+              </div>
             </div>
           </div>
         </CardContent>
@@ -241,16 +303,97 @@ export default function Retirement() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Roth IRA</CardTitle>
+          <CardTitle>Roth IRA (Schwab)</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm space-y-2">
-          <div className="flex items-start gap-2 text-muted-foreground">
-            <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
-            <div>
-              Roth IRA opened at Schwab — not yet funded. 2025 contribution deadline has passed. 2026 contribution
-              window: Jan 1, 2026 – Apr 15, 2027. Limit: $7,000.
-            </div>
-          </div>
+        <CardContent className="space-y-4">
+          {(() => {
+            const ROTH_YTD_2026 = 0;
+            const ROTH_LIMIT_2026 = 7000;
+            const ROTH_DEADLINE = new Date("2027-04-15");
+            const today = new Date();
+            const daysToDeadline = Math.max(
+              0,
+              Math.ceil(
+                (ROTH_DEADLINE.getTime() - today.getTime()) /
+                  (1000 * 60 * 60 * 24),
+              ),
+            );
+            const roomRemaining = Math.max(0, ROTH_LIMIT_2026 - ROTH_YTD_2026);
+            const rothFV = fvMonthly(
+              0,
+              roomRemaining / 12,
+              returnRate,
+              yearsToRetirement,
+            );
+            const combinedFV = fvAtMatchCap + rothFV;
+            const monthlyToMaxOut =
+              daysToDeadline > 0
+                ? roomRemaining / Math.max(1, daysToDeadline / 30.44)
+                : 0;
+
+            return (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-sm">
+                  <div className="p-3 bg-muted/50 rounded">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">
+                      2026 Contribution Room
+                    </div>
+                    <div className="text-xl font-bold">
+                      {formatCurrency(roomRemaining)}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {formatCurrency(ROTH_YTD_2026)} of{" "}
+                      {formatCurrency(ROTH_LIMIT_2026)} used
+                    </div>
+                  </div>
+                  <div className="p-3 bg-muted/50 rounded">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">
+                      Days to Deadline
+                    </div>
+                    <div className="text-xl font-bold">{daysToDeadline}</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Apr 15, 2027 cutoff for 2026 contributions
+                    </div>
+                  </div>
+                  <div className="p-3 bg-blue-50 dark:bg-blue-950/30 rounded border-2 border-blue-500/30">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">
+                      Roth FV at Age {targetAge} (if maxed)
+                    </div>
+                    <div className="text-xl font-bold font-mono text-blue-700 dark:text-blue-400">
+                      {formatCurrency(rothFV)}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Tax-free at withdrawal
+                    </div>
+                  </div>
+                  <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 rounded border-2 border-emerald-500/30">
+                    <div className="text-xs text-muted-foreground uppercase mb-1">
+                      401(k) + Roth Combined FV
+                    </div>
+                    <div className="text-xl font-bold font-mono text-emerald-700 dark:text-emerald-400">
+                      {formatCurrency(combinedFV)}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      At match cap + maxed Roth
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2 text-muted-foreground text-sm pt-2 border-t border-border">
+                  <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <div>
+                    To fully fund 2026 Roth before the deadline, contribute
+                    approximately{" "}
+                    <span className="font-bold font-mono text-foreground">
+                      {formatCurrency(monthlyToMaxOut)}/mo
+                    </span>{" "}
+                    across the remaining {daysToDeadline} days. Roth
+                    contributions are post-tax and grow tax-free — they do not
+                    appear in the 401(k) match calculation above.
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </CardContent>
       </Card>
 
@@ -264,8 +407,14 @@ export default function Retirement() {
               [
                 ["grossSalary", "Gross Salary ($)"],
                 ["contributionRate", "Your Contribution Rate (e.g. 0.04 = 4%)"],
-                ["matchMultiplier", "Employer Match Multiplier (e.g. 0.50 = 50% of employee %)"],
-                ["employeeContributionCeiling", "Employee Contribution Ceiling (e.g. 0.08 = match up to 8%)"],
+                [
+                  "matchMultiplier",
+                  "Employer Match Multiplier (e.g. 0.50 = 50% of employee %)",
+                ],
+                [
+                  "employeeContributionCeiling",
+                  "Employee Contribution Ceiling (e.g. 0.08 = match up to 8%)",
+                ],
                 ["currentBalance", "Current Balance ($)"],
                 ["currentAge", "Current Age"],
                 ["targetAge", "Target Retirement Age"],
@@ -290,7 +439,11 @@ export default function Retirement() {
               </div>
             ))}
           </div>
-          <Button onClick={handleSave} disabled={upsert.isPending} data-testid="button-save-retirement">
+          <Button
+            onClick={handleSave}
+            disabled={upsert.isPending}
+            data-testid="button-save-retirement"
+          >
             <Save className="mr-2 h-4 w-4" />
             Save Parameters
           </Button>
