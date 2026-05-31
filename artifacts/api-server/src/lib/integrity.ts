@@ -128,30 +128,6 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     });
   }
 
-  const carLoanBill = allBills.find(
-    (b) =>
-      b.name.toLowerCase().includes("car loan") ||
-      b.name.toLowerCase().includes("car payment"),
-  );
-  if (carLoanBill && carLoanBill.includeInCycle) {
-    checks.push({
-      checkNumber: 5,
-      description: "Car loan eliminated (Include=FALSE)",
-      status: "warn",
-      detail:
-        "Car loan bill has Include=TRUE. If lien was paid March 2026, set Include=FALSE.",
-    });
-  } else {
-    checks.push({
-      checkNumber: 5,
-      description: "Car loan status",
-      status: "pass",
-      detail: carLoanBill
-        ? "Car loan bill exists with Include=FALSE (correct)."
-        : "No car loan bill found (OK if eliminated).",
-    });
-  }
-
   const [alertRow] = await db
     .select()
     .from(assumptions)
@@ -159,14 +135,14 @@ async function runChecks(): Promise<IntegrityCheck[]> {
   const alertThreshold = alertRow ? parseFloat(alertRow.value) : 0;
   if (!alertRow || alertThreshold <= 0) {
     checks.push({
-      checkNumber: 6,
+      checkNumber: 5,
       description: "Alert threshold configured",
       status: "warn",
       detail: "Alert threshold not set. Default $400. Configure in Settings.",
     });
   } else {
     checks.push({
-      checkNumber: 6,
+      checkNumber: 5,
       description: "Alert threshold configured",
       status: "pass",
       detail: `YELLOW threshold: $${alertThreshold}.`,
@@ -179,7 +155,7 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     .where(eq(assumptions.key, "variable_spend_cap"));
   if (!varCapRow || parseFloat(varCapRow.value) <= 0) {
     checks.push({
-      checkNumber: 7,
+      checkNumber: 6,
       description: "Variable spend cap configured",
       status: "warn",
       detail:
@@ -187,7 +163,7 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     });
   } else {
     checks.push({
-      checkNumber: 7,
+      checkNumber: 6,
       description: "Variable spend cap configured",
       status: "pass",
       detail: `Variable cap: $${parseFloat(varCapRow.value)}/mo.`,
@@ -200,14 +176,14 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     .where(eq(assumptions.key, "hysa_target"));
   if (!hysaTargetRow || parseFloat(hysaTargetRow.value) <= 0) {
     checks.push({
-      checkNumber: 8,
+      checkNumber: 7,
       description: "HYSA target configured",
       status: "warn",
       detail: "HYSA target not set. Default $15,000. Configure in Settings.",
     });
   } else {
     checks.push({
-      checkNumber: 8,
+      checkNumber: 7,
       description: "HYSA target configured",
       status: "pass",
       detail: `HYSA target: $${parseFloat(hysaTargetRow.value).toLocaleString()}.`,
@@ -217,7 +193,7 @@ async function runChecks(): Promise<IntegrityCheck[]> {
   const [ret] = await db.select().from(retirementPlan).limit(1);
   if (!ret) {
     checks.push({
-      checkNumber: 9,
+      checkNumber: 8,
       description: "Retirement plan configured",
       status: "warn",
       detail: "No retirement plan configured. Go to Retirement Planning.",
@@ -227,14 +203,14 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     const matchCap = parseFloat(ret.employerMatchCap) * 100;
     if (contribRate < matchCap) {
       checks.push({
-        checkNumber: 9,
+        checkNumber: 8,
         description: "401(k) match captured",
         status: "warn",
         detail: `Contributing ${contribRate}% vs ${matchCap}% match cap. $540/yr in free money uncaptured.`,
       });
     } else {
       checks.push({
-        checkNumber: 9,
+        checkNumber: 8,
         description: "401(k) match captured",
         status: "pass",
         detail:
@@ -250,14 +226,14 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     .limit(1);
   if (!playbook) {
     checks.push({
-      checkNumber: 10,
+      checkNumber: 9,
       description: "Playbook loaded",
       status: "warn",
       detail: "No playbook version found.",
     });
   } else {
     checks.push({
-      checkNumber: 10,
+      checkNumber: 9,
       description: "Playbook loaded",
       status: "pass",
       detail: `Playbook v${playbook.version} loaded.`,
@@ -278,7 +254,7 @@ async function runChecks(): Promise<IntegrityCheck[]> {
 
     if (holdDelta > CENT || safeDelta > CENT) {
       checks.push({
-        checkNumber: 11,
+        checkNumber: 10,
         description: "Cycle math invariant",
         status: "fail",
         detail: `Engine drift detected. RequiredHold delta $${holdDelta.toFixed(2)}, SafeToSpend delta $${safeDelta.toFixed(2)}. computeCycleState and computeRequiredHold disagree — this should be impossible since they share a code path.`,
@@ -286,14 +262,14 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     } else if (cycle.checkingBalance < hold.totalRequiredHold) {
       const underBy = hold.totalRequiredHold - cycle.checkingBalance;
       checks.push({
-        checkNumber: 11,
+        checkNumber: 10,
         description: "Cycle math invariant",
         status: "fail",
         detail: `Underwater by $${underBy.toFixed(2)}. Required Hold ($${hold.totalRequiredHold.toFixed(2)}) exceeds checking balance ($${cycle.checkingBalance.toFixed(2)}). Safe-to-Spend clamped to $0; this cycle cannot fund itself.`,
       });
     } else {
       checks.push({
-        checkNumber: 11,
+        checkNumber: 10,
         description: "Cycle math invariant",
         status: "pass",
         detail: `Checking $${cycle.checkingBalance.toFixed(2)} = Required Hold $${hold.totalRequiredHold.toFixed(2)} + Safe-to-Spend $${hold.safeToSpend.toFixed(2)}. Engine and canonical hold agree (delta $0.00). Forward Reserve label: $${hold.forwardReserveLabel.toFixed(2)} (subset of bills already in hold, not a separate addend).`,
@@ -301,7 +277,7 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     }
   } catch (err) {
     checks.push({
-      checkNumber: 11,
+      checkNumber: 10,
       description: "Cycle math invariant",
       status: "fail",
       detail: `Could not verify invariant: ${err instanceof Error ? err.message : String(err)}`,
@@ -334,21 +310,21 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     const pacePct = Math.round(pace * 100);
     if (pace > 1.5) {
       checks.push({
-        checkNumber: 12,
+        checkNumber: 11,
         description: "Variable burn pace",
         status: "fail",
         detail: `Burning at ${pacePct}% of pace. Spent $${actual.toFixed(2)} MTD vs $${expectedByNow.toFixed(2)} expected by day ${dayOfMonth}/${daysInMonth}. Cap will blow.`,
       });
     } else if (pace > 1.1) {
       checks.push({
-        checkNumber: 12,
+        checkNumber: 11,
         description: "Variable burn pace",
         status: "warn",
         detail: `Burning at ${pacePct}% of pace. Spent $${actual.toFixed(2)} MTD vs $${expectedByNow.toFixed(2)} expected by day ${dayOfMonth}/${daysInMonth}. Pull back.`,
       });
     } else {
       checks.push({
-        checkNumber: 12,
+        checkNumber: 11,
         description: "Variable burn pace",
         status: "pass",
         detail: `On pace at ${pacePct}%. Spent $${actual.toFixed(2)} MTD of $${cap.toFixed(2)}/mo cap (day ${dayOfMonth}/${daysInMonth}).`,
@@ -356,7 +332,7 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     }
   } catch (err) {
     checks.push({
-      checkNumber: 12,
+      checkNumber: 11,
       description: "Variable burn pace",
       status: "skip",
       detail: `Could not compute pace: ${err instanceof Error ? err.message : String(err)}`,
@@ -376,7 +352,7 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     const fixedTotal = monthBills.reduce((s, b) => s + b.amount, 0);
     if (netIncome <= 0) {
       checks.push({
-        checkNumber: 13,
+        checkNumber: 12,
         description: "Fixed-to-income ratio",
         status: "skip",
         detail: "Net income not configured; cannot compute ratio.",
@@ -386,21 +362,21 @@ async function runChecks(): Promise<IntegrityCheck[]> {
       const pct = Math.round(ratio * 100);
       if (ratio > 0.65) {
         checks.push({
-          checkNumber: 13,
+          checkNumber: 12,
           description: "Fixed-to-income ratio",
           status: "fail",
           detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Target ≤50%. Cycle is brittle.`,
         });
       } else if (ratio > 0.5) {
         checks.push({
-          checkNumber: 13,
+          checkNumber: 12,
           description: "Fixed-to-income ratio",
           status: "warn",
           detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Above 50% target.`,
         });
       } else {
         checks.push({
-          checkNumber: 13,
+          checkNumber: 12,
           description: "Fixed-to-income ratio",
           status: "pass",
           detail: `Fixed obligations ${pct}% of net income ($${fixedTotal.toFixed(2)} of $${netIncome.toFixed(2)}). Within 50% target.`,
@@ -409,7 +385,7 @@ async function runChecks(): Promise<IntegrityCheck[]> {
     }
   } catch (err) {
     checks.push({
-      checkNumber: 13,
+      checkNumber: 12,
       description: "Fixed-to-income ratio",
       status: "skip",
       detail: `Could not compute ratio: ${err instanceof Error ? err.message : String(err)}`,
