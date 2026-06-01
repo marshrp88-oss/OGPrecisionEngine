@@ -11,6 +11,7 @@ import {
   LandPlot,
   PiggyBank,
   ClipboardList,
+  Scale,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ const MORE_ALL = [
   { href: "/one-time", label: "One-Time", icon: ClipboardList },
   { href: "/scenarios", label: "Scenarios", icon: TestTube },
   { href: "/wealth", label: "Wealth", icon: Landmark },
+  { href: "/decisions", label: "Compare", icon: Scale },
   { href: "/debt", label: "Debt", icon: LandPlot },
   { href: "/retirement", label: "Retirement", icon: PiggyBank },
   { href: "/settings", label: "Settings", icon: Settings },

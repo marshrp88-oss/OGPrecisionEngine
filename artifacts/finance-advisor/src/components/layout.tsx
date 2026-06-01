@@ -11,6 +11,7 @@ import {
   MessageSquare,
   Settings,
   ClipboardList,
+  Scale,
   Menu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,7 @@ const ALL_NAV_ITEMS = [
   { href: "/commissions", label: "Commissions", icon: LineChart },
   { href: "/scenarios", label: "Scenarios", icon: TestTube },
   { href: "/wealth", label: "Wealth", icon: Landmark },
+  { href: "/decisions", label: "Purchase Comparison", icon: Scale },
   { href: "/debt", label: "Debt Strategy", icon: LandPlot },
   { href: "/retirement", label: "Retirement", icon: PiggyBank },
   { href: "/advisor", label: "AI Advisor", icon: MessageSquare },

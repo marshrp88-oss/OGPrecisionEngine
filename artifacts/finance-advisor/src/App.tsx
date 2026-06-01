@@ -14,6 +14,7 @@ import Bills from "@/pages/bills";
 import Commissions from "@/pages/commissions";
 import Scenarios from "@/pages/scenarios";
 import Wealth from "@/pages/wealth";
+import Decisions from "@/pages/decisions";
 import Debt from "@/pages/debt";
 import OneTimeExpenses from "@/pages/one-time";
 import Retirement from "@/pages/retirement";
@@ -57,6 +58,7 @@ function Router() {
         {/* Backward-compat alias for the old /sandbox route */}
         <Route path="/sandbox" component={ScenariosRoute} />
         <Route path="/wealth" component={Wealth} />
+        <Route path="/decisions" component={Decisions} />
         <Route path="/debt" component={Debt} />
         <Route path="/retirement" component={Retirement} />
         <Route path="/advisor" component={Advisor} />
