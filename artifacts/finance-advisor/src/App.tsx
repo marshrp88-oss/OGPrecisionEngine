@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/layout";
 import { useScenariosEnabled } from "@/hooks/use-scenarios-enabled";
+import { isDemoEnabled, installDemoFetch } from "@/lib/demo/demo-mode";
 
 // Pages
 import Dashboard from "@/pages/dashboard";
@@ -20,6 +21,11 @@ import Advisor from "@/pages/advisor";
 import Settings from "@/pages/settings";
 
 const queryClient = new QueryClient();
+
+// Demo Mode persists in localStorage. If it was left ON, install the
+// frontend-only fetch interceptor at module load — before any query fires —
+// so the very first render is served the synthetic dataset, never the live DB.
+if (isDemoEnabled()) installDemoFetch(queryClient);
 
 /**
  * Route guard for the Scenarios workspace.

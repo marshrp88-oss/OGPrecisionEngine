@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Save } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { BankConnections } from "@/components/BankConnections";
+import { useDemoMode } from "@/hooks/use-demo-mode";
 
 interface AssumptionMeta {
   label: string;
@@ -86,6 +87,7 @@ export default function Settings() {
   const updateAssumption = useUpdateAssumption();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { enabled: demoEnabled, setEnabled: setDemoEnabled } = useDemoMode();
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<Record<string, boolean>>({});
 
@@ -145,6 +147,16 @@ export default function Settings() {
     );
   };
 
+  const handleDemoToggle = (next: boolean) => {
+    setDemoEnabled(next);
+    toast({
+      title: next ? "Demo Mode ON — showing sample data" : "Demo Mode OFF — back to live data",
+      description: next
+        ? "Edits stay in your browser and never touch the database."
+        : undefined,
+    });
+  };
+
   return (
     <div className="space-y-6 max-w-3xl mx-auto" data-testid="settings-root">
       <div>
@@ -155,6 +167,34 @@ export default function Settings() {
       </div>
 
       <BankConnections />
+
+      {/* Demo Mode — frontend-only sandbox. Independent of Scenarios below. */}
+      <Card data-testid="settings-group-demo" className={demoEnabled ? "border-amber-400" : undefined}>
+        <CardHeader>
+          <CardTitle>Demo Mode</CardTitle>
+          <CardDescription>
+            Swap the entire app to an obviously-fake sample dataset (Wayne Enterprises, Phoenix Capital…).
+            You can edit anything and watch the numbers recalculate — but nothing is saved and the database is never touched.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="demo-toggle" className="font-semibold">Use sample data</Label>
+              <p className="text-xs text-muted-foreground">
+                When on, a banner appears across the app and all reads/writes are intercepted in-browser.
+                Turning it off restores your live data instantly. Resets each time it's enabled.
+              </p>
+            </div>
+            <Switch
+              id="demo-toggle"
+              checked={demoEnabled}
+              onCheckedChange={handleDemoToggle}
+              data-testid="switch-demo-enabled"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {GROUPS.map((group) => {
         const presentKeys = group.keys.filter((k) => allAssumptions.some((a) => a.key === k));

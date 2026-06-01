@@ -19,6 +19,7 @@ import { IntegrityChip } from "@/components/integrity-chip";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { SessionStartChecklist } from "@/components/session-start-checklist";
 import { useScenariosEnabled } from "@/hooks/use-scenarios-enabled";
+import { useDemoMode } from "@/hooks/use-demo-mode";
 
 const ALL_NAV_ITEMS = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
@@ -78,6 +79,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const scenariosEnabled = useScenariosEnabled();
+  const { enabled: demoEnabled } = useDemoMode();
 
   const navItems = scenariosEnabled
     ? ALL_NAV_ITEMS
@@ -109,6 +111,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+        {/* Demo Mode banner — high-contrast, persistent, impossible to miss.
+            Makes it unmistakable that every figure on screen is fake. */}
+        {demoEnabled && (
+          <div
+            className="shrink-0 bg-amber-400 text-black text-center text-xs font-bold uppercase tracking-widest py-1.5 px-3 border-b-2 border-amber-600"
+            data-testid="demo-mode-banner"
+            role="status"
+          >
+            ⚠ Demo Mode — Sample Data · Nothing Saved
+          </div>
+        )}
         {/* Mobile Header with hamburger + IntegrityChip */}
         <header
           className="h-14 border-b border-border flex items-center gap-2 px-3 md:hidden bg-card shrink-0"
