@@ -215,10 +215,6 @@ function statusTextClass(s: CycleStatus): string {
 // ---------------------------------------------------------------------------
 
 export default function Dashboard() {
-  // Demo mode toggle — for interviews/portfolio demos.
-  // When ON, the Dashboard renders a hardcoded healthy snapshot.
-  // State is in-memory only — resets on page reload.
-  const [demoMode, setDemoMode] = useState(false);
   const {
     data: cycle,
     isLoading,
@@ -271,24 +267,8 @@ export default function Dashboard() {
   const status = asCycleStatus(cycle.status);
   const billsInCycle = (bills ?? []).filter((b) => b.countsThisCycle);
 
-  // Early return for demo mode — shows the dashboard in a healthy state.
-  // The toggle button is rendered inside DemoDashboard so user can toggle off.
-  if (demoMode) {
-    return <DemoDashboard onExitDemo={() => setDemoMode(false)} />;
-  }
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      {/* Demo Mode toggle — small button top-right for showing the app in a healthy state */}
-      <div className="flex justify-end relative z-10">
-        <button
-          type="button"
-          onClick={() => setDemoMode(true)}
-          className="text-xs font-mono uppercase tracking-wider px-3 py-1.5 rounded border border-border bg-card text-muted-foreground hover:text-foreground hover:border-foreground transition-colors cursor-pointer"
-          title="Show the dashboard in a healthy demo state"
-        >
-          Demo
-        </button>
-      </div>
       {/* ZONE 1 — SITUATION (above the fold, first primary content) */}
       <SituationBlock
         cycle={cycle}
@@ -2611,142 +2591,5 @@ function CashPositionCard() {
         )}
       </div>
     </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Demo Dashboard — hardcoded healthy state for interview demos.
-// Renders the same visual structure as the real Dashboard with green
-// numbers throughout. Toggle off via the "Exit Demo" button.
-// ---------------------------------------------------------------------------
-
-function DemoDashboard({ onExitDemo }: { onExitDemo: () => void }) {
-  // Hardcoded healthy snapshot
-  const demoCycle: CycleData = {
-    checkingBalance: 3200,
-    lastBalanceUpdate: new Date().toISOString(),
-    nextPayday: new Date(Date.now() + 7 * 86400000).toISOString(),
-    daysSinceUpdate: 0,
-    isStale: false,
-    daysUntilPayday: 7,
-    billsDueBeforePayday: 1423.57,
-    pendingHoldsReserve: 0,
-    minimumCushion: 0,
-    oneTimeDueBeforePayday: 0,
-    totalRequiredHold: 1423.57,
-    quicksilverOwed: 0,
-    pendingBillsOwed: 0,
-    forwardReserveBillsTotal: 1423.57,
-    safeToSpend: 1776.43,
-    safeToSpendPreFloor: 1776.43,
-    overCommittedBy: 0,
-    dailyRateFromUpdate: 253.78,
-    dailyRateRealTime: 253.78,
-    daysOfCoverage: 7,
-    variableSpendUntilPayday: 0,
-    remainingDiscretionary: 1776.43,
-    status: "GREEN",
-    paydayRisk: false,
-    forwardReserve: 1423.57,
-    alertThreshold: 400,
-  };
-
-  const demoDiscipline = {
-    fixedMonthlyTotal: 1833.95,
-    fixedRatio: 0.43,
-    fixedRatioStatus: "green" as const,
-    variableBurnPace: 0.85,
-    variableBurnPaceStatus: "green" as const,
-    expectedVariableByNow: 500,
-    savingsRate: 0.52,
-    savingsRateStatus: "green" as const,
-    dayOfMonth: 15,
-    daysInMonth: 30,
-  };
-
-  return (
-    <div className="space-y-6 max-w-6xl mx-auto">
-      {/* Demo mode indicator + exit button */}
-      <div className="flex justify-between items-center">
-        <div className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-wider px-2 py-1 rounded bg-warning/15 text-warning border border-warning/30">
-          <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
-          Demo Mode
-        </div>
-        <button
-          type="button"
-          onClick={onExitDemo}
-          className="text-xs font-mono uppercase tracking-wider px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground hover:border-foreground transition-colors"
-          title="Return to live data"
-        >
-          Exit Demo
-        </button>
-      </div>
-
-      {/* Situation block — same structure, demo data */}
-      <SituationBlock
-        cycle={demoCycle}
-        discretionary={undefined}
-        status="GREEN"
-      />
-
-      {/* Discipline strip — all green */}
-      <DisciplineStrip d={demoDiscipline} />
-
-      {/* Action row — fully functional, but interviewer is unlikely to click during demo */}
-      <ActionRow />
-
-      {/* Demo Cash Position card — hardcoded healthy state */}
-      <section
-        className="rounded-xl bg-card overflow-hidden border border-border border-l-4 border-l-success"
-        data-testid="demo-cash-position-card"
-      >
-        <div className="p-6">
-          <div className="flex items-baseline justify-between mb-4">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
-                Available to Move to HYSA / Investments
-              </p>
-              <p className="text-[10px] text-muted-foreground/70 mt-1">
-                The dollar amount you can safely sweep to savings or brokerage
-                right now without bouncing a known obligation AND while still
-                funding the planned variable spend for the rest of the month.
-              </p>
-            </div>
-            <div className="text-right">
-              <h3 className="text-4xl font-bold font-mono tracking-tighter text-success">
-                {formatCurrency(1646.43)}
-              </h3>
-            </div>
-          </div>
-
-          <div className="space-y-1.5 font-mono text-sm border-t border-border/30 pt-3">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Checking now</span>
-              <span>{formatCurrency(3200)}</span>
-            </div>
-            <div className="flex justify-between text-destructive">
-              <span>− Bills due before next payday</span>
-              <span>−{formatCurrency(1423.57)}</span>
-            </div>
-            <div className="flex justify-between font-medium border-t border-border/30 pt-2 mt-1">
-              <span>= Reserve-aware balance (Checking − Required Hold)</span>
-              <span>{formatCurrency(1776.43)}</span>
-            </div>
-            <div className="flex justify-between text-destructive">
-              <span>− Variable reserved (R)</span>
-              <span>−{formatCurrency(0)}</span>
-            </div>
-            <div className="flex justify-between text-destructive">
-              <span>− Early next-month variable (days 1–7)</span>
-              <span>−{formatCurrency(130)}</span>
-            </div>
-            <div className="flex justify-between font-bold border-t border-border/30 pt-2 mt-1 text-success">
-              <span>= Available to move to HYSA / investments</span>
-              <span>{formatCurrency(1646.43)}</span>
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
   );
 }
