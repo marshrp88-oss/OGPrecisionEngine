@@ -10,6 +10,8 @@ import {
   useGetBalances,
   getGetBalancesQueryKey,
   useCreateBalance,
+  useGetRetirement,
+  getGetRetirementQueryKey,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,16 +21,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, TrendingUp, TrendingDown } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { netWorthProjection } from "@/lib/finance-adapter";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 
 const HYSA_TARGET = 15000;
+const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// PROJECTION_AGES / CURRENT_AGE / REAL_RETURN were used by the FvProjections
-// component which has been removed. They will return when the projection is
-// rebuilt on top of Discretionary in a later task.
+// Projection horizons (years from now). The sealed engine's
+// `netWorthProjection` does the FV math; we just choose milestone horizons and
+// a yearly series for the chart. See engine.ts `netWorthProjection`.
+const MILESTONE_YEARS = [5, 10, 15, 25];
+const PROJECTION_YEARS = 25;
 
 export default function Wealth() {
   const { data: snapshots, isLoading } = useGetWealthSnapshots({ query: { queryKey: getGetWealthSnapshotsQueryKey() } });
@@ -134,9 +140,9 @@ export default function Wealth() {
         </Card>
       )}
 
-      {/* Savings Rate + FV projections that depended on the old monthly-savings
-          response are removed for now. FV projections will be re-added in a
-          later task using current Discretionary derived from the cycle. */}
+      {latestSnapshot && (
+        <NetWorthProjectionCard currentNetWorth={latestSnapshot.netWorth} />
+      )}
 
       {chartData.length > 1 && (
         <Card>
@@ -242,6 +248,80 @@ export default function Wealth() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Net Worth Projection — surfaces the sealed engine's `netWorthProjection`.
+// Inputs: current net worth (latest snapshot), monthly savings (live
+// Discretionary), and starting age + return assumption (Retirement plan).
+// All compounding math lives in the engine; this only chooses horizons and
+// renders. Works in Demo Mode (the fetch interceptor serves all three).
+// ---------------------------------------------------------------------------
+function NetWorthProjectionCard({ currentNetWorth }: { currentNetWorth: number }) {
+  const { data: retirement } = useGetRetirement({
+    query: { queryKey: getGetRetirementQueryKey() },
+  });
+  const { data: discretionary } = useQuery<{ monthlySavings: number }>({
+    queryKey: ["dashboard-discretionary"],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/dashboard/discretionary`);
+      if (!r.ok) throw new Error("Failed to load discretionary");
+      return r.json();
+    },
+  });
+
+  // Need both the savings rate and the starting age before projecting.
+  if (!discretionary || !retirement) return null;
+
+  const monthlySavings = Math.max(0, discretionary.monthlySavings ?? 0);
+  const currentAge = retirement.currentAge ?? 30;
+  const returnRate = retirement.returnAssumption ?? 0.07;
+
+  // Yearly trajectory for the chart — the engine does the compounding.
+  const yearlyAges = Array.from({ length: PROJECTION_YEARS + 1 }, (_, i) => currentAge + i);
+  const yearlySeries = netWorthProjection(currentNetWorth, monthlySavings, currentAge, yearlyAges, returnRate);
+  const chartData = yearlyAges.map((age) => ({ label: `${age}`, netWorth: Math.round(yearlySeries[age]) }));
+
+  // Milestone snapshots for the headline cards.
+  const milestoneAges = MILESTONE_YEARS.map((y) => currentAge + y);
+  const milestones = netWorthProjection(currentNetWorth, monthlySavings, currentAge, milestoneAges, returnRate);
+
+  return (
+    <Card data-testid="card-net-worth-projection">
+      <CardHeader>
+        <CardTitle>Net Worth Projection</CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Compounding today&apos;s net worth ({formatCurrency(currentNetWorth)}) plus{" "}
+          {formatCurrency(monthlySavings)}/mo of savings at {(returnRate * 100).toFixed(0)}% annually,
+          starting at age {currentAge}.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {monthlySavings <= 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No monthly savings detected, so the projection only reflects compounding on the current
+            balance. Increase discretionary savings to see growth.
+          </p>
+        ) : null}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {milestoneAges.map((age, i) => (
+            <div key={age} className="rounded-lg border border-border p-3" data-testid={`projection-milestone-${age}`}>
+              <div className="text-xs text-muted-foreground">+{MILESTONE_YEARS[i]} yrs · age {age}</div>
+              <div className="text-lg font-bold font-mono">{formatCurrency(milestones[age])}</div>
+            </div>
+          ))}
+        </div>
+        <ResponsiveContainer width="100%" height={220}>
+          <LineChart data={chartData}>
+            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+            <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} tick={{ fontSize: 12 }} />
+            <Tooltip formatter={(v: number) => formatCurrency(v)} labelFormatter={(l) => `Age ${l}`} />
+            <Line type="monotone" dataKey="netWorth" stroke="hsl(var(--primary))" strokeWidth={2} strokeDasharray="5 4" dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
   );
 }
 

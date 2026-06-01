@@ -14,6 +14,9 @@ import {
   fvAnnual,
   matchGapAnalysis,
   retirementProjection,
+  netWorthProjection,
+  decisionSandboxCompare,
+  PurchaseOption,
   droughtSurvivalRunway,
   incomeReplacementFloor,
   incomeGrowthScenario,
@@ -28,6 +31,7 @@ import {
   type IncomeGrowthResult,
   type MatchGapResult,
   type RetirementProjectionResult,
+  type PurchaseComparisonResult,
 } from "@workspace/finance";
 
 export {
@@ -36,6 +40,9 @@ export {
   fvAnnual,
   matchGapAnalysis,
   retirementProjection,
+  netWorthProjection,
+  decisionSandboxCompare,
+  PurchaseOption,
   droughtSurvivalRunway,
   incomeReplacementFloor,
   incomeGrowthScenario,
@@ -51,6 +58,7 @@ export type {
   IncomeGrowthResult,
   MatchGapResult,
   RetirementProjectionResult,
+  PurchaseComparisonResult,
 };
 
 /** Convert a string|Date|null payload from the API into a Date. */
