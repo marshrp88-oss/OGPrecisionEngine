@@ -8,7 +8,8 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "seed:cadence": "tsx ./src/lib/seedCadence.ts"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",
