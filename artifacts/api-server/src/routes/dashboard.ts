@@ -969,15 +969,14 @@ router.get("/dashboard/integrity-summary", async (_req, res): Promise<void> => {
       });
   }
 
-  // 2. Next payday — v8.0 dynamic derivation (7th/22nd). No assumption row
-  // required; deriveNextPayday() is always-on. This check now confirms the
-  // engine can produce a future payday from today's clock (which it always
-  // can by construction), and surfaces the derived date for transparency.
-  const derivedPayday = deriveNextPayday(today);
+  // 2. Next payday — cadence-derived (single source). No assumption row is
+  // required; defaults to the legacy 7th/22nd schedule. Surfaces the derived
+  // date for transparency.
+  const derivedPayday = await deriveNextPayday(today);
   checks.push({
     name: "Next payday (derived)",
     status: "pass",
-    detail: `Payday: ${derivedPayday.toISOString().slice(0, 10)} (dynamic 7th/22nd).`,
+    detail: `Payday: ${derivedPayday.toISOString().slice(0, 10)} (cadence-derived).`,
   });
 
   // 3. Active bills exist

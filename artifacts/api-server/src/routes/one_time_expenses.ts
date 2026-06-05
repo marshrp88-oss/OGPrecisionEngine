@@ -13,11 +13,11 @@ import { deriveNextPayday } from "../lib/financeEngine";
 
 const router: IRouter = Router();
 
-function enrichExpense(ote: typeof oneTimeExpenses.$inferSelect) {
+async function enrichExpense(ote: typeof oneTimeExpenses.$inferSelect) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  // v8.0 Part 7 — payday derived dynamically.
-  const nextPayday = deriveNextPayday(today);
+  // Payday is cadence-derived from the single source (defaults to legacy 7th/22nd).
+  const nextPayday = await deriveNextPayday(today);
 
   let countsThisCycle = false;
   // Deferred items NEVER count toward cycle math (Part 3).
@@ -40,7 +40,7 @@ function enrichExpense(ote: typeof oneTimeExpenses.$inferSelect) {
 
 router.get("/one-time-expenses", async (_req, res): Promise<void> => {
   const rows = await db.select().from(oneTimeExpenses).orderBy(oneTimeExpenses.dueDate);
-  const enriched = rows.map(enrichExpense);
+  const enriched = await Promise.all(rows.map(enrichExpense));
   res.json(GetOneTimeExpensesResponse.parse(enriched));
 });
 
@@ -55,7 +55,7 @@ router.post("/one-time-expenses", async (req, res): Promise<void> => {
     res.status(500).json({ error: "Failed to create expense" });
     return;
   }
-  res.status(201).json(enrichExpense(row));
+  res.status(201).json(await enrichExpense(row));
 });
 
 router.patch("/one-time-expenses/:id", async (req, res): Promise<void> => {
@@ -78,7 +78,7 @@ router.patch("/one-time-expenses/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Expense not found" });
     return;
   }
-  res.json(UpdateOneTimeExpenseResponse.parse(enrichExpense(row)));
+  res.json(UpdateOneTimeExpenseResponse.parse(await enrichExpense(row)));
 });
 
 router.delete("/one-time-expenses/:id", async (req, res): Promise<void> => {

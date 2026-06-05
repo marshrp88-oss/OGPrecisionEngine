@@ -211,19 +211,15 @@ export function payDatesInWindow(
 }
 
 /**
- * The next deposit on-or-after `today`, weekend-shifted.
+ * The next NOMINAL (pre-weekend-shift) deposit on-or-after `today`.
  *
- * Semantics match the legacy `deriveNextPayday`: the comparison is on the
- * NOMINAL date (inclusive — if today IS a nominal payday it is returned), and
- * the returned value is the weekend-shifted deposit date. This intentionally
- * preserves the existing two-layer behavior where the cycle layer
- * (computeRequiredHold) rolls forward when today === a nominal payday; the
- * "strictly after" rollover is that layer's job, not this generator's.
+ * Comparison is inclusive on the nominal date — if today IS a nominal payday it
+ * is returned. The cycle layer (computeRequiredHold) handles the "strictly
+ * after" payday-morning rollover itself; this generator does not.
  */
-export function nextPayDate(
+export function nextNominalPayDate(
   cadence: PayCadence,
   anchorDate: Date,
-  shift: WeekendShift,
   today: Date,
 ): Date {
   const t = utcMidnight(today);
@@ -233,7 +229,7 @@ export function nextPayDate(
     const step = cadence === "weekly" ? 7 : 14;
     const stepMs = step * MS_DAY;
     const n = Math.ceil((t.getTime() - anchor.getTime()) / stepMs);
-    return applyWeekendShift(addDays(anchor, n * step), shift);
+    return addDays(anchor, n * step);
   }
 
   const anchorDay = anchor.getUTCDate();
@@ -244,8 +240,23 @@ export function nextPayDate(
     const y = Math.floor(idx / 12);
     const m0 = idx % 12;
     for (const nominal of nominalMonthDates(cadence, anchorDay, y, m0)) {
-      if (nominal.getTime() >= t.getTime()) return applyWeekendShift(nominal, shift);
+      if (nominal.getTime() >= t.getTime()) return nominal;
     }
   }
-  throw new Error("nextPayDate: no payday found within 24 months of today");
+  throw new Error("nextNominalPayDate: no payday found within 24 months of today");
+}
+
+/**
+ * The next deposit on-or-after `today`, weekend-shifted.
+ *
+ * Semantics match the legacy `deriveNextPayday`: nominal comparison is
+ * inclusive, the returned value is the weekend-shifted deposit date.
+ */
+export function nextPayDate(
+  cadence: PayCadence,
+  anchorDate: Date,
+  shift: WeekendShift,
+  today: Date,
+): Date {
+  return applyWeekendShift(nextNominalPayDate(cadence, anchorDate, today), shift);
 }

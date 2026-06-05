@@ -82,12 +82,12 @@ async function runChecks(): Promise<IntegrityCheck[]> {
   // assumption row has been removed; this check confirms the derivation
   // produces a future date (which it does by construction).
   const { deriveNextPayday } = await import("./financeEngine");
-  const derivedPayday = deriveNextPayday(today);
+  const derivedPayday = await deriveNextPayday(today);
   checks.push({
     checkNumber: 2,
     description: "Next payday (derived)",
     status: "pass",
-    detail: `Next payday: ${derivedPayday.toISOString().slice(0, 10)} (dynamic 7th/22nd).`,
+    detail: `Next payday: ${derivedPayday.toISOString().slice(0, 10)} (cadence-derived).`,
   });
 
   const [baseIncomeRow] = await db

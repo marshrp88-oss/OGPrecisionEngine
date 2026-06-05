@@ -79,7 +79,7 @@ router.get("/bills/summary", async (_req, res): Promise<void> => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const all = await enumerateBills(today);
-  const nextPayday = deriveNextPayday(today);
+  const nextPayday = await deriveNextPayday(today);
 
   // ----- Income context -----
   const allAssumps = await db.select().from(assumptions);

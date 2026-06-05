@@ -204,14 +204,16 @@ describe("Golden: payday schedule (legacy semi-monthly, adapter layer)", () => {
   const u = (s: string) => new Date(s + "T00:00:00.000Z");
 
   it("deriveNextPayday across the cycle", async () => {
+    // deriveNextPayday is async (cadence-aware single source as of Commit 4);
+    // values are unchanged under the legacy semi-monthly config.
     const { deriveNextPayday } = await import("../lib/financeEngine");
     const snap = {
-      may01_before7th: iso(deriveNextPayday(u("2026-05-01"))),
-      may19_midCycle: iso(deriveNextPayday(u("2026-05-19"))),
-      may21_paydayMinus1: iso(deriveNextPayday(u("2026-05-21"))),
-      may22_onPayday: iso(deriveNextPayday(u("2026-05-22"))),
-      may23_paydayPlus1: iso(deriveNextPayday(u("2026-05-23"))),
-      may31_afterBoth: iso(deriveNextPayday(u("2026-05-31"))),
+      may01_before7th: iso(await deriveNextPayday(u("2026-05-01"))),
+      may19_midCycle: iso(await deriveNextPayday(u("2026-05-19"))),
+      may21_paydayMinus1: iso(await deriveNextPayday(u("2026-05-21"))),
+      may22_onPayday: iso(await deriveNextPayday(u("2026-05-22"))),
+      may23_paydayPlus1: iso(await deriveNextPayday(u("2026-05-23"))),
+      may31_afterBoth: iso(await deriveNextPayday(u("2026-05-31"))),
     };
     expect(snap).toMatchInlineSnapshot(`
       {

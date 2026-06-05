@@ -16,7 +16,6 @@ import {
   PurchaseOption,
   d as utcDay,
   effectivePayday as engineEffectivePayday,
-  nextNominalPayday,
   daysUntilPayday as engineDaysUntilPayday,
   daysSinceUpdate as engineDaysSinceUpdate,
   isStale,
@@ -45,8 +44,14 @@ import {
 import {
   enumerateBills,
   forwardReserveFixed,
-  deriveNextNominalPayday,
 } from "./cycleBillEngine";
+import {
+  nextNominalPayDate,
+  nextPayDate,
+  applyWeekendShift,
+  resolvePayCadenceConfig,
+  type PayCadenceConfig,
+} from "./payCadence";
 
 export interface CycleState {
   checkingBalance: number;
@@ -113,6 +118,16 @@ function utcStartOfDay(date: Date): Date {
 }
 
 /**
+ * Single source for the pay-cadence config. One assumptions read, resolved with
+ * legacy defaults (semi-monthly 7th/22nd, prior-business-day) for any unset
+ * key — so existing data reproduces the pre-cadence schedule exactly.
+ */
+async function loadPayCadenceConfig(): Promise<PayCadenceConfig> {
+  const rows = await db.select().from(assumptions);
+  return resolvePayCadenceConfig((k) => rows.find((r) => r.key === k)?.value ?? "");
+}
+
+/**
  * v8.0 Part 3 — exclude deferred one-time expenses from cycle math.
  * Pure helper exposed for unit tests; used by both computeCycleState and
  * computeMonthlySavings to map DB rows to engine-typed expenses.
@@ -148,11 +163,14 @@ export function effectivePayday(nominal: Date): Date {
 }
 
 /**
- * Derive next payday: earliest of {7th, 22nd} that falls on or after `today`,
- * weekend-adjusted. Delegates to the reference engine.
+ * Single source of truth for "next payday": the next deposit on-or-after
+ * `today`, weekend-shifted, per the configured pay cadence. With no cadence
+ * assumptions set this reproduces the legacy semi-monthly 7th/22nd,
+ * prior-business-day schedule exactly. Async because it reads the config.
  */
-export function deriveNextPayday(today: Date): Date {
-  return engineEffectivePayday(nextNominalPayday(utcStartOfDay(today)));
+export async function deriveNextPayday(today: Date): Promise<Date> {
+  const cfg = await loadPayCadenceConfig();
+  return nextPayDate(cfg.cadence, cfg.anchor, cfg.shift, utcStartOfDay(today));
 }
 
 /**
@@ -239,15 +257,22 @@ export async function computeRequiredHold(asOf?: Date): Promise<RequiredHoldBrea
     daysSinceUpdate === null || isStale(utcStartOfDay(lastBalanceUpdate ?? today), today);
 
   // Payday-morning rollover: when today IS a nominal payday, [today, nextPayday)
-  // is empty. Roll forward to the FOLLOWING payday so bills due 23rd-31st AND
-  // bills due 1st-7th of next month all fall inside the rolled cycle window —
-  // captured exactly once by `billsDueBeforePayday`.
-  const rawNominal = deriveNextNominalPayday(today);
+  // is empty. Roll forward to the FOLLOWING payday so bills due before the next
+  // deposit all fall inside the rolled cycle window — captured exactly once by
+  // `billsDueBeforePayday`. The nominal payday comes from the configured pay
+  // cadence (single source); legacy semi-monthly is the default. All dates are
+  // UTC-midnight, so the rolled window and `nextPayday` cannot split by a day.
+  const payCfg = await loadPayCadenceConfig();
+  const rawNominal = nextNominalPayDate(payCfg.cadence, payCfg.anchor, today);
   const nextPaydayNominal =
     rawNominal.getTime() === today.getTime()
-      ? deriveNextNominalPayday(new Date(today.getTime() + 86400000))
+      ? nextNominalPayDate(
+          payCfg.cadence,
+          payCfg.anchor,
+          new Date(today.getTime() + 86400000),
+        )
       : rawNominal;
-  const nextPayday = engineEffectivePayday(nextPaydayNominal);
+  const nextPayday = applyWeekendShift(nextPaydayNominal, payCfg.shift);
   const daysUntilPayday = engineDaysUntilPayday(today, nextPaydayNominal);
   const paydayRisk = paydayRiskFlag(nextPaydayNominal);
 
@@ -449,7 +474,12 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
   const baseNetIncome = await getAssumption("base_net_income", 3220);
 
   const today = utcStartOfDay(new Date());
-  const nextPaydayNominal = deriveNextNominalPayday(today);
+  const payCfg = await loadPayCadenceConfig();
+  const nextPaydayNominal = nextNominalPayDate(
+    payCfg.cadence,
+    payCfg.anchor,
+    today,
+  );
 
   // Confirmed commission this cycle (paid this month, on or before today)
   const allCommissions = await db.select().from(commissions);
