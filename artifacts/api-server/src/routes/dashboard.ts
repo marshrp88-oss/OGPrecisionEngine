@@ -1,6 +1,11 @@
 import { Router, type IRouter } from "express";
 import { GetDashboardCycleResponse } from "@workspace/api-zod";
 import { computeCycleState, deriveNextPayday } from "../lib/financeEngine";
+import {
+  payDatesInWindow,
+  nextPayDate,
+  resolvePayCadenceConfig,
+} from "../lib/payCadence";
 import { billsThisMonth } from "../lib/cycleBillEngine";
 import { syncBillPaymentStates } from "../lib/paymentState";
 import {
@@ -124,16 +129,44 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
       ? parseFloat(overrideRow.value)
       : null;
 
-  // v8.0 Part 7 — paydays computed dynamically (7th + 22nd, no stored value).
+  // Pay schedule is cadence-driven (PRD: pay-cadence generalization). Cadence,
+  // anchor and weekend-shift come from assumptions and DEFAULT to the legacy
+  // semi-monthly 7th/22nd, prior-business-day schedule when unset (back-compat).
+  // Deposit dates are generated for the current month and weekend-shifted.
   // v8.0 Fix 3 — per-paycheck income override: assumption key
-  // `income_override:YYYY-MM-DD` keyed by nominal payday. When set, that
-  // paycheck uses the override instead of baseNetIncome/2. Unset → fall back
-  // to base. Overrides are scoped per-payday so May 22's override does NOT
-  // bleed into June. Editable via existing PUT /assumptions/{key}.
-  const paydayDays = [7, 22];
-  const netPerPaycheck = baseNetIncome / 2;
-  const ymd = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  // `income_override:YYYY-MM-DD` keyed by the (shifted) deposit date. When set,
+  // that paycheck uses the override instead of the per-period default. Unset →
+  // fall back. Overrides are scoped per-payday. Editable via PUT /assumptions/{key}.
+  const S = (k: string): string => {
+    const r = allAssumps.find((a) => a.key === k);
+    return (r?.value ?? "").toString();
+  };
+  const payConfig = resolvePayCadenceConfig(S);
+  // UTC month bounds match payCadence's UTC convention. The local monthStart/
+  // monthEnd above stay local — they drive bill/one-time/variable filtering.
+  const cadenceMonthStart = new Date(
+    Date.UTC(today.getFullYear(), today.getMonth(), 1),
+  );
+  const cadenceMonthEnd = new Date(
+    Date.UTC(today.getFullYear(), today.getMonth() + 1, 0),
+  );
+  const monthPayDates = payDatesInWindow(
+    payConfig.cadence,
+    payConfig.anchor,
+    payConfig.shift,
+    cadenceMonthStart,
+    cadenceMonthEnd,
+  );
+  // net_per_period overrides the default per-deposit amount. Unset → spread the
+  // base monthly net across the month's deposits, so legacy (2 deposits) keeps
+  // baseNetIncome / 2.
+  const netPerPeriodRaw = A("net_per_period", NaN);
+  const netPerPaycheck =
+    Number.isFinite(netPerPeriodRaw) && netPerPeriodRaw > 0
+      ? netPerPeriodRaw
+      : monthPayDates.length > 0
+        ? baseNetIncome / monthPayDates.length
+        : 0;
   const incomeOverrideFor = (paydayISO: string): number | null => {
     const row = allAssumps.find(
       (a) => a.key === `income_override:${paydayISO}`,
@@ -155,16 +188,16 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     appliedAmount: number;
     received: boolean;
   }[] = [];
-  for (const day of paydayDays) {
-    const nominal = new Date(today.getFullYear(), today.getMonth(), day);
-    const iso = ymd(nominal);
+  for (const dep of monthPayDates) {
+    const iso = dep.toISOString().split("T")[0];
     const override = incomeOverrideFor(iso);
     const applied = override ?? netPerPaycheck;
-    const received = nominal <= today;
+    const received = dep.getTime() <= today.getTime();
     if (received) {
       paychecksReceivedThisMonth += applied;
       paychecksReceivedCount += 1;
-    } else if (nominal <= monthEnd) {
+    } else {
+      // All generated deposits are already within [monthStart, monthEnd].
       expectedRemainingPaychecks += applied;
       paychecksRemainingCount += 1;
     }
@@ -177,7 +210,18 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     });
   }
   const remainingPaychecksThisMonth = expectedRemainingPaychecks; // back-compat alias
-  const nextEffectivePayday = deriveNextPayday(today);
+  // Monthly net = sum of this month's deposits (drives the discipline ratios).
+  // Legacy (2 × baseNetIncome/2) == baseNetIncome.
+  const monthlyNetIncome =
+    paychecksReceivedThisMonth + expectedRemainingPaychecks;
+  // Single cadence-aware "next payday" for display (cycle window unification is
+  // a later commit). Defaults reproduce the legacy deriveNextPayday exactly.
+  const nextEffectivePayday = nextPayDate(
+    payConfig.cadence,
+    payConfig.anchor,
+    payConfig.shift,
+    today,
+  );
 
   // §1.2: commissionPaid (status=paid, payoutDate in [monthStart, today]) and
   // commissionPending (status=pending, payoutDate in (today, monthEnd]).
@@ -427,7 +471,8 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     (s, b) => s + b.amount,
     0,
   );
-  const fixedRatio = baseNetIncome > 0 ? fixedMonthlyTotal / baseNetIncome : 0;
+  const fixedRatio =
+    monthlyNetIncome > 0 ? fixedMonthlyTotal / monthlyNetIncome : 0;
 
   // Monthly Savings = Discretionary − $100 conservative buffer (Playbook B62
   // placeholder). Floored at 0 because "savings" can't be negative — when
@@ -435,8 +480,8 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   // on the Discretionary line itself.
   const engineSavings = Math.max(0, discretionaryHeadline - 100);
   const savingsRate =
-    baseNetIncome > 0
-      ? engineSavings / (baseNetIncome + confirmedCommissionTotal)
+    monthlyNetIncome > 0
+      ? engineSavings / (monthlyNetIncome + confirmedCommissionTotal)
       : 0;
 
   // Cap-derived prorated remaining (legacy breakdown row). Distinct from the
@@ -619,21 +664,51 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   })();
 
   // ---- Income still to receive this month ----
-  // Paychecks: 7th and 22nd. Any payday <= today is "received".
-  const paydayDates = [
-    new Date(today.getFullYear(), today.getMonth(), 7),
-    new Date(today.getFullYear(), today.getMonth(), 22),
-  ];
+  // Cadence-driven (PRD). Deposit dates default to the legacy 7th/22nd schedule
+  // when no cadence assumptions are set. Any deposit strictly after today is
+  // still expected; per-period amount honors net_per_period and per-date
+  // income_override (keyed by the shifted deposit date).
+  const S = (k: string): string => {
+    const r = allAssumps.find((a) => a.key === k);
+    return (r?.value ?? "").toString();
+  };
+  const payConfig = resolvePayCadenceConfig(S);
+  const cadenceMonthStart = new Date(
+    Date.UTC(today.getFullYear(), today.getMonth(), 1),
+  );
+  const cadenceMonthEnd = new Date(
+    Date.UTC(today.getFullYear(), today.getMonth() + 1, 0),
+  );
+  const monthPayDates = payDatesInWindow(
+    payConfig.cadence,
+    payConfig.anchor,
+    payConfig.shift,
+    cadenceMonthStart,
+    cadenceMonthEnd,
+  );
+  const netPerPeriodRaw = A("net_per_period", NaN);
+  const netPerPaycheck =
+    Number.isFinite(netPerPeriodRaw) && netPerPeriodRaw > 0
+      ? netPerPeriodRaw
+      : monthPayDates.length > 0
+        ? baseNetIncome / monthPayDates.length
+        : 0;
+  const incomeOverrideFor = (paydayISO: string): number | null => {
+    const row = allAssumps.find(
+      (a) => a.key === `income_override:${paydayISO}`,
+    );
+    if (!row || row.value === "") return null;
+    const n = parseFloat(row.value);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
   let incomeStillToReceive = 0;
   const paychecksStillExpected: { date: string; amount: number }[] = [];
-  for (const p of paydayDates) {
-    if (p > today) {
-      const amt = baseNetIncome / 2;
+  for (const p of monthPayDates) {
+    if (p.getTime() > today.getTime()) {
+      const iso = p.toISOString().split("T")[0];
+      const amt = incomeOverrideFor(iso) ?? netPerPaycheck;
       incomeStillToReceive += amt;
-      paychecksStillExpected.push({
-        date: p.toISOString().split("T")[0],
-        amount: amt,
-      });
+      paychecksStillExpected.push({ date: iso, amount: amt });
     }
   }
 

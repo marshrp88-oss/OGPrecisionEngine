@@ -24,6 +24,68 @@ export type WeekendShift = "prior_business_day" | "next_business_day" | "none";
 
 const MS_DAY = 86_400_000;
 
+/**
+ * Legacy default anchor: a date whose UTC day-of-month is 7, so semimonthly
+ * derives [7th, 22nd] — reproducing the pre-cadence schedule. Only the
+ * day-of-month matters for semimonthly/monthly; the year/month are irrelevant.
+ */
+export const LEGACY_SEMIMONTHLY_ANCHOR = new Date(Date.UTC(2020, 0, 7));
+
+/** Parse a "YYYY-MM-DD" anchor string to a UTC-midnight Date; null if invalid. */
+export function parseAnchorDate(raw: string | null | undefined): Date | null {
+  const s = (raw ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s + "T00:00:00.000Z");
+  return isNaN(d.getTime()) ? null : d;
+}
+
+const CADENCES: ReadonlySet<string> = new Set([
+  "weekly",
+  "biweekly",
+  "semimonthly",
+  "monthly",
+]);
+const SHIFTS: ReadonlySet<string> = new Set([
+  "prior_business_day",
+  "next_business_day",
+  "none",
+]);
+
+/** Coerce an arbitrary string to a PayCadence, defaulting to legacy semimonthly. */
+export function normalizeCadence(raw: string | null | undefined): PayCadence {
+  const s = (raw ?? "").trim();
+  return (CADENCES.has(s) ? s : "semimonthly") as PayCadence;
+}
+
+/** Coerce an arbitrary string to a WeekendShift, defaulting to prior_business_day. */
+export function normalizeWeekendShift(raw: string | null | undefined): WeekendShift {
+  const s = (raw ?? "").trim();
+  return (SHIFTS.has(s) ? s : "prior_business_day") as WeekendShift;
+}
+
+export interface PayCadenceConfig {
+  cadence: PayCadence;
+  anchor: Date;
+  shift: WeekendShift;
+}
+
+/**
+ * Resolve the pay-cadence config from an assumption getter, applying legacy
+ * defaults for any unset/invalid key. `get` returns the raw assumption value
+ * (or null/empty when absent) — abstracts over allAssumps (route layer) and
+ * getAssumption (adapter layer). With every key unset this yields the legacy
+ * semimonthly 7th/22nd, prior-business-day schedule.
+ */
+export function resolvePayCadenceConfig(
+  get: (key: string) => string | null | undefined,
+): PayCadenceConfig {
+  return {
+    cadence: normalizeCadence(get("pay_cadence")),
+    anchor: parseAnchorDate(get("pay_anchor_date")) ?? LEGACY_SEMIMONTHLY_ANCHOR,
+    shift: normalizeWeekendShift(get("pay_weekend_shift")),
+  };
+}
+
 function utcMidnight(date: Date): Date {
   return new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),

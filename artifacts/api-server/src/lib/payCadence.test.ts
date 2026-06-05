@@ -7,6 +7,11 @@ import {
   applyWeekendShift,
   payDatesInWindow,
   nextPayDate,
+  parseAnchorDate,
+  normalizeCadence,
+  normalizeWeekendShift,
+  resolvePayCadenceConfig,
+  LEGACY_SEMIMONTHLY_ANCHOR,
   type PayCadence,
   type WeekendShift,
 } from "./payCadence";
@@ -101,6 +106,42 @@ describe("nextPayDate — back-compat with legacy deriveNextPayday", () => {
   ];
   it.each(cases)("nextPayDate(%s) === %s", (today, expected) => {
     expect(iso(nextPayDate(c, anchor, s, u(today)))).toBe(expected);
+  });
+});
+
+describe("config resolution + legacy defaults", () => {
+  it("parseAnchorDate accepts YYYY-MM-DD (UTC) and rejects junk", () => {
+    expect(iso(parseAnchorDate("2026-06-10")!)).toBe("2026-06-10");
+    expect(parseAnchorDate("")).toBeNull();
+    expect(parseAnchorDate("06/10/2026")).toBeNull();
+    expect(parseAnchorDate(null)).toBeNull();
+    expect(parseAnchorDate("2026-13-40")).toBeNull();
+  });
+  it("normalize helpers coerce unknown values to legacy defaults", () => {
+    expect(normalizeCadence("weekly")).toBe("weekly");
+    expect(normalizeCadence("")).toBe("semimonthly");
+    expect(normalizeCadence("fortnightly")).toBe("semimonthly");
+    expect(normalizeWeekendShift("none")).toBe("none");
+    expect(normalizeWeekendShift("bogus")).toBe("prior_business_day");
+  });
+  it("resolvePayCadenceConfig with everything unset yields the legacy schedule", () => {
+    const cfg = resolvePayCadenceConfig(() => "");
+    expect(cfg.cadence).toBe("semimonthly");
+    expect(cfg.shift).toBe("prior_business_day");
+    expect(cfg.anchor.getTime()).toBe(LEGACY_SEMIMONTHLY_ANCHOR.getTime());
+    // And that legacy config reproduces a known golden next-payday.
+    expect(iso(nextPayDate(cfg.cadence, cfg.anchor, cfg.shift, u("2026-05-23")))).toBe("2026-06-05");
+  });
+  it("resolvePayCadenceConfig reads the unemployment config", () => {
+    const store: Record<string, string> = {
+      pay_cadence: "weekly",
+      pay_anchor_date: "2026-06-10",
+      pay_weekend_shift: "prior_business_day",
+    };
+    const cfg = resolvePayCadenceConfig((k) => store[k]);
+    expect(cfg.cadence).toBe("weekly");
+    expect(iso(cfg.anchor)).toBe("2026-06-10");
+    expect(iso(nextPayDate(cfg.cadence, cfg.anchor, cfg.shift, u("2026-06-11")))).toBe("2026-06-17");
   });
 });
 
