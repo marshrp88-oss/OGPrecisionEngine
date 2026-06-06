@@ -89,6 +89,9 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   today.setHours(0, 0, 0, 0);
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
   const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  // Current calendar month, "YYYY-MM" (local, matching monthStart/monthEnd).
+  // Scopes the per-month variable override key.
+  const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
   // ---- Inputs ----
   const [latestChecking] = await db
@@ -118,10 +121,13 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   const mrrTarget = A("mrr_target", 700);
   const nrrTarget = A("nrr_target", 6000);
   const taxRate = A("commission_tax_rate", 0.435);
-  // §1.2 override: empty/missing → use cap − logged. Numeric → use that.
-  const overrideRow = allAssumps.find(
-    (a) => a.key === "planned_variable_remaining_override",
-  );
+  // R override is MONTH-SCOPED: key `planned_variable_remaining_override:YYYY-MM`
+  // (mirrors the per-period income_override scoping). Absent for the current
+  // month → R auto-resets to the fallback (no bleed across months). The old
+  // GLOBAL key (no `:YYYY-MM`) is intentionally ignored so a stale value there
+  // can't apply. empty/missing → fallback; numeric (incl. 0) → that value.
+  const overrideMonthKey = `planned_variable_remaining_override:${monthKey}`;
+  const overrideRow = allAssumps.find((a) => a.key === overrideMonthKey);
   const plannedVariableRemainingOverride: number | null =
     overrideRow &&
     overrideRow.value !== "" &&
@@ -162,8 +168,11 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
   // base monthly net across the month's deposits, so legacy (2 deposits) keeps
   // baseNetIncome / 2.
   const netPerPeriodRaw = A("net_per_period", NaN);
+  // >= 0: an explicit net_per_period of 0 is a LITERAL zero/missed check (honored
+  // as $0), not "unset". Only an absent/blank key (NaN) falls back to spreading
+  // baseNetIncome across the month's deposits.
   const netPerPaycheck =
-    Number.isFinite(netPerPeriodRaw) && netPerPeriodRaw > 0
+    Number.isFinite(netPerPeriodRaw) && netPerPeriodRaw >= 0
       ? netPerPeriodRaw
       : monthPayDates.length > 0
         ? baseNetIncome / monthPayDates.length
@@ -566,6 +575,9 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     monthVariableObligation: round(monthVariableObligation),
     trailingDailyRate: round(trailingDailyRate),
     plannedVariableRemainingOverride,
+    // Per-month override key the client writes (Prorate/Reset/edit) so it
+    // always targets the same month the engine reads.
+    currentMonthKey: monthKey,
     oneTimeThisMonth: round(oneTimeThisMonth),
     oneTimeMonthObligated: round(oneTimeMonthObligated),
     oneTimePaidThisMonth: round(oneTimePaidThisMonth),
@@ -628,6 +640,8 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   today.setHours(0, 0, 0, 0);
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
   const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  // Current calendar month, "YYYY-MM" — scopes the per-month variable override.
+  const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
   // ---- Current checking ----
   const [latestChecking] = await db
@@ -654,9 +668,13 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   };
   const baseNetIncome = A("base_net_income", BASE_NET_INCOME);
   const variableCap = A("variable_spend_cap", VARIABLE_SPEND_CAP);
+  // MONTH-SCOPED R override (mirrors income_override per-period scoping): key
+  // `planned_variable_remaining_override:YYYY-MM`. Absent for the current month
+  // → R auto-resets to the prorated fallback (no bleed). The old GLOBAL key is
+  // intentionally ignored. Empty → fallback; numeric (incl. 0) → that value.
   const plannedVariableRemainingOverride = (() => {
     const r = allAssumps.find(
-      (a) => a.key === "planned_variable_remaining_override",
+      (a) => a.key === `planned_variable_remaining_override:${monthKey}`,
     );
     if (!r) return null;
     const raw = (r.value ?? "").toString().trim();
@@ -690,8 +708,9 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     payConfig.startDate,
   );
   const netPerPeriodRaw = A("net_per_period", NaN);
+  // >= 0: explicit 0 = literal zero/missed check; only absent/blank (NaN) falls back.
   const netPerPaycheck =
-    Number.isFinite(netPerPeriodRaw) && netPerPeriodRaw > 0
+    Number.isFinite(netPerPeriodRaw) && netPerPeriodRaw >= 0
       ? netPerPeriodRaw
       : monthPayDates.length > 0
         ? baseNetIncome / monthPayDates.length

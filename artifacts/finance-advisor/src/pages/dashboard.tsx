@@ -120,6 +120,7 @@ interface DiscretionaryResp {
   monthVariableObligation: number;
   trailingDailyRate: number;
   plannedVariableRemainingOverride: number | null;
+  currentMonthKey: string;
   oneTimeThisMonth: number;
   oneTimeMonthObligated: number;
   oneTimePaidThisMonth: number;
@@ -651,6 +652,7 @@ function SituationBlock({
                 fallbackCap={discretionary.variableCap}
                 daysRemaining={discretionary.daysRemainingInMonth}
                 daysInMonth={discretionary.discipline?.daysInMonth ?? 30}
+                monthKey={discretionary.currentMonthKey}
               />
             </div>
           )}
@@ -1931,6 +1933,7 @@ function VariableEstimateEditor({
   fallbackCap,
   daysRemaining,
   daysInMonth,
+  monthKey,
 }: {
   R: number;
   logged: number;
@@ -1938,7 +1941,11 @@ function VariableEstimateEditor({
   fallbackCap: number;
   daysRemaining: number;
   daysInMonth: number;
+  monthKey: string;
 }) {
+  // MONTH-SCOPED override key (mirrors income_override per-period scoping). The
+  // engine reads this exact key for the current month; absent → R auto-resets.
+  const overrideKey = `planned_variable_remaining_override:${monthKey}`;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(R.toFixed(2));
   const committedRef = useRef(false);
@@ -1977,7 +1984,7 @@ function VariableEstimateEditor({
     }
     updateMut.mutate(
       {
-        key: "planned_variable_remaining_override",
+        key: overrideKey,
         data: { value: trimmed === "" ? "" : String(parsed) },
       },
       {
@@ -1997,7 +2004,7 @@ function VariableEstimateEditor({
   const reset = () => {
     updateMut.mutate(
       {
-        key: "planned_variable_remaining_override",
+        key: overrideKey,
         data: { value: "" },
       },
       {
@@ -2018,7 +2025,7 @@ function VariableEstimateEditor({
       100;
     updateMut.mutate(
       {
-        key: "planned_variable_remaining_override",
+        key: overrideKey,
         data: { value: String(prorated) },
       },
       {

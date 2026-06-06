@@ -12,7 +12,8 @@
  *   - PPG one-time DEFERRED — excluded from oneTimeStillToPay
  *   - weekly cadence, anchor + start 2026-06-24, net_per_period $750, 0 tax
  *   - commission CLEARED (empty table)
- *   - variable R: override CLEARED → prorated remaining default ($500)
+ *   - variable R: month-scoped override absent (old global "0" ignored) →
+ *     prorated remaining default ($500)
  *
  * INCOME FIX — VERIFIED CORRECT. June totalMonthIncome = $750 (exactly one
  * deposit, 2026-06-24; phantom June 3/10/17 excluded by pay_start_date;
@@ -110,9 +111,11 @@ const fixture = vi.hoisted(() => {
       { key: "variable_spend_until_payday", value: "250" },
       { key: "quicksilver_balance_owed", value: "" },
       { key: "base_net_income", value: "3520" },
-      // Override CLEARED → prorated remaining-variable default applies (R-as-truth).
-      // (Live app: clear the stale 0 or tap the Overview "Prorate" helper.)
-      { key: "planned_variable_remaining_override", value: "" },
+      // OLD GLOBAL override key holds the live stale "0" — must be IGNORED now
+      // that R is MONTH-SCOPED (`planned_variable_remaining_override:YYYY-MM`).
+      // No current-month key present → R auto-resets to the prorated default
+      // ($500), proving the stale global 0 cannot apply / bleed.
+      { key: "planned_variable_remaining_override", value: "0" },
       // Ground-truth cadence config (seedCadence.ts after correction):
       { key: "pay_cadence", value: "weekly" },
       { key: "pay_anchor_date", value: "2026-06-24" },
