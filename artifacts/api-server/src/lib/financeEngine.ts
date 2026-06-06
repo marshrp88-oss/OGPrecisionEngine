@@ -170,7 +170,13 @@ export function effectivePayday(nominal: Date): Date {
  */
 export async function deriveNextPayday(today: Date): Promise<Date> {
   const cfg = await loadPayCadenceConfig();
-  return nextPayDate(cfg.cadence, cfg.anchor, cfg.shift, utcStartOfDay(today));
+  return nextPayDate(
+    cfg.cadence,
+    cfg.anchor,
+    cfg.shift,
+    utcStartOfDay(today),
+    cfg.startDate,
+  );
 }
 
 /**
@@ -263,13 +269,19 @@ export async function computeRequiredHold(asOf?: Date): Promise<RequiredHoldBrea
   // cadence (single source); legacy semi-monthly is the default. All dates are
   // UTC-midnight, so the rolled window and `nextPayday` cannot split by a day.
   const payCfg = await loadPayCadenceConfig();
-  const rawNominal = nextNominalPayDate(payCfg.cadence, payCfg.anchor, today);
+  const rawNominal = nextNominalPayDate(
+    payCfg.cadence,
+    payCfg.anchor,
+    today,
+    payCfg.startDate,
+  );
   const nextPaydayNominal =
     rawNominal.getTime() === today.getTime()
       ? nextNominalPayDate(
           payCfg.cadence,
           payCfg.anchor,
           new Date(today.getTime() + 86400000),
+          payCfg.startDate,
         )
       : rawNominal;
   const nextPayday = applyWeekendShift(nextPaydayNominal, payCfg.shift);
@@ -479,6 +491,7 @@ export async function computeMonthlySavings(): Promise<MonthlySavingsState> {
     payCfg.cadence,
     payCfg.anchor,
     today,
+    payCfg.startDate,
   );
 
   // Confirmed commission this cycle (paid this month, on or before today)

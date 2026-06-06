@@ -156,6 +156,7 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     payConfig.shift,
     cadenceMonthStart,
     cadenceMonthEnd,
+    payConfig.startDate,
   );
   // net_per_period overrides the default per-deposit amount. Unset → spread the
   // base monthly net across the month's deposits, so legacy (2 deposits) keeps
@@ -221,6 +222,7 @@ router.get("/dashboard/discretionary", async (_req, res): Promise<void> => {
     payConfig.anchor,
     payConfig.shift,
     today,
+    payConfig.startDate,
   );
 
   // §1.2: commissionPaid (status=paid, payoutDate in [monthStart, today]) and
@@ -685,6 +687,7 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     payConfig.shift,
     cadenceMonthStart,
     cadenceMonthEnd,
+    payConfig.startDate,
   );
   const netPerPeriodRaw = A("net_per_period", NaN);
   const netPerPaycheck =

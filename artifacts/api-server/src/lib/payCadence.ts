@@ -67,6 +67,12 @@ export interface PayCadenceConfig {
   cadence: PayCadence;
   anchor: Date;
   shift: WeekendShift;
+  /**
+   * Income-start boundary (first real deposit). When set, no deposit is
+   * generated before it — pass to payDatesInWindow / nextPayDate as `startDate`.
+   * Undefined when `pay_start_date` is unset/invalid (back-compat: no boundary).
+   */
+  startDate?: Date;
 }
 
 /**
@@ -83,6 +89,7 @@ export function resolvePayCadenceConfig(
     cadence: normalizeCadence(get("pay_cadence")),
     anchor: parseAnchorDate(get("pay_anchor_date")) ?? LEGACY_SEMIMONTHLY_ANCHOR,
     shift: normalizeWeekendShift(get("pay_weekend_shift")),
+    startDate: parseAnchorDate(get("pay_start_date")) ?? undefined,
   };
 }
 

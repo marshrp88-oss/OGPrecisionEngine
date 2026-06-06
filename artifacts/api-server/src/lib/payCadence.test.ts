@@ -171,7 +171,20 @@ describe("config resolution + legacy defaults", () => {
     const cfg = resolvePayCadenceConfig((k) => store[k]);
     expect(cfg.cadence).toBe("weekly");
     expect(iso(cfg.anchor)).toBe("2026-06-10");
+    expect(cfg.startDate).toBeUndefined(); // unset → no boundary (back-compat)
     expect(iso(nextPayDate(cfg.cadence, cfg.anchor, cfg.shift, u("2026-06-11")))).toBe("2026-06-17");
+  });
+  it("resolvePayCadenceConfig parses pay_start_date as the income boundary", () => {
+    const store: Record<string, string> = {
+      pay_cadence: "weekly",
+      pay_anchor_date: "2026-06-24",
+      pay_start_date: "2026-06-24",
+      pay_weekend_shift: "prior_business_day",
+    };
+    const cfg = resolvePayCadenceConfig((k) => store[k]);
+    expect(iso(cfg.startDate!)).toBe("2026-06-24");
+    // Threaded through nextPayDate: before income, next deposit is the boundary.
+    expect(iso(nextPayDate(cfg.cadence, cfg.anchor, cfg.shift, u("2026-06-01"), cfg.startDate))).toBe("2026-06-24");
   });
 });
 
