@@ -348,4 +348,66 @@ describe("June unemployment — discretionary reconciliation (clock=2026-06-06)"
       }
     `);
   });
+
+  // RECONCILIATION — the user's "~$500 savable" lens (PRD follow-up).
+  //
+  // Decision (user): the headline savable is checking-anchored, NOT the
+  // full-month discretionary ledger. It subtracts THIS month's remaining
+  // obligations + this month's PRORATED remaining variable (R). The next-
+  // month forward reserve is NOT subtracted here — it lives in the cycle hold
+  // (Safe to Spend) as a separate bucket, so subtracting it again would
+  // double-count next month's early bills. Each thing counted exactly once:
+  //   savable = checking
+  //           − billsNotYetDebited      (this month's remaining bills)
+  //           − oneTimeStillToPay       (this month's remaining one-time)
+  //           − proratedR               (this month's remaining variable)
+  //           − earlyNextMonthVariable  (next month's first-week variable)
+  //
+  // PRORATED R: variable cap $600 resets monthly; on 2026-06-06 we are 5 days
+  // in with 25 days left → R = cap × daysRemaining / daysInMonth = 600×25/30
+  // = $500 (matches the Overview "Prorate" one-tap helper convention).
+  //
+  // NOTE: this is NOT the value the cash-position endpoint currently returns
+  // in `availableToInvest`, which subtracts the FULL required hold ($2,094 —
+  // incl. the $1,423 dueDay-1..7 forward reserve for next month's Rent + Car
+  // Loan + Phone + Claude). Making `availableToInvest` equal this savable
+  // requires re-basing the route formula AND re-baselining the byte-identical
+  // golden cash-position snapshot (guardrail #5) — pending user sign-off.
+  it("savable (remaining-obligations basis + prorated R) lands ≈ $500", async () => {
+    const res = await request(app).get("/dashboard/cash-position");
+    const b = res.body;
+
+    const cap = 600;
+    const daysRemaining = 25; // 2026-06-06: 30 − 6 + 1
+    const daysInMonth = 30;
+    const proratedR = Math.round((cap * daysRemaining) / daysInMonth); // $500
+
+    const savable =
+      b.currentChecking -
+      b.billsNotYetDebited -
+      b.oneTimeStillToPay -
+      proratedR -
+      b.earlyNextMonthVariable;
+
+    expect({
+      currentChecking: b.currentChecking,
+      billsNotYetDebited: b.billsNotYetDebited,
+      oneTimeStillToPay: b.oneTimeStillToPay,
+      proratedR,
+      earlyNextMonthVariable: b.earlyNextMonthVariable,
+      savable,
+    }).toMatchInlineSnapshot(`
+      {
+        "billsNotYetDebited": 493,
+        "currentChecking": 1811,
+        "earlyNextMonthVariable": 130,
+        "oneTimeStillToPay": 143,
+        "proratedR": 500,
+        "savable": 545,
+      }
+    `);
+
+    expect(savable).toBeGreaterThanOrEqual(450);
+    expect(savable).toBeLessThanOrEqual(550);
+  });
 });
