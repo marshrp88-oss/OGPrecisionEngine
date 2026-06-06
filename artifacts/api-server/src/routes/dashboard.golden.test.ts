@@ -368,16 +368,19 @@ describe("Golden: dashboard routes (legacy semi-monthly, clock=2026-05-19)", () 
     `);
   });
 
-  // RE-BASELINED (user decision, Option A): `availableToInvest` was re-based to
-  // the remaining-obligations savable —
-  //   checking − billsNotYetDebited − oneTimeStillToPay − R(prorated) − earlyNext
-  // — and R's unset-default changed from full cap to the PRORATED remaining
-  // variable. The next-month forward reserve now lives ONLY in the cycle hold,
-  // never subtracted here. Two values move vs the prior (obsolete) baseline:
-  //   availableToInvest         432.73 → 681.12   (full-hold basis → remaining basis)
+  // RE-BASELINED (user decision): `availableToInvest` is the remaining-
+  // obligations savable —
+  //   checking − billsNotYetDebited − oneTimeStillToPay − R(prorated)
+  // — with NO earlyNextMonthVariable term (the flat $130 double-counted) and R's
+  // unset-default = the PRORATED remaining variable. The next-month forward
+  // reserve lives ONLY in the cycle hold, never subtracted here. Vs the prior
+  // (obsolete legacy) baseline:
+  //   availableToInvest         432.73 → 811.12   (full-hold→remaining basis, −$130 dropped)
   //   projectedEndOfMonthChecking 2072.73 → 2421.12 (R 600 full cap → 251.61 prorated)
-  // May 19, 31-day month: prorated R = 600 × 13/31 = 251.61. commitmentBalance
+  // May 19, 31-day month: prorated R = 600 × 13/31 = 251.61, so
+  // availableToInvest = 2140 − 1077.27 − 0 − 251.61 = 811.12. commitmentBalance
   // (checking − full hold) is unchanged — kept as a diagnostic cross-reference.
+  // earlyNextMonthVariable (130) is still returned as a display label only.
   it("/dashboard/cash-position — availableToInvest golden", async () => {
     const res = await request(app).get("/dashboard/cash-position");
     expect(res.status).toBe(200);
@@ -395,7 +398,7 @@ describe("Golden: dashboard routes (legacy semi-monthly, clock=2026-05-19)", () 
     }).toMatchInlineSnapshot(`
       {
         "asOf": "2026-05-19",
-        "availableToInvest": 681.12,
+        "availableToInvest": 811.12,
         "commitmentBalance": 1162.73,
         "commitmentOutflowsRemaining": 1077.27,
         "currentChecking": 2140,

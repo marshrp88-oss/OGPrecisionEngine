@@ -2368,68 +2368,25 @@ function CashPositionCard() {
           </div>
         </div>
 
-        {/* D1 — reconciled math chain. Mirrors head = commitmentBalance − F
-            where commitmentBalance = currentChecking − totalRequiredHold.
-            Every visible row reads cycle.* or data.*; the chain sums to head
-            exactly because the displayed terms ARE the formula. Zero-valued
-            hold addends are suppressed for readability. The month-window
-            "+ income / − bills not yet debited / − one-time still to pay"
-            rows that used to live here described the wrong window (calendar
-            month) for this snapshot decision and never tied to head; they're
-            dropped. Bill detail toggle below still uses the cash-position
-            month-window arrays for at-a-glance use. */}
+        {/* D1 — reconciled math chain. Mirrors the headline EXACTLY:
+            availableToInvest = checking − commitmentOutflowsRemaining − R.
+            Only these three rows; each reads data.* the headline uses, so the
+            chain sums to head. The full-hold "Reserve-aware balance (Checking −
+            Required Hold)" line and the "Early next-month variable" line were
+            removed — they belong to the cycle / Safe-to-Spend view, not this
+            savable headline, and made the chain contradict head. */}
         <div className="space-y-1.5 font-mono text-sm border-t border-border/30 pt-3">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Checking now</span>
             <span>{formatCurrency(data.currentChecking)}</span>
           </div>
-          {cycle && cycle.billsDueBeforePayday > 0 && (
-            <div className="flex justify-between text-destructive">
-              <span>− Bills due before next payday</span>
-              <span>−{formatCurrency(cycle.billsDueBeforePayday)}</span>
-            </div>
-          )}
-          {cycle && cycle.oneTimeDueBeforePayday > 0 && (
-            <div className="flex justify-between text-destructive">
-              <span>− One-time due before next payday</span>
-              <span>−{formatCurrency(cycle.oneTimeDueBeforePayday)}</span>
-            </div>
-          )}
-          {cycle && cycle.pendingHoldsReserve > 0 && (
-            <div className="flex justify-between text-destructive">
-              <span>− Pending holds reserve</span>
-              <span>−{formatCurrency(cycle.pendingHoldsReserve)}</span>
-            </div>
-          )}
-          {cycle && cycle.minimumCushion > 0 && (
-            <div className="flex justify-between text-destructive">
-              <span>− Minimum cushion</span>
-              <span>−{formatCurrency(cycle.minimumCushion)}</span>
-            </div>
-          )}
-          {cycle && cycle.quicksilverOwed > 0 && (
-            <div className="flex justify-between text-destructive">
-              <span>− QuickSilver owed</span>
-              <span>−{formatCurrency(cycle.quicksilverOwed)}</span>
-            </div>
-          )}
-          {cycle && cycle.pendingBillsOwed > 0 && (
-            <div className="flex justify-between text-destructive">
-              <span>− Pending bills owed</span>
-              <span>−{formatCurrency(cycle.pendingBillsOwed)}</span>
-            </div>
-          )}
-          <div className="flex justify-between font-medium border-t border-border/30 pt-2 mt-1">
-            <span>= Reserve-aware balance (Checking − Required Hold)</span>
-            <span>{formatCurrency(data.commitmentBalance)}</span>
+          <div className="flex justify-between text-destructive">
+            <span>− Bills still to pay this month</span>
+            <span>−{formatCurrency(data.commitmentOutflowsRemaining)}</span>
           </div>
           <div className="flex justify-between text-destructive">
             <span>− Variable reserved (R)</span>
             <span>−{formatCurrency(data.variableExpectedRemaining)}</span>
-          </div>
-          <div className="flex justify-between text-destructive">
-            <span>− Early next-month variable (days 1–7)</span>
-            <span>−{formatCurrency(data.earlyNextMonthVariable)}</span>
           </div>
           {showPaceHint && (
             <p

@@ -755,6 +755,12 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     if (amt <= 0) continue;
     if (b.dueDay < 1 || b.dueDay > monthEnd.getDate()) continue;
     if (b.paymentState === "skipped_cycle") continue;
+    // QuickSilver / credit-card statement bills (category 'variable') are NOT
+    // a checking debit — they're card debt tracked via the separate
+    // quicksilverOwed hold path. Counting them here as a remaining bill AND in
+    // the QS path double-counts, so exclude them from this checking-flow total.
+    // (They still surface in the cycle / Safe-to-Spend QS views.)
+    if (b.category === "variable") continue;
 
     const paidDateStr = b.paidDate
       ? new Date(b.paidDate).toISOString().split("T")[0]
@@ -862,26 +868,23 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   //   commitmentBalance = checking − full required hold. DIAGNOSTIC ONLY now
   //     (kept for cross-reference); the hold includes the next-month forward
   //     reserve, so it is NOT the savable headline.
-  //   availableToInvest = the headline savable, RE-BASED (user decision) to a
-  //     remaining-obligations basis:
-  //       checking − billsNotYetDebited − oneTimeStillToPay
-  //               − R (this month's prorated variable) − earlyNextMonthVariable
-  //   The next-month forward reserve stays ONLY in the cycle hold (Safe to
-  //   Spend); it is never subtracted here, so next month's early bills are
-  //   counted exactly once. Variable is counted once (prorated R only).
+  //   availableToInvest = the headline savable, on a remaining-obligations basis:
+  //       checking − billsNotYetDebited − oneTimeStillToPay − R (prorated variable)
+  //   ONLY these three reductions. The next-month forward reserve stays in the
+  //   cycle hold (Safe to Spend) and is NOT subtracted here. There is NO
+  //   earlyNextMonthVariable term: prorated R already reserves this month's
+  //   variable and the cycle hold already handles next-month bills — adding a
+  //   flat $130 would double-count.
   const commitmentOutflowsRemaining = billsNotYetDebited + oneTimeStillToPay;
   const commitmentBalance = currentChecking - cycle.totalRequiredHold;
   // QS variable rows still move the user's real position via the sealed hold
   // path (quicksilverOwed → totalRequiredHold → commitmentBalance); that
   // invariant is preserved in the diagnostic commitmentBalance above.
-  // Projected EOM uses R split by the logged qsRatio (cash portion only)
-  // so the cash-trajectory number stays consistent with the headline.
+  // earlyNextMonthVariable is retained only as a display label (below); it does
+  // NOT reduce availableToInvest.
   const earlyNextMonthVariable = 130;
   const availableToInvest =
-    currentChecking -
-    commitmentOutflowsRemaining -
-    variableExpectedRemaining -
-    earlyNextMonthVariable;
+    currentChecking - commitmentOutflowsRemaining - variableExpectedRemaining;
   const totalCashOutflowsRemaining =
     commitmentOutflowsRemaining + variableExpectedRemainingCash;
   const projectedEndOfMonthChecking =
