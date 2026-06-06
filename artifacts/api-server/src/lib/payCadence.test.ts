@@ -57,6 +57,36 @@ describe("payDatesInWindow — weekly", () => {
   });
 });
 
+describe("payDatesInWindow — startDate income boundary", () => {
+  // Unemployment: weekly Wednesdays, first real deposit 2026-06-24 (a Wed).
+  const anchor = u("2026-06-24");
+  const start = u("2026-06-24");
+  it("excludes deposits before startDate (June yields only 2026-06-24)", () => {
+    // Without startDate, June has four Wednesdays (3/10/17/24).
+    expect(isoList(payDatesInWindow("weekly", anchor, "prior_business_day", u("2026-06-01"), u("2026-06-30"))))
+      .toEqual(["2026-06-03", "2026-06-10", "2026-06-17", "2026-06-24"]);
+    // With startDate, the phantom 3/10/17 are dropped — only the first real deposit.
+    expect(isoList(payDatesInWindow("weekly", anchor, "prior_business_day", u("2026-06-01"), u("2026-06-30"), start)))
+      .toEqual(["2026-06-24"]);
+  });
+  it("emits every deposit on/after startDate (July yields all five Wednesdays)", () => {
+    expect(isoList(payDatesInWindow("weekly", anchor, "prior_business_day", u("2026-07-01"), u("2026-07-31"), start)))
+      .toEqual(["2026-07-01", "2026-07-08", "2026-07-15", "2026-07-22", "2026-07-29"]);
+  });
+  it("undefined startDate preserves legacy behavior (back-compat)", () => {
+    expect(payDatesInWindow("weekly", anchor, "prior_business_day", u("2026-06-01"), u("2026-06-30")).length).toBe(4);
+    expect(payDatesInWindow("weekly", anchor, "prior_business_day", u("2026-06-01"), u("2026-06-30"), undefined).length).toBe(4);
+  });
+  it("nextPayDate floors the search at max(today, startDate)", () => {
+    // Before income begins, "next payday" is the first real deposit, not a phantom.
+    expect(iso(nextPayDate("weekly", anchor, "prior_business_day", u("2026-06-01"), start))).toBe("2026-06-24");
+    // Without startDate, the legacy generator walks back to the nearest prior anchor step.
+    expect(iso(nextPayDate("weekly", anchor, "prior_business_day", u("2026-06-01")))).toBe("2026-06-03");
+    // On/after startDate the boundary is inert — normal weekly stepping resumes.
+    expect(iso(nextPayDate("weekly", anchor, "prior_business_day", u("2026-06-25"), start))).toBe("2026-07-01");
+  });
+});
+
 describe("payDatesInWindow — biweekly", () => {
   const anchor = u("2026-06-10");
   it("steps 14 days from the anchor", () => {

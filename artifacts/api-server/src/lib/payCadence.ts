@@ -153,6 +153,13 @@ function nominalMonthDates(
 /**
  * All deposit dates (UTC midnight, weekend-shifted) whose SHIFTED date falls in
  * [windowStart, windowEnd] inclusive.
+ *
+ * When `startDate` is provided, no deposit is emitted before it: any generated
+ * (shifted) date strictly earlier than `startDate` (UTC midnight) is dropped.
+ * This is the income-start boundary — e.g. the first real unemployment deposit
+ * — so the generator does not manufacture phantom paychecks before income
+ * actually begins. When `startDate` is undefined, behavior is unchanged
+ * (back-compat for legacy semimonthly callers).
  */
 export function payDatesInWindow(
   cadence: PayCadence,
@@ -160,14 +167,18 @@ export function payDatesInWindow(
   shift: WeekendShift,
   windowStart: Date,
   windowEnd: Date,
+  startDate?: Date,
 ): Date[] {
   const ws = utcMidnight(windowStart);
   const we = utcMidnight(windowEnd);
   if (ws.getTime() > we.getTime()) return [];
 
+  const start = startDate ? utcMidnight(startDate) : null;
   const anchor = utcMidnight(anchorDate);
   const inWindow = (d: Date) =>
-    d.getTime() >= ws.getTime() && d.getTime() <= we.getTime();
+    d.getTime() >= ws.getTime() &&
+    d.getTime() <= we.getTime() &&
+    (start === null || d.getTime() >= start.getTime());
   const found: Date[] = [];
 
   if (cadence === "weekly" || cadence === "biweekly") {
@@ -221,8 +232,11 @@ export function nextNominalPayDate(
   cadence: PayCadence,
   anchorDate: Date,
   today: Date,
+  startDate?: Date,
 ): Date {
-  const t = utcMidnight(today);
+  const t0 = utcMidnight(today);
+  const start = startDate ? utcMidnight(startDate) : null;
+  const t = start !== null && start.getTime() > t0.getTime() ? start : t0;
   const anchor = utcMidnight(anchorDate);
 
   if (cadence === "weekly" || cadence === "biweekly") {
@@ -257,6 +271,10 @@ export function nextPayDate(
   anchorDate: Date,
   shift: WeekendShift,
   today: Date,
+  startDate?: Date,
 ): Date {
-  return applyWeekendShift(nextNominalPayDate(cadence, anchorDate, today), shift);
+  return applyWeekendShift(
+    nextNominalPayDate(cadence, anchorDate, today, startDate),
+    shift,
+  );
 }
