@@ -2419,36 +2419,43 @@ function CashPositionCard() {
           </div>
         </div>
 
-        {/* Secondary projection — including future variable */}
-        {data.variableExpectedRemainingCash > 0 && (
-          <div className="mt-4 pt-3 border-t border-border/30 space-y-1.5 font-mono text-sm">
-            <p className="text-[11px] text-muted-foreground uppercase tracking-wider">
-              If you also spend the planned variable budget
-            </p>
-            <div className="flex justify-between text-destructive">
-              <span>
-                − Variable still to spend from checking
-                {data.quicksilverAccruedRatio > 0 && (
-                  <span className="text-[10px] text-muted-foreground ml-1">
-                    ({Math.round((1 - data.quicksilverAccruedRatio) * 100)}%
-                    cash, rest on QS card)
-                  </span>
-                )}
-              </span>
-              <span>−{formatCurrency(data.variableExpectedRemainingCash)}</span>
-            </div>
-            <div className={cn("flex justify-between font-medium", eomColor)}>
-              <span>= Projected end-of-month checking</span>
-              <span>{formatCurrency(eom)}</span>
-            </div>
-            <p className="text-[10px] text-muted-foreground/70 italic">
-              Variable reservation (R) editable via the &ldquo;Variable
-              reserved&rdquo; pill on the Overview headline above. Cash portion
-              shown here is R split by the logged QS:cash mix so the projection
-              stays in sync with the headline.
-            </p>
+        {/* End-of-month projection — ALWAYS shown (even when the variable
+            cash portion is $0) so the user can always see what's left to spend
+            through month-end. Updates live with the "Variable reserved" pill:
+            editing R refetches this card via React Query invalidation. */}
+        <div
+          className="mt-4 pt-3 border-t border-border/30 space-y-1.5 font-mono text-sm"
+          data-testid="eom-projection"
+        >
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wider">
+            Available to spend through end of month
+          </p>
+          <div className="flex justify-between text-destructive">
+            <span>
+              − Variable still to spend from checking
+              {data.quicksilverAccruedRatio > 0 && (
+                <span className="text-[10px] text-muted-foreground ml-1">
+                  ({Math.round((1 - data.quicksilverAccruedRatio) * 100)}%
+                  cash, rest on QS card)
+                </span>
+              )}
+            </span>
+            <span>−{formatCurrency(data.variableExpectedRemainingCash)}</span>
           </div>
-        )}
+          <div
+            className={cn("flex justify-between font-medium", eomColor)}
+            data-testid="text-projected-eom"
+          >
+            <span>= Projected end-of-month checking</span>
+            <span>{formatCurrency(eom)}</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground/70 italic">
+            Variable reservation (R) editable via the &ldquo;Variable
+            reserved&rdquo; pill on the Overview headline above. Cash portion
+            shown here is R split by the logged QS:cash mix so the projection
+            stays in sync with the headline.
+          </p>
+        </div>
 
         {/* Per-bill toggles — the actual fix the user asked for */}
         {data.billsNotYetDebitedDetail.length > 0 && (
