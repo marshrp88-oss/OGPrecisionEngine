@@ -368,6 +368,16 @@ describe("Golden: dashboard routes (legacy semi-monthly, clock=2026-05-19)", () 
     `);
   });
 
+  // RE-BASELINED (user decision, Option A): `availableToInvest` was re-based to
+  // the remaining-obligations savable —
+  //   checking − billsNotYetDebited − oneTimeStillToPay − R(prorated) − earlyNext
+  // — and R's unset-default changed from full cap to the PRORATED remaining
+  // variable. The next-month forward reserve now lives ONLY in the cycle hold,
+  // never subtracted here. Two values move vs the prior (obsolete) baseline:
+  //   availableToInvest         432.73 → 681.12   (full-hold basis → remaining basis)
+  //   projectedEndOfMonthChecking 2072.73 → 2421.12 (R 600 full cap → 251.61 prorated)
+  // May 19, 31-day month: prorated R = 600 × 13/31 = 251.61. commitmentBalance
+  // (checking − full hold) is unchanged — kept as a diagnostic cross-reference.
   it("/dashboard/cash-position — availableToInvest golden", async () => {
     const res = await request(app).get("/dashboard/cash-position");
     expect(res.status).toBe(200);
@@ -385,7 +395,7 @@ describe("Golden: dashboard routes (legacy semi-monthly, clock=2026-05-19)", () 
     }).toMatchInlineSnapshot(`
       {
         "asOf": "2026-05-19",
-        "availableToInvest": 432.73,
+        "availableToInvest": 681.12,
         "commitmentBalance": 1162.73,
         "commitmentOutflowsRemaining": 1077.27,
         "currentChecking": 2140,
@@ -397,7 +407,7 @@ describe("Golden: dashboard routes (legacy semi-monthly, clock=2026-05-19)", () 
             "date": "2026-05-22",
           },
         ],
-        "projectedEndOfMonthChecking": 2072.73,
+        "projectedEndOfMonthChecking": 2421.12,
       }
     `);
   });

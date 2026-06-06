@@ -790,11 +790,14 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     }
   }
 
-  // ---- R-as-truth: variable reservation drives the headline ----
+  // ---- R-as-truth (PRORATED): variable reservation drives the headline ----
   // variableExpectedRemaining = R = the user's stored reservation (override
-  // assumption), falling back to variable_spend_cap when unset. Decoupled
-  // from L — adding/deleting CASH variable rows does NOT change R or the
-  // headline. QuickSilver-flagged rows still flow into quicksilverOwed via
+  // assumption) when set — including an explicit 0, their manual lever — else
+  // the PRORATED remaining variable for the rest of THIS month
+  // (cap × daysRemaining / daysInMonth), NOT the full monthly cap. The cap
+  // resets monthly, so mid-month the relevant reservation is only what's left.
+  // Decoupled from L — adding/deleting CASH variable rows does NOT change R or
+  // the headline. QuickSilver-flagged rows still flow into quicksilverOwed via
   // the sealed totalRequiredHold path; that's real card debt.
   // L is still computed: used (a) for the qsRatio split below so Projected
   // EOM stays consistent with R, (b) for the pill's "(spent $L)" overspend
@@ -811,10 +814,15 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   const quicksilverAccruedThisMonth = monthVs
     .filter((v) => v.quicksilver)
     .reduce((s, v) => s + parseFloat(v.amount), 0);
+  const dayOfMonth = today.getDate();
+  const daysInMonth = monthEnd.getDate();
+  const daysRemainingInMonth = Math.max(0, daysInMonth - dayOfMonth + 1);
+  const proratedVariableRemaining =
+    daysInMonth > 0 ? (variableCap * daysRemainingInMonth) / daysInMonth : 0;
   const variableExpectedRemaining =
     plannedVariableRemainingOverride !== null
       ? Math.max(0, plannedVariableRemainingOverride)
-      : variableCap;
+      : proratedVariableRemaining;
   // Pro-rate R into cash and QS portions using the logged QS:cash mix so
   // Projected EOM stays in sync with the headline (Q2 of R-as-truth design).
   const qsRatio =
@@ -850,26 +858,30 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   }
 
   // ---- Projections ----
-  // Two distinct numbers:
-  //   commitmentBalance = checking + income − bills − one-time (NO future variable)
-  //                       "What I owe right now vs what I have."
-  //   projectedEndOfMonthChecking = commitmentBalance − variableExpectedRemainingCash
-  //                       "Same, but assuming I burn the planned variable budget."
-  // Splitting these prevents a generous future-variable override from
-  // making the headline far more negative than the user's actual position.
+  //   commitmentOutflowsRemaining = THIS month's remaining bills + one-time.
+  //   commitmentBalance = checking − full required hold. DIAGNOSTIC ONLY now
+  //     (kept for cross-reference); the hold includes the next-month forward
+  //     reserve, so it is NOT the savable headline.
+  //   availableToInvest = the headline savable, RE-BASED (user decision) to a
+  //     remaining-obligations basis:
+  //       checking − billsNotYetDebited − oneTimeStillToPay
+  //               − R (this month's prorated variable) − earlyNextMonthVariable
+  //   The next-month forward reserve stays ONLY in the cycle hold (Safe to
+  //   Spend); it is never subtracted here, so next month's early bills are
+  //   counted exactly once. Variable is counted once (prorated R only).
   const commitmentOutflowsRemaining = billsNotYetDebited + oneTimeStillToPay;
   const commitmentBalance = currentChecking - cycle.totalRequiredHold;
-  // R-as-truth — Available to Save subtracts R (the user's stored
-  // reservation). R is decoupled from L; cash variable rows logged do not
-  // move this number. QS rows DO move the headline via the hold path
-  // (quicksilverOwed → totalRequiredHold → commitmentBalance), because
-  // unpaid QS card debt is real money the user owes; that's a sealed-engine
-  // invariant we preserve.
+  // QS variable rows still move the user's real position via the sealed hold
+  // path (quicksilverOwed → totalRequiredHold → commitmentBalance); that
+  // invariant is preserved in the diagnostic commitmentBalance above.
   // Projected EOM uses R split by the logged qsRatio (cash portion only)
   // so the cash-trajectory number stays consistent with the headline.
   const earlyNextMonthVariable = 130;
   const availableToInvest =
-    commitmentBalance - variableExpectedRemaining - earlyNextMonthVariable;
+    currentChecking -
+    commitmentOutflowsRemaining -
+    variableExpectedRemaining -
+    earlyNextMonthVariable;
   const totalCashOutflowsRemaining =
     commitmentOutflowsRemaining + variableExpectedRemainingCash;
   const projectedEndOfMonthChecking =
