@@ -19,11 +19,17 @@
 import { db, assumptions } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
-/** Unemployment income, June 2026: $3,000/mo paid weekly on Wednesdays, no withholding. */
+/**
+ * Unemployment income (ground truth): $750 net/week, paid weekly on Wednesdays,
+ * no withholding. First real deposit is 2026-06-24 (the Wednesday on/after the
+ * 23rd) — there is NO income before it. `pay_start_date` is the permanent fix
+ * for phantom backdated paychecks: the generator emits no deposit before it.
+ */
 const CADENCE_ASSUMPTIONS: ReadonlyArray<readonly [string, string]> = [
   ["pay_cadence", "weekly"],
-  ["pay_anchor_date", "2026-06-24"], // a Wednesday — first unemployment deposit week
-  ["net_per_period", "692.31"], // $3,000 / 4.333 weeks
+  ["pay_anchor_date", "2026-06-24"], // a Wednesday — first unemployment deposit
+  ["pay_start_date", "2026-06-24"], // income-start boundary; nothing before it
+  ["net_per_period", "750.00"], // $750 take-home per weekly deposit
   ["pay_tax_rate", "0"], // stored only; not yet consumed by engine math
   ["pay_weekend_shift", "prior_business_day"],
 ];
