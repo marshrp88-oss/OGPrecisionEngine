@@ -7,8 +7,9 @@
  *   - checking = $1,452
  *   - this month's four remaining unpaid bills: Car Insurance $141, National
  *     Grid $108, National Fuel $147, Replit $21  (= $417)
- *   - Capital One QuickSilver $78 (category 'variable') — card debt, EXCLUDED
- *     from remaining bills (handled via the separate quicksilverOwed path)
+ *   - Capital One QuickSilver $78 (category 'variable', toggled ON) — INCLUDED
+ *     in remaining bills (a toggled-on obligation counts in the availableToInvest
+ *     lens exactly once; the Safe-to-Spend cycle hold remains a separate lens)
  *   - PPG one-time DEFERRED — excluded from oneTimeStillToPay
  *   - weekly cadence, anchor + start 2026-06-24, net_per_period $750, 0 tax
  *   - commission CLEARED (empty table)
@@ -19,12 +20,14 @@
  * deposit, 2026-06-24; phantom June 3/10/17 excluded by pay_start_date;
  * commission $0). Asserted below.
  *
- * HEADLINE SAVABLE = availableToInvest = $535 — ACCEPTANCE PASSES. The savable
- * is checking-anchored on a remaining-obligations basis, with NO phantom
- * earlyNextMonthVariable term and QuickSilver/deferred excluded:
+ * HEADLINE SAVABLE = availableToInvest = $457. The savable is checking-anchored
+ * on a remaining-obligations basis, with NO phantom earlyNextMonthVariable term;
+ * deferred one-time excluded, toggled-on QuickSilver INCLUDED:
  *     availableToInvest = checking − commitmentOutflowsRemaining − R(prorated)
- *                       = 1452 − 417 − 500 = $535
- *   commitmentOutflowsRemaining = billsNotYetDebited 417 + oneTimeStillToPay 0.
+ *                       = 1452 − 495 − 500 = $457
+ *   commitmentOutflowsRemaining = billsNotYetDebited 495 + oneTimeStillToPay 0,
+ *   where billsNotYetDebited = 141 + 108 + 147 + 21 + 78 (QS) = 495.
+ *   (Was $535 / 417 when QS was excluded — reversed per the toggled-on-QS fix.)
  * The next-month forward reserve stays ONLY in the cycle hold (Safe to Spend);
  * it is never subtracted here, and there is no flat $130 term.
  *
@@ -49,6 +52,13 @@ const fixture = vi.hoisted(() => {
     category: string,
     includeInCycle: boolean,
     paymentState: string,
+    // Realistic debit date for already-paid bills. In production a 'paid' bill
+    // always carries a PAST debit date — autopay sync stamps paidDate=dueDay
+    // (only once dueDay<=today), and a manual mark-paid stamps clearedDate=now.
+    // The cash-position route now classifies "already debited" ONLY when that
+    // date is <= today, so paid bills MUST have one (null here used to ride on
+    // the old date-blind `paid → debited` shortcut).
+    paidDate: string | null = null,
   ) => ({
     id,
     name,
@@ -62,7 +72,7 @@ const fixture = vi.hoisted(() => {
     activeFrom: null,
     activeUntil: null,
     paymentState,
-    paidDate: null,
+    paidDate,
     paymentStateCycleKey: paymentState === "scheduled" ? null : "2026-06",
     clearedDate: null,
   });
@@ -79,20 +89,22 @@ const fixture = vi.hoisted(() => {
     // remaining unpaid bills (= $417) + the QuickSilver card statement
     // (category 'variable', EXCLUDED from remaining bills) + gym (include=FALSE).
     bills: [
-      // already paid this month (debited; do not affect availableToInvest)
-      bill(37, "Car Loan (2024 Camry)", "337.57", 1, "debt", true, "paid"),
-      bill(34, "Phone (Verizon)", "65.00", 2, "essential", true, "paid"),
+      // already paid this month — debited with a PAST paidDate (<= today
+      // 2026-06-06), so they stay excluded from "still to pay".
+      bill(37, "Car Loan (2024 Camry)", "337.57", 1, "debt", true, "paid", "2026-06-01"),
+      bill(34, "Phone (Verizon)", "65.00", 2, "essential", true, "paid", "2026-06-02"),
       bill(33, "Gym Membership", "27.00", 2, "discretionary", false, "scheduled"),
-      bill(35, "Claude Subscription", "21.00", 3, "discretionary", true, "paid"),
-      bill(36, "Rent", "1000.00", 4, "essential", true, "paid"),
-      bill(39, "YouTube Premium", "14.00", 15, "discretionary", true, "paid"),
+      bill(35, "Claude Subscription", "21.00", 3, "discretionary", true, "paid", "2026-06-03"),
+      bill(36, "Rent", "1000.00", 4, "essential", true, "paid", "2026-06-04"),
+      bill(39, "YouTube Premium", "14.00", 15, "discretionary", true, "paid", "2026-06-05"),
       // this month's REMAINING unpaid bills — the four real ones (= $417)
       bill(38, "Car Insurance", "141.00", 8, "essential", true, "late_unpaid"),
       bill(40, "National Grid (electric)", "108.00", 18, "essential", true, "late_unpaid"),
       bill(41, "National Fuel (gas)", "147.00", 19, "essential", true, "late_unpaid"),
       bill(44, "Replit Subscription", "21.00", 21, "discretionary", true, "late_unpaid"),
-      // QuickSilver card statement — category 'variable' → EXCLUDED from
-      // billsNotYetDebited (card debt handled via the separate QS path).
+      // QuickSilver card statement — category 'variable', toggled ON. Now
+      // INCLUDED in billsNotYetDebited (toggled-on obligation counts in the
+      // availableToInvest lens, exactly once; the cycle-hold lens is separate).
       bill(43, "Capital One QuickSilver (variable)", "78.00", 18, "variable", true, "late_unpaid"),
     ],
     balances: [
@@ -340,9 +352,9 @@ describe("June unemployment — discretionary reconciliation (clock=2026-06-06)"
       projectedEndOfMonthChecking: b.projectedEndOfMonthChecking,
     }).toMatchInlineSnapshot(`
       {
-        "availableToInvest": 535,
+        "availableToInvest": 457,
         "billsAlreadyDebited": 1437.57,
-        "billsNotYetDebited": 417,
+        "billsNotYetDebited": 495,
         "commitmentBalance": -480.57,
         "currentChecking": 1452,
         "incomeStillToReceive": 750,
@@ -353,36 +365,37 @@ describe("June unemployment — discretionary reconciliation (clock=2026-06-06)"
             "date": "2026-06-24",
           },
         ],
-        "projectedEndOfMonthChecking": 1285,
+        "projectedEndOfMonthChecking": 1207,
         "variableExpectedRemaining": 500,
       }
     `);
   });
 
-  // ACCEPTANCE — availableToInvest = checking − real remaining bills − R = $535.
+  // ACCEPTANCE — availableToInvest = checking − real remaining bills − R = $457.
   //
   // The endpoint computes ONLY:
   //   availableToInvest = checking
   //           − commitmentOutflowsRemaining  (= billsNotYetDebited + oneTimeStillToPay)
   //           − R                            (this month's PRORATED remaining variable)
-  // NO earlyNextMonthVariable term. QuickSilver (category 'variable') and
-  // deferred one-time (PPG) are excluded from commitmentOutflowsRemaining.
-  //   billsNotYetDebited = 141 + 108 + 147 + 21 = 417  (QS $78 excluded)
+  // NO earlyNextMonthVariable term. Deferred one-time (PPG) excluded; toggled-on
+  // QuickSilver (category 'variable') INCLUDED — counted exactly once here (the
+  // cycle hold is a separate lens, not subtracted in availableToInvest).
+  //   billsNotYetDebited = 141 + 108 + 147 + 21 + 78 (QS) = 495
   //   oneTimeStillToPay  = 0  (PPG deferred; others out of month / paid)
   //   R (prorated)       = 600 × 25/30 = 500
-  //   availableToInvest  = 1452 − 417 − 0 − 500 = 535
+  //   availableToInvest  = 1452 − 495 − 0 − 500 = 457
   //
-  // If this does NOT land at $535, the failing dump below lists every line item
+  // If this does NOT land at $457, the failing dump below lists every line item
   // feeding commitmentOutflowsRemaining so the wrong inclusion can be found —
   // do NOT fudge.
-  it("availableToInvest = checking − real remaining bills − R = $535", async () => {
+  it("availableToInvest = checking − real remaining bills − R = $457", async () => {
     const res = await request(app).get("/dashboard/cash-position");
     const b = res.body;
 
     // R = prorated current-month variable (override cleared).
     expect(b.variableExpectedRemaining).toBe(500);
-    // QuickSilver excluded → the four real bills only.
-    expect(b.billsNotYetDebited).toBe(417);
+    // Four real bills ($417) + toggled-on QuickSilver ($78) = $495.
+    expect(b.billsNotYetDebited).toBe(495);
     expect(b.oneTimeStillToPay).toBe(0);
 
     // Headline = checking − commitmentOutflowsRemaining − R, NO $130 term.
@@ -403,23 +416,24 @@ describe("June unemployment — discretionary reconciliation (clock=2026-06-06)"
       availableToInvest: b.availableToInvest,
     }).toMatchInlineSnapshot(`
       {
-        "availableToInvest": 535,
-        "billsNotYetDebited": 417,
+        "availableToInvest": 457,
+        "billsNotYetDebited": 495,
         "billsNotYetDebitedDetail": [
           "Car Insurance: 141",
           "National Grid (electric): 108",
           "National Fuel (gas): 147",
           "Replit Subscription: 21",
+          "Capital One QuickSilver (variable): 78",
         ],
-        "commitmentOutflowsRemaining": 417,
+        "commitmentOutflowsRemaining": 495,
         "currentChecking": 1452,
         "oneTimeStillToPay": 0,
         "variableExpectedRemaining": 500,
       }
     `);
 
-    // PRD target: $535 within $5.
-    expect(b.availableToInvest).toBeGreaterThanOrEqual(530);
-    expect(b.availableToInvest).toBeLessThanOrEqual(540);
+    // Savable target: $457 within $5 (QS now counted once).
+    expect(b.availableToInvest).toBeGreaterThanOrEqual(452);
+    expect(b.availableToInvest).toBeLessThanOrEqual(462);
   });
 });

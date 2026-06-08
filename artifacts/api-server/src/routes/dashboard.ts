@@ -748,11 +748,31 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
   incomeStillToReceive += pendingCommissionUnreceived;
 
   // ---- Bill classification ----
-  // Three buckets for May bills (dueDay in 1..monthEnd):
-  //   alreadyDebited     state=paid AND clearedDate set
-  //   notYetDebited      state=paid w/o clearedDate, OR paid_pending_clear, OR late_unpaid
-  //   scheduledUnpaid    state=scheduled (counted in notYetDebited too; future debit)
-  //   skipped            excluded
+  // A bill counts as ALREADY DEBITED (money has left checking, excluded from
+  // "still to pay") ONLY when it is 'paid' AND its effective debit date
+  // (clearedDate, else paidDate) is on-or-before today. Everything else —
+  // scheduled, late, pending-clear, OR 'paid' with a FUTURE/missing debit date
+  // (e.g. an auto-pay that fires tomorrow) — is STILL TO PAY, because the cash
+  // has not actually moved yet.
+  //   alreadyDebited     state=paid AND debit date <= today
+  //   notYetDebited      everything else still owed this month:
+  //                      paid-but-future-dated, paid w/o date, paid_pending_clear,
+  //                      late_unpaid, scheduled
+  //   skipped            excluded (includeInCycle=false, skipped_cycle, amt<=0)
+  // Inclusion gate is the bill's toggle (includeInCycle) + a valid due day +
+  // amount > 0 — NOT its category or autopay flag. A toggled-ON variable bill
+  // (Capital One QuickSilver) therefore counts here like any other obligation;
+  // a toggled-OFF one is excluded. QS is counted exactly ONCE in THIS lens
+  // (availableToInvest = checking − commitmentOutflowsRemaining − R, which does
+  // NOT subtract the cycle hold). The Safe-to-Spend cycle lens still carries QS
+  // via its separate quicksilverOwed → totalRequiredHold hold path — a distinct
+  // number, so there is no double-count.
+  //
+  // "today" is the viewer's local calendar day (same basis as monthStart /
+  // dayOfMonth in this route), normalized to YYYY-MM-DD for an exact, TZ-stable
+  // day-boundary compare against the bills' debit dates.
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const todayYmd = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
   const allBills = await db.select().from(bills);
   type BillRow = {
     id: number;
@@ -774,12 +794,12 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     if (amt <= 0) continue;
     if (b.dueDay < 1 || b.dueDay > monthEnd.getDate()) continue;
     if (b.paymentState === "skipped_cycle") continue;
-    // QuickSilver / credit-card statement bills (category 'variable') are NOT
-    // a checking debit — they're card debt tracked via the separate
-    // quicksilverOwed hold path. Counting them here as a remaining bill AND in
-    // the QS path double-counts, so exclude them from this checking-flow total.
-    // (They still surface in the cycle / Safe-to-Spend QS views.)
-    if (b.category === "variable") continue;
+    // NOTE: category ('variable' QuickSilver, 'essential', 'debt', …) and the
+    // autopay flag do NOT gate inclusion here. Only the toggle (includeInCycle,
+    // checked above), a valid due day, and amount > 0 decide whether a bill is
+    // a remaining checking obligation. This lets a toggled-ON QuickSilver count
+    // in availableToInvest while a toggled-OFF one drops out — counted exactly
+    // once (see header note; the cycle hold is a separate lens).
 
     const paidDateStr = b.paidDate
       ? new Date(b.paidDate).toISOString().split("T")[0]
@@ -787,10 +807,19 @@ router.get("/dashboard/cash-position", async (_req, res): Promise<void> => {
     const clearedDateStr = b.clearedDate
       ? new Date(b.clearedDate).toISOString().split("T")[0]
       : null;
-    const isCleared = b.paymentState === "paid";
+    // Effective debit date = when cash actually leaves checking: clearedDate if
+    // stamped, else the paidDate the user entered. A 'paid' bill is only truly
+    // DEBITED once that date is on-or-before today; a 'paid' bill with a FUTURE
+    // (scheduled auto-pay) or missing debit date has NOT withdrawn yet and must
+    // count as still-to-pay.
+    const debitDateStr = clearedDateStr ?? paidDateStr;
+    const isDebited =
+      b.paymentState === "paid" &&
+      debitDateStr !== null &&
+      debitDateStr <= todayYmd;
 
     let cashStatus: BillRow["cashStatus"];
-    if (isCleared) cashStatus = "debited";
+    if (isDebited) cashStatus = "debited";
     else if (b.paymentState === "late_unpaid") cashStatus = "late";
     else if (b.paymentState === "paid_pending_clear") cashStatus = "pending";
     else cashStatus = "scheduled";
