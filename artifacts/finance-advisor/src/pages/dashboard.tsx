@@ -51,7 +51,7 @@ interface CycleData {
 }
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, formatDateUTC } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -739,7 +739,11 @@ function paydayRelativeLabel(
   days: number | null | undefined,
   payday: string | Date | null | undefined,
 ): string {
-  const datePart = payday ? formatDate(payday) : "—";
+  // Render BOTH fields straight from the backend cycle response — no local
+  // recompute from today+offset, no cadence math. `days` is cycle.daysUntilPayday
+  // verbatim; the date is cycle.nextPayday formatted with UTC parts so the
+  // UTC-midnight payday string never shifts back a day in a western timezone.
+  const datePart = payday ? formatDateUTC(payday) : "—";
   if (days === null || days === undefined) return `payday ${datePart}`;
   if (days === 0) return `payday today (${datePart})`;
   if (days === 1) return `1 day to ${datePart}`;
@@ -755,6 +759,14 @@ function DisciplineStrip({
 }: {
   d: NonNullable<DiscretionaryResp["discipline"]>;
 }) {
+  // Day-of-month label only. The backend's d.dayOfMonth is anchored on the
+  // server clock (UTC in prod) — so at 21:57 EDT on the 7th it already reads
+  // the 8th, displaying "day 8/30" a day ahead of the viewer's calendar. The
+  // strip is a "where am I in the month" cue for the user, so show THEIR local
+  // calendar day. (Display only — the burn-pace / savings-rate percentages
+  // below still come straight from the backend's engine math, untouched.)
+  const localNow = new Date();
+  const localDayOfMonth = localNow.getDate();
   return (
     <div
       className="rounded-lg border border-border bg-card px-4 md:px-6 py-3 flex flex-wrap items-center gap-x-8 gap-y-3"
@@ -800,7 +812,7 @@ function DisciplineStrip({
         testid="discipline-savings-rate"
       />
       <span className="ml-auto text-xs text-muted-foreground font-mono">
-        day {d.dayOfMonth}/{d.daysInMonth}
+        day {localDayOfMonth}/{d.daysInMonth}
       </span>
     </div>
   );
